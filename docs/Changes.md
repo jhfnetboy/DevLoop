@@ -118,3 +118,7 @@ External Codex CLI review on PR #1 returned REQUEST_CHANGES. Applied without re-
 ## 0.1.12 — 2026-08-25
 
 External Codex CLI review on PR #1 returned REQUEST_CHANGES. Applied without re-judging: token caps apply to running tasks on idle ticks, a full worker pool idles instead of kill-switching, and dead `.taking` claims can be recovered.
+
+## 0.1.13 — 2026-08-25
+
+External Codex CLI review on PR #1 returned REQUEST_CHANGES. Applied without re-judging: no-progress stops keep the existing supervisor hold, lock release errors are not swallowed, empty supervisor reasons fail closed, and running tasks require a start time.

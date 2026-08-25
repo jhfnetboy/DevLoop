@@ -69,7 +69,11 @@ function persistAction(
     lastDispatchStatus: isWorkAction(action) ? dispatchStatus(state, action) : state.lastDispatchStatus,
     updatedAt: new Date(now).toISOString(),
     killSwitch: action.type === 'stop',
-    supervisor: circuit ? { taskId: circuit.taskId, reason: circuit.reason } : state.supervisor,
+    supervisor: circuit
+      ? (circuit.reason === 'no_progress' && state.supervisor
+          ? state.supervisor
+          : { taskId: circuit.taskId, reason: circuit.reason })
+      : state.supervisor,
   }
   return { action, state: next, skipped: false }
 }

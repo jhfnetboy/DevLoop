@@ -1,4 +1,4 @@
-import { link, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { link, mkdir, readFile, rename, rm, stat, unlink, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { emptyUsage } from './budget.js'
 import type { LoopState, ModelTier, Risk, TaskStatus } from './types.js'
@@ -167,13 +167,19 @@ async function exclusiveCreate(file: string): Promise<boolean> {
 }
 
 async function releaseLock(file: string): Promise<void> {
+  let body: string
   try {
-    const body = await readFile(file, 'utf8')
-    if (body.trim() === String(process.pid)) {
-      await rm(file, { force: true })
-    }
-  } catch {
-    // already released or stolen
+    body = await readFile(file, 'utf8')
+  } catch (error) {
+    if (isNotFound(error)) return
+    throw error
+  }
+  if (body.trim() !== String(process.pid)) return
+  try {
+    await unlink(file)
+  } catch (error) {
+    if (isNotFound(error)) return
+    throw error
   }
 }
 
@@ -207,6 +213,12 @@ function isLoopState(value: unknown): value is LoopState {
   if (new Set(ids).size !== ids.length) return false
   if (!isUsageShape(record.usage)) return false
   if (!isActionShape(record.lastAction)) return false
+  if (record.tasks.some(task => {
+    const entry = task as { id: string; status: string }
+    return entry.status === 'running' && !Object.hasOwn((record.usage as { taskStartedAt: object }).taskStartedAt, entry.id)
+  })) {
+    return false
+  }
   if (record.supervisor !== null && !isSupervisorShape(record.supervisor)) {
     return false
   }
@@ -313,7 +325,7 @@ function isActionShape(value: unknown): boolean {
 function isSupervisorShape(value: unknown): boolean {
   if (typeof value !== 'object' || value === null) return false
   const hold = value as Record<string, unknown>
-  return typeof hold.reason === 'string' && (hold.taskId === null || typeof hold.taskId === 'string')
+  return typeof hold.reason === 'string' && hold.reason.length > 0 && (hold.taskId === null || typeof hold.taskId === 'string')
 }
 
 function isNotFound(error: unknown): boolean {

@@ -64,6 +64,30 @@ describe('persist and tick', () => {
     expect(loaded.supervisor?.reason).toBe('invalid_state')
   })
 
+  it('halts when a supervisor reason is empty', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'devloop-'))
+    await mkdir(join(root, '.devloop'))
+    await writeFile(join(root, '.devloop', 'STATE.json'), JSON.stringify({
+      ...emptyState(0),
+      supervisor: { taskId: 'a', reason: '' },
+    }), 'utf8')
+    const loaded = await loadState(root, 1)
+    expect(loaded.killSwitch).toBe(true)
+    expect(loaded.supervisor?.reason).toBe('invalid_state')
+  })
+
+  it('halts when a running task has no start time', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'devloop-'))
+    await mkdir(join(root, '.devloop'))
+    await writeFile(join(root, '.devloop', 'STATE.json'), JSON.stringify({
+      ...emptyState(0),
+      tasks: [sampleTask('running')],
+    }), 'utf8')
+    const loaded = await loadState(root, 1)
+    expect(loaded.killSwitch).toBe(true)
+    expect(loaded.supervisor?.reason).toBe('invalid_state')
+  })
+
   it('halts when usage omits a hard-cap field', async () => {
     const root = await mkdtemp(join(tmpdir(), 'devloop-'))
     await mkdir(join(root, '.devloop'))
@@ -246,6 +270,22 @@ describe('persist and tick', () => {
     expect(later.action).toEqual({ type: 'stop', reason: 'budget' })
     expect(later.state.killSwitch).toBe(true)
     expect(later.state.supervisor?.reason).toBe('no_progress')
+  })
+
+  it('keeps an existing supervisor hold when the watchdog stops', () => {
+    const limits = resolveConfig({}).budget
+    const first = runTick({
+      ...emptyState(0),
+      supervisor: { taskId: 'a', reason: 'security_high_risk' },
+    }, limits, 10)
+    expect(first.action).toEqual({
+      type: 'escalate',
+      taskId: 'a',
+      reason: 'security_high_risk',
+    })
+    const later = runTick(first.state, limits, 10 + limits.noProgressMinutes * 60_000)
+    expect(later.action).toEqual({ type: 'stop', reason: 'budget' })
+    expect(later.state.supervisor).toEqual({ taskId: 'a', reason: 'security_high_risk' })
   })
 
   it('increments delegate attempts on a recorded tick', () => {
