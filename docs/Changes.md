@@ -52,3 +52,27 @@ pnpm build
 
 External Codex CLI review on PR #1 returned REQUEST_CHANGES. Applied the four P2 items without re-judging them: rework retries are not latched, persisted usage/tasks/actions are fully validated, `failed` queues escalate, high-risk ready tasks escalate.
 
+## 0.1.3 — 2026-08-25
+
+Full pipeline tests and Plan/Features 1:1 coverage. Still no real Worker spawn.
+
+### 测试
+
+- 新增 `tests/flow.spec.ts`：GOAL 武装 → plan → delegate → review → merge → done/stop，以及 rework 重试与预算停机落盘
+- 新增 `tests/one-to-one.spec.ts`：Plan 0.1.2–0.1.7 与 Features 关键闸门一对一
+- 新增 `tests/service.spec.ts`：Cordis Service 未武装空转、武装后闩锁、disabled 不启动
+- 新增 `docs/UserCaseTest.md`：用户场景到 spec 的对照，供人工验收
+
+### 可能影响
+
+- 只增加测试与用例文档，不改变 0.1 调度语义
+- 安装与 tick 行为与 0.1.2 相同
+
+### 构建与测试
+
+```bash
+pnpm install
+pnpm test
+pnpm build
+```
+
