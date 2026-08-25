@@ -13,6 +13,21 @@ describe('persist and tick', () => {
     expect(await workspaceArmed(root)).toBe(false)
   })
 
+  it('reports a workspace as unarmed when GOAL.md is missing', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'devloop-'))
+    await mkdir(join(root, '.devloop'))
+    expect(await workspaceArmed(root)).toBe(false)
+  })
+
+  it('halts on malformed STATE.json instead of throwing', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'devloop-'))
+    await mkdir(join(root, '.devloop'))
+    await writeFile(join(root, '.devloop', 'STATE.json'), '{not-json', 'utf8')
+    const loaded = await loadState(root, 1)
+    expect(loaded.killSwitch).toBe(true)
+    expect(loaded.lastAction).toEqual({ type: 'stop', reason: 'kill_switch' })
+  })
+
   it('round-trips STATE.json', async () => {
     const root = await mkdtemp(join(tmpdir(), 'devloop-'))
     await mkdir(join(root, '.devloop'))
@@ -27,6 +42,45 @@ describe('persist and tick', () => {
     const result = runTick(emptyState(0), resolveConfig({}).budget, 10)
     expect(result.action).toEqual({ type: 'plan' })
     expect(result.state.lastAction).toEqual({ type: 'plan' })
+    expect(result.skipped).toBe(false)
+  })
+
+  it('latches a repeated plan instead of rewriting state', () => {
+    const limits = resolveConfig({}).budget
+    const first = runTick(emptyState(0), limits, 10)
+    const second = runTick(first.state, limits, 20)
+    expect(second.skipped).toBe(true)
+    expect(second.state.lastAction).toEqual({ type: 'plan' })
+    expect(second.state.updatedAt).toBe(first.state.updatedAt)
+  })
+
+  it('halts for no-progress after a latched plan sits idle', () => {
+    const limits = resolveConfig({}).budget
+    const first = runTick(emptyState(0), limits, 10)
+    const later = runTick(first.state, limits, 10 + limits.noProgressMinutes * 60_000)
+    expect(later.skipped).toBe(false)
+    expect(later.action).toEqual({ type: 'stop', reason: 'budget' })
+    expect(later.state.killSwitch).toBe(true)
+    expect(later.state.supervisor?.reason).toBe('no_progress')
+  })
+
+  it('increments delegate attempts on a recorded tick', () => {
+    const task: Task = {
+      id: 't-1',
+      title: 'crud',
+      tier: 'T1',
+      status: 'ready',
+      risk: 'low',
+      attempts: 0,
+      reviewCycles: 0,
+      allowedPaths: ['src/**'],
+      acceptance: ['tests pass'],
+    }
+    const seeded = { ...emptyState(0), tasks: [task] }
+    const result = runTick(seeded, resolveConfig({}).budget, 10)
+    expect(result.action).toEqual({ type: 'delegate', taskId: 't-1' })
+    expect(result.state.usage.taskAttempts['t-1']).toBe(1)
+    expect(result.state.usage.taskStartedAt['t-1']).toBe(10)
   })
 
   it('stops on budget instead of delegating forever', () => {

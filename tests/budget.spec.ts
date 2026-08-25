@@ -79,4 +79,14 @@ describe('evaluateBudget', () => {
     const verdict = evaluateBudget(base(), limits, 1000, { type: 'delegate', taskId: 't-1' })
     expect(verdict).toEqual({ ok: true })
   })
+
+  it('trips the token cap on delegate', () => {
+    const verdict = evaluateBudget(
+      base({ usage: { ...emptyUsage(0), tokens: 500_000 } }),
+      limits,
+      0,
+      { type: 'delegate', taskId: 't-1' },
+    )
+    expect(verdict).toEqual({ ok: false, reason: 'max_tokens_per_task' })
+  })
 })

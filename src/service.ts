@@ -22,6 +22,7 @@ export default class DevloopService extends Service {
   private readonly config: Config
   private timer: ReturnType<typeof setInterval> | null = null
   private busy = false
+  private disposed = false
 
   constructor(ctx: Context, rawConfig: Config) {
     super(ctx, 'devloop')
@@ -38,7 +39,7 @@ export default class DevloopService extends Service {
   }
 
   start(): void {
-    if (this.timer) return
+    if (this.timer || this.disposed) return
     void this.tick()
     this.timer = setInterval(() => {
       void this.tick()
@@ -46,6 +47,7 @@ export default class DevloopService extends Service {
   }
 
   stop(): void {
+    this.disposed = true
     if (this.timer) {
       clearInterval(this.timer)
       this.timer = null
@@ -53,14 +55,25 @@ export default class DevloopService extends Service {
   }
 
   async tick(now = Date.now()): Promise<void> {
-    if (this.busy) return
+    if (this.disposed || this.busy) return
     this.busy = true
     try {
+      if (this.disposed) return
       if (!await workspaceArmed(this.config.root)) return
       const current = await loadState(this.config.root, now)
+      if (current.killSwitch || current.lastAction.type === 'stop') {
+        this.stop()
+        return
+      }
       const result = runTick(current, this.config.budget, now)
-      await saveState(this.config.root, result.state)
-      this.ctx.logger.info(`[dsh-devloop] tick action=${result.action.type}`)
+      if (this.disposed) return
+      if (!result.skipped) {
+        await saveState(this.config.root, result.state)
+        this.ctx.logger.info(`[dsh-devloop] tick action=${result.action.type}`)
+      }
+      if (result.action.type === 'stop' || result.state.killSwitch) {
+        this.stop()
+      }
     } catch (error) {
       this.ctx.logger.error('[dsh-devloop] tick failed', error)
     } finally {

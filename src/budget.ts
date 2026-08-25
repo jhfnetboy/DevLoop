@@ -59,6 +59,10 @@ export function evaluateBudget(
     }
   }
 
+  if (usage.tokens >= limits.maxTokensPerTask && (next.type === 'delegate' || next.type === 'review')) {
+    return { ok: false, reason: 'max_tokens_per_task' }
+  }
+
   const key = actionKey(next)
   if (next.type !== 'idle' && next.type !== 'stop') {
     const same = countTrailing(usage.lastActions, key)
@@ -78,10 +82,25 @@ export function evaluateBudget(
 export function recordAction(usage: BudgetUsage, action: LoopAction, now: number): BudgetUsage {
   const key = actionKey(action)
   const lastActions = [...usage.lastActions, key].slice(-20)
+  const taskAttempts = { ...usage.taskAttempts }
+  const taskStartedAt = { ...usage.taskStartedAt }
+  const reviewCycles = { ...usage.reviewCycles }
+  if (action.type === 'delegate') {
+    taskAttempts[action.taskId] = (taskAttempts[action.taskId] ?? 0) + 1
+    if (taskStartedAt[action.taskId] === undefined) {
+      taskStartedAt[action.taskId] = now
+    }
+  }
+  if (action.type === 'review') {
+    reviewCycles[action.taskId] = (reviewCycles[action.taskId] ?? 0) + 1
+  }
   const progressed = action.type !== 'idle' && action.type !== 'stop'
   return {
     ...usage,
     lastActions,
+    taskAttempts,
+    taskStartedAt,
+    reviewCycles,
     lastProgressAt: progressed ? now : usage.lastProgressAt,
   }
 }

@@ -30,3 +30,21 @@ pnpm build
 ```
 
 安装到 DSH 见仓库根 README。
+
+## 0.1.1 — 2026-08-25
+
+自我 review + 另一模型挑战 review 后的熔断修正，仍不派真实 Worker。
+
+### 代码
+
+- tick 对相同工作动作加闩锁，避免每拍重写 `STATE.json`
+- `recordAction` 累计 attempts / reviewCycles / taskStartedAt
+- `STOP` 置 killSwitch 并停表；插件 dispose 后不再写盘
+- 无 `GOAL.md` 视为未武装；损坏的 `STATE.json` 安全停机而不抛死循环
+- 临时文件名带 pid，降低并发 rename 碰撞
+
+### 可能影响
+
+- 已有 `.devloop/` 但没有 `GOAL.md` 的目录不再被 tick
+- 第一次 `plan`/`delegate` 之后会保持 lastAction，直到超时熔断或外部改状态
+
