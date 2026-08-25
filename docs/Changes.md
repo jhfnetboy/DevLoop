@@ -122,3 +122,7 @@ External Codex CLI review on PR #1 returned REQUEST_CHANGES. Applied without re-
 ## 0.1.13 — 2026-08-25
 
 External Codex CLI review on PR #1 returned REQUEST_CHANGES. Applied without re-judging: no-progress stops keep the existing supervisor hold, lock release errors are not swallowed, empty supervisor reasons fail closed, and running tasks require a start time.
+
+## 0.1.14 — 2026-08-25
+
+External Codex CLI review on PR #1 returned REQUEST_CHANGES. Applied without re-judging: takeover claims publish PID via `link`, dead/empty claims are renamed then recreated so two recoverers cannot both succeed.

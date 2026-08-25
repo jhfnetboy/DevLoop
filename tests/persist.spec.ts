@@ -351,6 +351,14 @@ describe('persist and tick', () => {
     expect(await withStateLock(root, async () => 'stolen')).toBe('stolen')
   })
 
+  it('recovers an empty takeover claim', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'devloop-'))
+    await mkdir(join(root, '.devloop'))
+    await writeFile(lockPath(root), '2147483647', 'utf8')
+    await writeFile(`${lockPath(root)}.taking.2147483647`, '', 'utf8')
+    expect(await withStateLock(root, async () => 'stolen')).toBe('stolen')
+  })
+
   it('stops on budget instead of delegating forever', () => {
     const blown = {
       ...emptyState(0),
