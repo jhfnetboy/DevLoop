@@ -141,6 +141,29 @@ describe('evaluateBudget', () => {
     expect(verdict).toEqual({ ok: false, reason: 'max_tokens_per_task', taskId: 't-1' })
   })
 
+  it('trips the token cap on idle while a task is running', () => {
+    const verdict = evaluateBudget(
+      base({
+        tasks: [{
+          id: 't-1',
+          title: 't-1',
+          tier: 'T1',
+          status: 'running',
+          risk: 'low',
+          attempts: 0,
+          reviewCycles: 0,
+          allowedPaths: ['src/**'],
+          acceptance: ['tests pass'],
+        }],
+        usage: { ...emptyUsage(0), tokens: { 't-1': 500_000 } },
+      }),
+      limits,
+      0,
+      { type: 'idle' },
+    )
+    expect(verdict).toEqual({ ok: false, reason: 'max_tokens_per_task', taskId: 't-1' })
+  })
+
   it('trips review cap on a rework delegate', () => {
     const verdict = evaluateBudget(
       base({ usage: { ...emptyUsage(0), reviewCycles: { 't-1': 2 } } }),

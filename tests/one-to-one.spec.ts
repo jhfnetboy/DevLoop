@@ -7,6 +7,7 @@ import { evaluateBudget, emptyUsage, recordAction } from '../src/budget.ts'
 import { resolveConfig } from '../src/config.ts'
 import { actionKey, decideNextAction } from '../src/loop.ts'
 import { workspaceArmed } from '../src/persist.ts'
+import { runTick } from '../src/tick.ts'
 import {
   assertReviewerAllowed,
   contractForTask,
@@ -78,10 +79,9 @@ describe('Plan 0.1.4 budget 1:1', () => {
     const state = baseState({
       tasks: [...tasks, makeTask({ id: 't', status: 'ready' })],
     })
-    expect(evaluateBudget(state, limits, 0, { type: 'delegate', taskId: 't' })).toMatchObject({
-      ok: false,
-      reason: 'max_parallel_workers',
-    })
+    const result = runTick(state, limits, 0)
+    expect(result.skipped).toBe(true)
+    expect(result.state.killSwitch).toBe(false)
   })
 })
 

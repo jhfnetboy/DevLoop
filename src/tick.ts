@@ -32,6 +32,13 @@ export function runTick(state: LoopState, limits: BudgetLimits, now: number): Ti
     intended = { type: 'idle' }
   }
 
+  if (intended.type === 'delegate') {
+    const running = state.tasks.filter(task => task.status === 'running').length
+    if (running >= limits.maxParallelWorkers) {
+      intended = { type: 'idle' }
+    }
+  }
+
   if (intended.type === 'stop' && intended.reason === 'goal_complete') {
     return persistAction(state, intended, now)
   }

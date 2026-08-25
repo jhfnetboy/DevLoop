@@ -114,3 +114,7 @@ External Codex CLI review on PR #1 returned REQUEST_CHANGES. Applied without re-
 ## 0.1.11 — 2026-08-25
 
 External Codex CLI review on PR #1 returned REQUEST_CHANGES. Applied without re-judging: `goal_complete` bypasses budget evaluation, and stale-lock takeover takes a `wx` claim before renaming so a live replacement lock is not removed.
+
+## 0.1.12 — 2026-08-25
+
+External Codex CLI review on PR #1 returned REQUEST_CHANGES. Applied without re-judging: token caps apply to running tasks on idle ticks, a full worker pool idles instead of kill-switching, and dead `.taking` claims can be recovered.

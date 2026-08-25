@@ -84,12 +84,7 @@ async function tryLock(file: string): Promise<boolean> {
   if (holder === 'pending') return false
   if (holder !== null && isPidAlive(holder)) return false
   const taking = `${file}.taking.${observed.trim() || 'corrupt'}`
-  try {
-    await writeFile(taking, String(process.pid), { flag: 'wx' })
-  } catch (error) {
-    if (isAlreadyExists(error)) return false
-    throw error
-  }
+  if (!await claimFile(taking)) return false
   try {
     const current = await readLockBody(file)
     if (current !== observed) return false
@@ -109,6 +104,27 @@ async function tryLock(file: string): Promise<boolean> {
     return created
   } finally {
     await rm(taking, { force: true })
+  }
+}
+
+async function claimFile(file: string): Promise<boolean> {
+  if (await exclusiveWrite(file)) return true
+  const body = await readLockBody(file)
+  if (body === null) return exclusiveWrite(file)
+  const holder = parseHolderPid(body)
+  if (holder === 'pending') return false
+  if (holder !== null && isPidAlive(holder)) return false
+  await rm(file, { force: true })
+  return exclusiveWrite(file)
+}
+
+async function exclusiveWrite(file: string): Promise<boolean> {
+  try {
+    await writeFile(file, String(process.pid), { flag: 'wx' })
+    return true
+  } catch (error) {
+    if (isAlreadyExists(error)) return false
+    throw error
   }
 }
 

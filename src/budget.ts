@@ -34,10 +34,6 @@ export function evaluateBudget(
   if (usage.costUsdSession >= limits.maxCostUsdPerSession) {
     return fail('session_cost_cap')
   }
-  const running = state.tasks.filter(task => task.status === 'running').length
-  if (running >= limits.maxParallelWorkers && next.type === 'delegate') {
-    return fail('max_parallel_workers', next.taskId)
-  }
 
   const timedOut = timedOutTaskId(state, limits, now)
   if (timedOut) {
@@ -60,6 +56,11 @@ export function evaluateBudget(
     if (cycles >= limits.maxReviewCycles) {
       return fail(`max_review_cycles:${next.taskId}`, next.taskId)
     }
+  }
+
+  const overTokens = overTokenTaskId(state, limits)
+  if (overTokens) {
+    return fail('max_tokens_per_task', overTokens)
   }
 
   if (next.type === 'delegate' || next.type === 'review') {
@@ -119,6 +120,13 @@ function timedOutTaskId(state: LoopState, limits: BudgetLimits, now: number): st
     const task = state.tasks.find(entry => entry.id === taskId)
     if (!task || TERMINAL_STATUS.has(task.status)) continue
     if ((now - started) / 60_000 >= limits.taskTimeoutMinutes) return taskId
+  }
+}
+
+function overTokenTaskId(state: LoopState, limits: BudgetLimits): string | undefined {
+  for (const task of state.tasks) {
+    if (task.status !== 'running') continue
+    if (ownCount(state.usage.tokens, task.id) >= limits.maxTokensPerTask) return task.id
   }
 }
 
