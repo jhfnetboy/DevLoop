@@ -328,6 +328,17 @@ describe('persist and tick', () => {
     expect(result.state.supervisor).toEqual({ taskId: 't-1', reason: 'task_timeout:t-1' })
   })
 
+  it('keeps goal_complete instead of rewriting it as a budget stop', () => {
+    const result = runTick({
+      ...emptyState(0),
+      tasks: [sampleTask('done')],
+      usage: { ...emptyState(0).usage, costUsdDay: 20 },
+    }, resolveConfig({}).budget, 10)
+    expect(result.action).toEqual({ type: 'stop', reason: 'goal_complete' })
+    expect(result.state.killSwitch).toBe(true)
+    expect(result.state.supervisor).toBeNull()
+  })
+
   it('writes the recorded action onto disk', async () => {
     const root = await mkdtemp(join(tmpdir(), 'devloop-'))
     await mkdir(join(root, '.devloop'))

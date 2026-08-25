@@ -83,25 +83,33 @@ async function tryLock(file: string): Promise<boolean> {
   const holder = parseHolderPid(observed)
   if (holder === 'pending') return false
   if (holder !== null && isPidAlive(holder)) return false
-  const stolen = `${file}.${process.pid}.${Date.now()}.stale`
+  const taking = `${file}.taking.${observed.trim() || 'corrupt'}`
   try {
-    await rename(file, stolen)
-  } catch {
-    return false
+    await writeFile(taking, String(process.pid), { flag: 'wx' })
+  } catch (error) {
+    if (isAlreadyExists(error)) return false
+    throw error
   }
-  const moved = await readLockBody(stolen)
-  if (moved !== observed) {
-    if (moved !== null) {
-      try {
-        await rename(stolen, file)
-      } catch {
-        // the live owner already recreated LOCK
-      }
+  try {
+    const current = await readLockBody(file)
+    if (current !== observed) return false
+    const stolen = `${file}.${process.pid}.${Date.now()}.stale`
+    try {
+      await rename(file, stolen)
+    } catch {
+      return false
     }
-    return false
+    const moved = await readLockBody(stolen)
+    if (moved !== observed) {
+      await rm(stolen, { force: true })
+      return false
+    }
+    const created = await exclusiveCreate(file)
+    await rm(stolen, { force: true })
+    return created
+  } finally {
+    await rm(taking, { force: true })
   }
-  await rm(stolen, { force: true })
-  return exclusiveCreate(file)
 }
 
 async function readLockBody(file: string): Promise<string | null> {

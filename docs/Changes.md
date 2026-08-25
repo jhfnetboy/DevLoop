@@ -111,3 +111,6 @@ External Codex CLI review on PR #1 returned REQUEST_CHANGES. Applied without re-
 
 External Codex CLI review on PR #1 returned REQUEST_CHANGES. Applied without re-judging: parallel-worker cap is derived from `running` tasks, and persisted state requires `supervisor` plus `updatedAt`.
 
+## 0.1.11 — 2026-08-25
+
+External Codex CLI review on PR #1 returned REQUEST_CHANGES. Applied without re-judging: `goal_complete` bypasses budget evaluation, and stale-lock takeover takes a `wx` claim before renaming so a live replacement lock is not removed.

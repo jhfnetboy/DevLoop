@@ -32,6 +32,10 @@ export function runTick(state: LoopState, limits: BudgetLimits, now: number): Ti
     intended = { type: 'idle' }
   }
 
+  if (intended.type === 'stop' && intended.reason === 'goal_complete') {
+    return persistAction(state, intended, now)
+  }
+
   const circuit = evaluateBudget(state, limits, now, intended)
   const action: LoopAction = circuit.ok
     ? intended
@@ -41,6 +45,15 @@ export function runTick(state: LoopState, limits: BudgetLimits, now: number): Ti
     return { action: state.lastAction, state, skipped: true }
   }
 
+  return persistAction(state, action, now, circuit.ok ? undefined : circuit)
+}
+
+function persistAction(
+  state: LoopState,
+  action: LoopAction,
+  now: number,
+  circuit?: { ok: false; reason: string; taskId: string | null },
+): TickResult {
   const usage = recordAction(state.usage, action, now)
   const next: LoopState = {
     ...state,
@@ -49,11 +62,8 @@ export function runTick(state: LoopState, limits: BudgetLimits, now: number): Ti
     lastDispatchStatus: isWorkAction(action) ? dispatchStatus(state, action) : state.lastDispatchStatus,
     updatedAt: new Date(now).toISOString(),
     killSwitch: action.type === 'stop',
-    supervisor: circuit.ok
-      ? state.supervisor
-      : { taskId: circuit.taskId, reason: circuit.reason },
+    supervisor: circuit ? { taskId: circuit.taskId, reason: circuit.reason } : state.supervisor,
   }
-
   return { action, state: next, skipped: false }
 }
 
