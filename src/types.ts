@@ -40,7 +40,7 @@ export interface BudgetUsage {
   readonly taskAttempts: Readonly<Record<string, number>>
   readonly reviewCycles: Readonly<Record<string, number>>
   readonly taskStartedAt: Readonly<Record<string, number>>
-  readonly tokens: number
+  readonly tokens: Readonly<Record<string, number>>
   readonly costUsdSession: number
   readonly costUsdDay: number
   readonly lastActions: readonly string[]

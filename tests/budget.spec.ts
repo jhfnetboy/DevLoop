@@ -110,11 +110,21 @@ describe('evaluateBudget', () => {
 
   it('trips the token cap on delegate', () => {
     const verdict = evaluateBudget(
-      base({ usage: { ...emptyUsage(0), tokens: 500_000 } }),
+      base({ usage: { ...emptyUsage(0), tokens: { 't-1': 500_000 } } }),
       limits,
       0,
       { type: 'delegate', taskId: 't-1' },
     )
     expect(verdict).toEqual({ ok: false, reason: 'max_tokens_per_task' })
+  })
+
+  it('does not apply another task token cap to a fresh task', () => {
+    const verdict = evaluateBudget(
+      base({ usage: { ...emptyUsage(0), tokens: { 't-1': 500_000 } } }),
+      limits,
+      0,
+      { type: 'delegate', taskId: 't-2' },
+    )
+    expect(verdict).toEqual({ ok: true })
   })
 })

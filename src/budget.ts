@@ -11,7 +11,7 @@ export function emptyUsage(now: number): BudgetUsage {
     taskAttempts: {},
     reviewCycles: {},
     taskStartedAt: {},
-    tokens: 0,
+    tokens: {},
     costUsdSession: 0,
     costUsdDay: 0,
     lastActions: [],
@@ -57,8 +57,11 @@ export function evaluateBudget(
     }
   }
 
-  if (usage.tokens >= limits.maxTokensPerTask && (next.type === 'delegate' || next.type === 'review')) {
-    return { ok: false, reason: 'max_tokens_per_task' }
+  if (next.type === 'delegate' || next.type === 'review') {
+    const used = usage.tokens[next.taskId] ?? 0
+    if (used >= limits.maxTokensPerTask) {
+      return { ok: false, reason: 'max_tokens_per_task' }
+    }
   }
 
   const key = actionKey(next)

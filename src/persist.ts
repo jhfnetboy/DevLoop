@@ -1,13 +1,13 @@
-import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, open, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { emptyUsage } from './budget.js'
-import type { LoopState } from './types.js'
+import type { LoopState, ModelTier, Risk, TaskStatus } from './types.js'
 import { STATE_VERSION } from './types.js'
 
 export const DEVLOOP_DIR = '.devloop'
 export const STATE_FILE = 'STATE.json'
 export const GOAL_FILE = 'GOAL.md'
-export const LOCK_DIR = 'LOCK'
+export const LOCK_FILE = 'LOCK'
 export const LOCK_STALE_MS = 30_000
 
 export function devloopDir(root: string): string {
@@ -63,38 +63,64 @@ export async function loadState(root: string, now: number): Promise<LoopState> {
 }
 
 export function lockPath(root: string): string {
-  return join(devloopDir(root), LOCK_DIR)
+  return join(devloopDir(root), LOCK_FILE)
 }
 
 /**
  * Cross-process mutex for one read-modify-write tick.
- * Returns `locked` when another live holder already owns the directory.
+ * Returns `locked` when another live holder already owns the file.
  */
 export async function withStateLock<T>(root: string, fn: () => Promise<T>): Promise<T | 'locked'> {
-  const dir = lockPath(root)
-  if (!await tryLock(dir)) return 'locked'
+  const file = lockPath(root)
+  if (!await tryLock(file)) return 'locked'
   try {
     return await fn()
   } finally {
-    await rm(dir, { recursive: true, force: true })
+    await releaseLock(file)
   }
 }
 
-async function tryLock(dir: string): Promise<boolean> {
+async function tryLock(file: string): Promise<boolean> {
+  if (await exclusiveCreate(file)) return true
   try {
-    await mkdir(dir, { recursive: false })
-    return true
-  } catch (error) {
-    if (!isAlreadyExists(error)) throw error
-  }
-  try {
-    const info = await stat(dir)
+    const info = await stat(file)
     if (Date.now() - info.mtimeMs < LOCK_STALE_MS) return false
-    await rm(dir, { recursive: true, force: true })
-    await mkdir(dir, { recursive: false })
-    return true
+  } catch {
+    return exclusiveCreate(file)
+  }
+  const stolen = `${file}.${process.pid}.${Date.now()}.stale`
+  try {
+    await rename(file, stolen)
   } catch {
     return false
+  }
+  await rm(stolen, { force: true })
+  return exclusiveCreate(file)
+}
+
+async function exclusiveCreate(file: string): Promise<boolean> {
+  try {
+    const handle = await open(file, 'wx')
+    try {
+      await handle.writeFile(String(process.pid), 'utf8')
+    } finally {
+      await handle.close()
+    }
+    return true
+  } catch (error) {
+    if (isAlreadyExists(error)) return false
+    throw error
+  }
+}
+
+async function releaseLock(file: string): Promise<void> {
+  try {
+    const body = await readFile(file, 'utf8')
+    if (body.trim() === String(process.pid)) {
+      await rm(file, { force: true })
+    }
+  } catch {
+    // already released or stolen
   }
 }
 
@@ -135,34 +161,67 @@ function isLoopState(value: unknown): value is LoopState {
   return true
 }
 
+const TASK_STATUSES = new Set<TaskStatus>([
+  'ready',
+  'running',
+  'review_pending',
+  'merge_ready',
+  'rework',
+  'blocked',
+  'done',
+  'failed',
+])
+const MODEL_TIERS = new Set<ModelTier>(['T0', 'T1', 'T2', 'T3'])
+const RISKS = new Set<Risk>(['low', 'medium', 'high'])
+
 function isTaskShape(value: unknown): boolean {
   if (typeof value !== 'object' || value === null) return false
   const task = value as Record<string, unknown>
-  return typeof task.id === 'string' && typeof task.status === 'string' && typeof task.tier === 'string'
+  return typeof task.id === 'string'
+    && typeof task.title === 'string'
+    && MODEL_TIERS.has(task.tier as ModelTier)
+    && TASK_STATUSES.has(task.status as TaskStatus)
+    && RISKS.has(task.risk as Risk)
+    && isNonNegInt(task.attempts)
+    && isNonNegInt(task.reviewCycles)
+    && isStringArray(task.allowedPaths)
+    && isStringArray(task.acceptance)
 }
 
 function isUsageShape(value: unknown): boolean {
   if (typeof value !== 'object' || value === null) return false
   const usage = value as Record<string, unknown>
-  return isFiniteNumber(usage.tokens)
-    && isFiniteNumber(usage.costUsdSession)
-    && isFiniteNumber(usage.costUsdDay)
-    && isFiniteNumber(usage.parallelWorkers)
-    && isFiniteNumber(usage.lastProgressAt)
-    && Array.isArray(usage.lastActions)
-    && usage.lastActions.every(item => typeof item === 'string')
-    && isNumberRecord(usage.taskAttempts)
-    && isNumberRecord(usage.reviewCycles)
-    && isNumberRecord(usage.taskStartedAt)
+  return isNonNegNumberRecord(usage.tokens)
+    && isNonNegNumber(usage.costUsdSession)
+    && isNonNegNumber(usage.costUsdDay)
+    && isNonNegInt(usage.parallelWorkers)
+    && isNonNegInt(usage.lastProgressAt)
+    && isStringArray(usage.lastActions)
+    && isNonNegIntRecord(usage.taskAttempts)
+    && isNonNegIntRecord(usage.reviewCycles)
+    && isNonNegIntRecord(usage.taskStartedAt)
 }
 
-function isFiniteNumber(value: unknown): value is number {
-  return typeof value === 'number' && Number.isFinite(value)
+function isNonNegNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
 }
 
-function isNumberRecord(value: unknown): boolean {
+function isNonNegInt(value: unknown): value is number {
+  return isNonNegNumber(value) && Number.isInteger(value)
+}
+
+function isNonNegIntRecord(value: unknown): boolean {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
-  return Object.values(value).every(isFiniteNumber)
+  return Object.values(value).every(isNonNegInt)
+}
+
+function isNonNegNumberRecord(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+  return Object.values(value).every(isNonNegNumber)
+}
+
+function isStringArray(value: unknown): boolean {
+  return Array.isArray(value) && value.every(item => typeof item === 'string')
 }
 
 function isActionShape(value: unknown): boolean {

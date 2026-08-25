@@ -99,6 +99,30 @@ describe('persist and tick', () => {
     expect(loaded.supervisor?.reason).toBe('invalid_state')
   })
 
+  it('halts when a task record is missing required fields', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'devloop-'))
+    await mkdir(join(root, '.devloop'))
+    await writeFile(join(root, '.devloop', 'STATE.json'), JSON.stringify({
+      ...emptyState(0),
+      tasks: [{ id: 't-1', status: 'ready', tier: 'T1' }],
+    }), 'utf8')
+    const loaded = await loadState(root, 1)
+    expect(loaded.killSwitch).toBe(true)
+    expect(loaded.supervisor?.reason).toBe('invalid_state')
+  })
+
+  it('halts when persisted attempts are negative', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'devloop-'))
+    await mkdir(join(root, '.devloop'))
+    await writeFile(join(root, '.devloop', 'STATE.json'), JSON.stringify({
+      ...emptyState(0),
+      usage: { ...emptyState(0).usage, taskAttempts: { 't-1': -1 } },
+    }), 'utf8')
+    const loaded = await loadState(root, 1)
+    expect(loaded.killSwitch).toBe(true)
+    expect(loaded.supervisor?.reason).toBe('invalid_state')
+  })
+
   it('round-trips STATE.json', async () => {
     const root = await mkdtemp(join(tmpdir(), 'devloop-'))
     await mkdir(join(root, '.devloop'))

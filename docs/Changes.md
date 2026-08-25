@@ -87,3 +87,7 @@ External Codex CLI review on PR #1 returned REQUEST_CHANGES. Applied the four it
 - 高风险 `review_pending` / `merge_ready` 不再直接 review/merge
 - 同一 root 上第二个进程的 tick 会跳过并打 log，直到锁释放
 
+## 0.1.5 — 2026-08-25
+
+External Codex CLI review on PR #1 returned REQUEST_CHANGES. Applied the five P2 items without re-judging them: failed tasks escalate before normal work, token caps are per-task, stale LOCK is claimed by rename-then-exclusive-create, task records and nonnegative budget fields fail closed.
+

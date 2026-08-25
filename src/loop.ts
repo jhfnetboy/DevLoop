@@ -33,6 +33,11 @@ export function decideNextAction(state: LoopState): LoopAction {
     return { type: 'escalate', taskId: highRisk.id, reason: 'security_high_risk' }
   }
 
+  const failed = first(state.tasks, 'failed')
+  if (failed && !state.tasks.some(task => task.status === 'running')) {
+    return { type: 'escalate', taskId: failed.id, reason: 'repeated_test_failure' }
+  }
+
   const reviewPending = first(state.tasks, 'review_pending')
   if (reviewPending) {
     return { type: 'review', taskId: reviewPending.id }
@@ -46,11 +51,6 @@ export function decideNextAction(state: LoopState): LoopAction {
   const ready = first(state.tasks, 'ready') ?? first(state.tasks, 'rework')
   if (ready) {
     return { type: 'delegate', taskId: ready.id }
-  }
-
-  const failed = first(state.tasks, 'failed')
-  if (failed && !state.tasks.some(task => task.status === 'running')) {
-    return { type: 'escalate', taskId: failed.id, reason: 'repeated_test_failure' }
   }
 
   const blocked = first(state.tasks, 'blocked')

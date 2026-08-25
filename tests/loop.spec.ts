@@ -113,6 +113,20 @@ describe('decideNextAction', () => {
     })
   })
 
+  it('escalates failed tasks before review or delegate', () => {
+    expect(decideNextAction(state({
+      tasks: [
+        task({ id: 'ready-1', status: 'ready' }),
+        task({ id: 'rev-1', status: 'review_pending' }),
+        task({ id: 'fail-1', status: 'failed' }),
+      ],
+    }))).toEqual({
+      type: 'escalate',
+      taskId: 'fail-1',
+      reason: 'repeated_test_failure',
+    })
+  })
+
   it('escalates high-risk review_pending before review', () => {
     expect(decideNextAction(state({
       tasks: [task({ id: 't-h', status: 'review_pending', risk: 'high' })],
