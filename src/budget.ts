@@ -48,6 +48,10 @@ export function evaluateBudget(
     if (attempts >= limits.maxTaskAttempts) {
       return { ok: false, reason: `max_task_attempts:${next.taskId}` }
     }
+    const cycles = usage.reviewCycles[next.taskId] ?? 0
+    if (cycles >= limits.maxReviewCycles) {
+      return { ok: false, reason: `max_review_cycles:${next.taskId}` }
+    }
   }
 
   if (next.type === 'review') {

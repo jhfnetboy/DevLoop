@@ -123,6 +123,28 @@ describe('persist and tick', () => {
     expect(loaded.supervisor?.reason).toBe('invalid_state')
   })
 
+  it('halts when a task id is prototype-reserved', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'devloop-'))
+    await mkdir(join(root, '.devloop'))
+    await writeFile(join(root, '.devloop', 'STATE.json'), JSON.stringify({
+      ...emptyState(0),
+      tasks: [{
+        id: '__proto__',
+        title: 'bad',
+        tier: 'T1',
+        status: 'ready',
+        risk: 'low',
+        attempts: 0,
+        reviewCycles: 0,
+        allowedPaths: ['src/**'],
+        acceptance: ['ok'],
+      }],
+    }), 'utf8')
+    const loaded = await loadState(root, 1)
+    expect(loaded.killSwitch).toBe(true)
+    expect(loaded.supervisor?.reason).toBe('invalid_state')
+  })
+
   it('round-trips STATE.json', async () => {
     const root = await mkdtemp(join(tmpdir(), 'devloop-'))
     await mkdir(join(root, '.devloop'))

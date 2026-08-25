@@ -113,6 +113,29 @@ describe('decideNextAction', () => {
     })
   })
 
+  it('idles when a failed task is waiting on in-flight work', () => {
+    expect(decideNextAction(state({
+      tasks: [
+        task({ id: 'fail-1', status: 'failed' }),
+        task({ id: 'run-1', status: 'running' }),
+        task({ id: 'ready-1', status: 'ready' }),
+      ],
+    }))).toEqual({ type: 'idle' })
+  })
+
+  it('escalates blocked tasks before review or delegate', () => {
+    expect(decideNextAction(state({
+      tasks: [
+        task({ id: 'ready-1', status: 'ready' }),
+        task({ id: 'block-1', status: 'blocked' }),
+      ],
+    }))).toEqual({
+      type: 'escalate',
+      taskId: 'block-1',
+      reason: 'blocked_task',
+    })
+  })
+
   it('escalates failed tasks before review or delegate', () => {
     expect(decideNextAction(state({
       tasks: [

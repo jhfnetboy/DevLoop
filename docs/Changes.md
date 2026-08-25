@@ -95,3 +95,7 @@ External Codex CLI review on PR #1 returned REQUEST_CHANGES. Applied the five P2
 
 External Codex CLI review on PR #1 returned REQUEST_CHANGES. Applied the three P2 items without re-judging them: missing `lastDispatchStatus` does not latch, persisted `LoopAction` is a full discriminated union, locks are stolen only when the holder pid is dead.
 
+## 0.1.7 — 2026-08-25
+
+External Codex CLI review on PR #1 returned REQUEST_CHANGES. Applied without re-judging: lock ownership is published with `link`, failed/blocked queues idle instead of dispatching other work, review caps apply to rework delegates, prototype-reserved task ids fail closed, `maxSameAction` is capped at 20.
+

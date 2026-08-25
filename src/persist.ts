@@ -1,4 +1,4 @@
-import { mkdir, open, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { link, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { emptyUsage } from './budget.js'
 import type { LoopState, ModelTier, Risk, TaskStatus } from './types.js'
@@ -79,6 +79,7 @@ export async function withStateLock<T>(root: string, fn: () => Promise<T>): Prom
 async function tryLock(file: string): Promise<boolean> {
   if (await exclusiveCreate(file)) return true
   const holder = await readHolderPid(file)
+  if (holder === 'pending') return false
   if (holder !== null && isPidAlive(holder)) return false
   const stolen = `${file}.${process.pid}.${Date.now()}.stale`
   try {
@@ -90,11 +91,12 @@ async function tryLock(file: string): Promise<boolean> {
   return exclusiveCreate(file)
 }
 
-async function readHolderPid(file: string): Promise<number | null> {
+async function readHolderPid(file: string): Promise<number | 'pending' | null> {
   try {
-    const raw = (await readFile(file, 'utf8')).trim()
-    if (!/^[0-9]+$/.test(raw)) return null
-    const pid = Number(raw)
+    const raw = (await readFile(file, 'utf8'))
+    if (raw.trim() === '') return 'pending'
+    if (!/^[0-9]+$/.test(raw.trim())) return null
+    const pid = Number(raw.trim())
     return Number.isInteger(pid) && pid > 0 ? pid : null
   } catch {
     return null
@@ -111,17 +113,16 @@ function isPidAlive(pid: number): boolean {
 }
 
 async function exclusiveCreate(file: string): Promise<boolean> {
+  const tmp = `${file}.${process.pid}.${Date.now()}.claim`
+  await writeFile(tmp, String(process.pid), 'utf8')
   try {
-    const handle = await open(file, 'wx')
-    try {
-      await handle.writeFile(String(process.pid), 'utf8')
-    } finally {
-      await handle.close()
-    }
+    await link(tmp, file)
     return true
   } catch (error) {
     if (isAlreadyExists(error)) return false
     throw error
+  } finally {
+    await rm(tmp, { force: true })
   }
 }
 
@@ -190,6 +191,7 @@ function isTaskShape(value: unknown): boolean {
   if (typeof value !== 'object' || value === null) return false
   const task = value as Record<string, unknown>
   return typeof task.id === 'string'
+    && isSafeKey(task.id)
     && typeof task.title === 'string'
     && MODEL_TIERS.has(task.tier as ModelTier)
     && TASK_STATUSES.has(task.status as TaskStatus)
@@ -224,12 +226,16 @@ function isNonNegInt(value: unknown): value is number {
 
 function isNonNegIntRecord(value: unknown): boolean {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
-  return Object.values(value).every(isNonNegInt)
+  return Object.keys(value).every(isSafeKey) && Object.values(value).every(isNonNegInt)
 }
 
 function isNonNegNumberRecord(value: unknown): boolean {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
-  return Object.values(value).every(isNonNegNumber)
+  return Object.keys(value).every(isSafeKey) && Object.values(value).every(isNonNegNumber)
+}
+
+function isSafeKey(id: string): boolean {
+  return id.length > 0 && id !== '__proto__' && id !== 'constructor' && id !== 'prototype'
 }
 
 function isStringArray(value: unknown): boolean {

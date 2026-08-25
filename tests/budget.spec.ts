@@ -118,6 +118,16 @@ describe('evaluateBudget', () => {
     expect(verdict).toEqual({ ok: false, reason: 'max_tokens_per_task' })
   })
 
+  it('trips review cap on a rework delegate', () => {
+    const verdict = evaluateBudget(
+      base({ usage: { ...emptyUsage(0), reviewCycles: { 't-1': 2 } } }),
+      limits,
+      0,
+      { type: 'delegate', taskId: 't-1' },
+    )
+    expect(verdict).toEqual({ ok: false, reason: 'max_review_cycles:t-1' })
+  })
+
   it('does not apply another task token cap to a fresh task', () => {
     const verdict = evaluateBudget(
       base({ usage: { ...emptyUsage(0), tokens: { 't-1': 500_000 } } }),

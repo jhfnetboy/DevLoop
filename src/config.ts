@@ -47,7 +47,7 @@ export const ConfigSchema: s<Config> = s.object({
     maxTokensPerTask: s.number().step(1).min(1).default(500_000),
     maxCostUsdPerSession: s.number().min(0).default(2),
     maxCostUsdPerDay: s.number().min(0).default(20),
-    maxSameAction: s.number().step(1).min(1).default(3),
+    maxSameAction: s.number().step(1).min(1).max(20).default(3),
     noProgressMinutes: s.number().step(1).min(1).default(15),
   }).default({
     maxTaskAttempts: 3,
