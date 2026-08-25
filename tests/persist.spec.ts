@@ -7,6 +7,20 @@ import { emptyState, loadState, saveState, workspaceArmed } from '../src/persist
 import { runTick } from '../src/tick.ts'
 import type { Task } from '../src/types.ts'
 
+function sampleTask(status: Task['status'] = 'ready'): Task {
+  return {
+    id: 't-1',
+    title: 'crud',
+    tier: 'T1',
+    status,
+    risk: 'low',
+    attempts: 0,
+    reviewCycles: 0,
+    allowedPaths: ['src/**'],
+    acceptance: ['tests pass'],
+  }
+}
+
 describe('persist and tick', () => {
   it('reports a workspace as unarmed when .devloop is missing', async () => {
     const root = await mkdtemp(join(tmpdir(), 'devloop-'))
@@ -26,6 +40,23 @@ describe('persist and tick', () => {
     const loaded = await loadState(root, 1)
     expect(loaded.killSwitch).toBe(true)
     expect(loaded.lastAction).toEqual({ type: 'stop', reason: 'kill_switch' })
+  })
+
+  it('halts on partial usage that would crash evaluateBudget', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'devloop-'))
+    await mkdir(join(root, '.devloop'))
+    await writeFile(join(root, '.devloop', 'STATE.json'), JSON.stringify({
+      version: 1,
+      goalCompleted: false,
+      killSwitch: false,
+      supervisor: null,
+      tasks: [],
+      usage: {},
+      lastAction: { type: 'idle' },
+    }), 'utf8')
+    const loaded = await loadState(root, 1)
+    expect(loaded.killSwitch).toBe(true)
+    expect(loaded.supervisor?.reason).toBe('invalid_state')
   })
 
   it('round-trips STATE.json', async () => {
@@ -65,41 +96,34 @@ describe('persist and tick', () => {
   })
 
   it('increments delegate attempts on a recorded tick', () => {
-    const task: Task = {
-      id: 't-1',
-      title: 'crud',
-      tier: 'T1',
-      status: 'ready',
-      risk: 'low',
-      attempts: 0,
-      reviewCycles: 0,
-      allowedPaths: ['src/**'],
-      acceptance: ['tests pass'],
-    }
-    const seeded = { ...emptyState(0), tasks: [task] }
-    const result = runTick(seeded, resolveConfig({}).budget, 10)
+    const result = runTick({ ...emptyState(0), tasks: [sampleTask()] }, resolveConfig({}).budget, 10)
     expect(result.action).toEqual({ type: 'delegate', taskId: 't-1' })
     expect(result.state.usage.taskAttempts['t-1']).toBe(1)
     expect(result.state.usage.taskStartedAt['t-1']).toBe(10)
   })
 
+  it('allows a rework delegate after a running skip', () => {
+    const limits = resolveConfig({}).budget
+    const first = runTick({ ...emptyState(0), tasks: [sampleTask('ready')] }, limits, 10)
+    const running = runTick({
+      ...first.state,
+      tasks: [sampleTask('running')],
+    }, limits, 20)
+    expect(running.skipped).toBe(true)
+    const retry = runTick({
+      ...running.state,
+      tasks: [sampleTask('rework')],
+    }, limits, 30)
+    expect(retry.skipped).toBe(false)
+    expect(retry.action).toEqual({ type: 'delegate', taskId: 't-1' })
+    expect(retry.state.usage.taskAttempts['t-1']).toBe(2)
+  })
+
   it('stops on budget instead of delegating forever', () => {
-    const task: Task = {
-      id: 't-1',
-      title: 'crud',
-      tier: 'T1',
-      status: 'ready',
-      risk: 'low',
-      attempts: 0,
-      reviewCycles: 0,
-      allowedPaths: ['src/**'],
-      acceptance: ['tests pass'],
-    }
-    const state = emptyState(0)
     const blown = {
-      ...state,
-      tasks: [task],
-      usage: { ...state.usage, taskAttempts: { 't-1': 3 } },
+      ...emptyState(0),
+      tasks: [sampleTask()],
+      usage: { ...emptyState(0).usage, taskAttempts: { 't-1': 3 } },
     }
     const result = runTick(blown, resolveConfig({}).budget, 10)
     expect(result.action).toEqual({ type: 'stop', reason: 'budget' })

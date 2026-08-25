@@ -25,7 +25,9 @@ export function runTick(state: LoopState, limits: BudgetLimits, now: number): Ti
   }
 
   let intended = decideNextAction(state)
-  const latched = isWorkAction(intended) && actionKey(intended) === actionKey(state.lastAction)
+  const latched = isWorkAction(intended)
+    && actionKey(intended) === actionKey(state.lastAction)
+    && dispatchStatus(state, intended) === (state.lastDispatchStatus ?? dispatchStatus(state, state.lastAction))
   if (latched) {
     intended = { type: 'idle' }
   }
@@ -44,6 +46,7 @@ export function runTick(state: LoopState, limits: BudgetLimits, now: number): Ti
     ...state,
     usage,
     lastAction: action,
+    lastDispatchStatus: isWorkAction(action) ? dispatchStatus(state, action) : state.lastDispatchStatus,
     updatedAt: new Date(now).toISOString(),
     killSwitch: action.type === 'stop',
     supervisor: circuit.ok
@@ -56,6 +59,16 @@ export function runTick(state: LoopState, limits: BudgetLimits, now: number): Ti
 
 function isWorkAction(action: LoopAction): boolean {
   return action.type !== 'idle' && action.type !== 'stop'
+}
+
+function dispatchStatus(state: LoopState, action: LoopAction): string | null {
+  if (action.type === 'delegate' || action.type === 'review' || action.type === 'merge') {
+    return state.tasks.find(task => task.id === action.taskId)?.status ?? null
+  }
+  if (action.type === 'escalate') {
+    return action.reason
+  }
+  return null
 }
 
 function taskIdOf(action: LoopAction): string | null {

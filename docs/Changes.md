@@ -48,3 +48,7 @@ pnpm build
 - 已有 `.devloop/` 但没有 `GOAL.md` 的目录不再被 tick
 - 第一次 `plan`/`delegate` 之后会保持 lastAction，直到超时熔断或外部改状态
 
+## 0.1.2 — 2026-08-25
+
+External Codex CLI review on PR #1 returned REQUEST_CHANGES. Applied the four P2 items without re-judging them: rework retries are not latched, persisted usage/tasks/actions are fully validated, `failed` queues escalate, high-risk ready tasks escalate.
+

@@ -25,6 +25,7 @@ function state(overrides: Partial<LoopState> = {}): LoopState {
     tasks: [],
     usage: emptyUsage(0),
     lastAction: { type: 'idle' },
+    lastDispatchStatus: null,
     updatedAt: new Date(0).toISOString(),
     ...overrides,
   }
@@ -100,5 +101,25 @@ describe('decideNextAction', () => {
     expect(decideNextAction(state({
       tasks: [task({ id: 't-1', status: 'done' })],
     }))).toEqual({ type: 'stop', reason: 'goal_complete' })
+  })
+
+  it('escalates a failed queue instead of idling', () => {
+    expect(decideNextAction(state({
+      tasks: [task({ id: 't-9', status: 'failed' })],
+    }))).toEqual({
+      type: 'escalate',
+      taskId: 't-9',
+      reason: 'repeated_test_failure',
+    })
+  })
+
+  it('escalates high-risk ready work before delegate', () => {
+    expect(decideNextAction(state({
+      tasks: [task({ id: 't-h', status: 'ready', risk: 'high' })],
+    }))).toEqual({
+      type: 'escalate',
+      taskId: 't-h',
+      reason: 'security_high_risk',
+    })
   })
 })

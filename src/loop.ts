@@ -33,7 +33,15 @@ export function decideNextAction(state: LoopState): LoopAction {
 
   const ready = first(state.tasks, 'ready') ?? first(state.tasks, 'rework')
   if (ready) {
+    if (ready.risk === 'high') {
+      return { type: 'escalate', taskId: ready.id, reason: 'security_high_risk' }
+    }
     return { type: 'delegate', taskId: ready.id }
+  }
+
+  const failed = first(state.tasks, 'failed')
+  if (failed && !state.tasks.some(task => task.status === 'running')) {
+    return { type: 'escalate', taskId: failed.id, reason: 'repeated_test_failure' }
   }
 
   const blocked = first(state.tasks, 'blocked')
