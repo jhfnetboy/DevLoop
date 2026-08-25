@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { resolveConfig } from '../src/config.ts'
-import { emptyState, loadState, saveState, workspaceArmed } from '../src/persist.ts'
+import { emptyState, loadState, saveState, withStateLock, workspaceArmed } from '../src/persist.ts'
 import { runTick } from '../src/tick.ts'
 import type { Task } from '../src/types.ts'
 
@@ -40,6 +40,46 @@ describe('persist and tick', () => {
     const loaded = await loadState(root, 1)
     expect(loaded.killSwitch).toBe(true)
     expect(loaded.lastAction).toEqual({ type: 'stop', reason: 'kill_switch' })
+  })
+
+  it('halts when usage omits a hard-cap field', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'devloop-'))
+    await mkdir(join(root, '.devloop'))
+    const usage = { ...emptyState(0).usage } as Record<string, unknown>
+    delete usage.costUsdDay
+    await writeFile(join(root, '.devloop', 'STATE.json'), JSON.stringify({
+      version: 1,
+      goalCompleted: false,
+      killSwitch: false,
+      supervisor: null,
+      tasks: [],
+      usage,
+      lastAction: { type: 'idle' },
+    }), 'utf8')
+    const loaded = await loadState(root, 1)
+    expect(loaded.killSwitch).toBe(true)
+    expect(loaded.supervisor?.reason).toBe('invalid_state')
+  })
+
+  it('returns locked when another holder owns LOCK', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'devloop-'))
+    await mkdir(join(root, '.devloop'))
+    let release!: () => void
+    let entered!: () => void
+    const started = new Promise<void>(resolve => {
+      entered = resolve
+    })
+    const held = withStateLock(root, async () => {
+      entered()
+      await new Promise<void>(resolve => {
+        release = resolve
+      })
+      return 'inside'
+    })
+    await started
+    expect(await withStateLock(root, async () => 'second')).toBe('locked')
+    release()
+    expect(await held).toBe('inside')
   })
 
   it('halts on partial usage that would crash evaluateBudget', async () => {

@@ -76,3 +76,14 @@ pnpm test
 pnpm build
 ```
 
+## 0.1.4 — 2026-08-25
+
+External Codex CLI review on PR #1 returned REQUEST_CHANGES. Applied the four items without re-judging them: running-task timeouts fire without waiting for another `delegate`, usage JSON must include every hard-cap field, high-risk work escalates before review/merge, ticks take a cross-process `.devloop/LOCK`.
+
+### 可能影响
+
+- 损坏或截断的 `STATE.json` 会安全停机，包括缺 `costUsdDay` / `costUsdSession` / `parallelWorkers`
+- `running` 超时后会 `stop`/`budget`，即使外层动作是 idle
+- 高风险 `review_pending` / `merge_ready` 不再直接 review/merge
+- 同一 root 上第二个进程的 tick 会跳过并打 log，直到锁释放
+

@@ -38,17 +38,15 @@ export function evaluateBudget(
     return { ok: false, reason: 'max_parallel_workers' }
   }
 
+  const timedOut = timedOutTaskId(state, limits, now)
+  if (timedOut) {
+    return { ok: false, reason: `task_timeout:${timedOut}` }
+  }
+
   if (next.type === 'delegate') {
     const attempts = usage.taskAttempts[next.taskId] ?? 0
     if (attempts >= limits.maxTaskAttempts) {
       return { ok: false, reason: `max_task_attempts:${next.taskId}` }
-    }
-    const started = usage.taskStartedAt[next.taskId]
-    if (started !== undefined) {
-      const elapsedMin = (now - started) / 60_000
-      if (elapsedMin >= limits.taskTimeoutMinutes) {
-        return { ok: false, reason: `task_timeout:${next.taskId}` }
-      }
     }
   }
 
@@ -102,6 +100,17 @@ export function recordAction(usage: BudgetUsage, action: LoopAction, now: number
     taskStartedAt,
     reviewCycles,
     lastProgressAt: progressed ? now : usage.lastProgressAt,
+  }
+}
+
+const TERMINAL_STATUS = new Set(['done', 'failed'])
+
+function timedOutTaskId(state: LoopState, limits: BudgetLimits, now: number): string | undefined {
+  for (const [taskId, started] of Object.entries(state.usage.taskStartedAt)) {
+    if (typeof started !== 'number') continue
+    const task = state.tasks.find(entry => entry.id === taskId)
+    if (task && TERMINAL_STATUS.has(task.status)) continue
+    if ((now - started) / 60_000 >= limits.taskTimeoutMinutes) return taskId
   }
 }
 

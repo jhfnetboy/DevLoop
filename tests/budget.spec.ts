@@ -41,7 +41,34 @@ describe('evaluateBudget', () => {
     expect(verdict).toEqual({ ok: false, reason: 'max_task_attempts:t-1' })
   })
 
-  it('trips task wall-clock timeout', () => {
+  it('trips task wall-clock timeout on idle while a task is running', () => {
+    const verdict = evaluateBudget(
+      base({
+        tasks: [{
+          id: 't-1',
+          title: 't-1',
+          tier: 'T1',
+          status: 'running',
+          risk: 'low',
+          attempts: 0,
+          reviewCycles: 0,
+          allowedPaths: ['src/**'],
+          acceptance: ['tests pass'],
+        }],
+        usage: {
+          ...emptyUsage(0),
+          taskStartedAt: { 't-1': 0 },
+          lastProgressAt: 44 * 60_000,
+        },
+      }),
+      limits,
+      45 * 60_000,
+      { type: 'idle' },
+    )
+    expect(verdict).toEqual({ ok: false, reason: 'task_timeout:t-1' })
+  })
+
+  it('trips task wall-clock timeout on delegate', () => {
     const verdict = evaluateBudget(
       base({ usage: { ...emptyUsage(0), taskStartedAt: { 't-1': 0 } } }),
       limits,

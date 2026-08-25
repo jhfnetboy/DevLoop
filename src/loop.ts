@@ -1,5 +1,12 @@
 import type { LoopAction, LoopState, Task } from './types.js'
 
+const HIGH_RISK_ACTIVE = new Set<Task['status']>([
+  'ready',
+  'rework',
+  'review_pending',
+  'merge_ready',
+])
+
 const first = (tasks: readonly Task[], status: Task['status']): Task | undefined =>
   tasks.find(task => task.status === status)
 
@@ -21,6 +28,11 @@ export function decideNextAction(state: LoopState): LoopAction {
     }
   }
 
+  const highRisk = state.tasks.find(task => task.risk === 'high' && HIGH_RISK_ACTIVE.has(task.status))
+  if (highRisk) {
+    return { type: 'escalate', taskId: highRisk.id, reason: 'security_high_risk' }
+  }
+
   const reviewPending = first(state.tasks, 'review_pending')
   if (reviewPending) {
     return { type: 'review', taskId: reviewPending.id }
@@ -33,9 +45,6 @@ export function decideNextAction(state: LoopState): LoopAction {
 
   const ready = first(state.tasks, 'ready') ?? first(state.tasks, 'rework')
   if (ready) {
-    if (ready.risk === 'high') {
-      return { type: 'escalate', taskId: ready.id, reason: 'security_high_risk' }
-    }
     return { type: 'delegate', taskId: ready.id }
   }
 

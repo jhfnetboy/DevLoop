@@ -113,6 +113,26 @@ describe('decideNextAction', () => {
     })
   })
 
+  it('escalates high-risk review_pending before review', () => {
+    expect(decideNextAction(state({
+      tasks: [task({ id: 't-h', status: 'review_pending', risk: 'high' })],
+    }))).toEqual({
+      type: 'escalate',
+      taskId: 't-h',
+      reason: 'security_high_risk',
+    })
+  })
+
+  it('escalates high-risk merge_ready before merge', () => {
+    expect(decideNextAction(state({
+      tasks: [task({ id: 't-h', status: 'merge_ready', risk: 'high' })],
+    }))).toEqual({
+      type: 'escalate',
+      taskId: 't-h',
+      reason: 'security_high_risk',
+    })
+  })
+
   it('escalates high-risk ready work before delegate', () => {
     expect(decideNextAction(state({
       tasks: [task({ id: 't-h', status: 'ready', risk: 'high' })],
