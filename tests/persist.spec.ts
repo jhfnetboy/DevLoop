@@ -42,6 +42,28 @@ describe('persist and tick', () => {
     expect(loaded.lastAction).toEqual({ type: 'stop', reason: 'kill_switch' })
   })
 
+  it('halts when supervisor is omitted from STATE.json', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'devloop-'))
+    await mkdir(join(root, '.devloop'))
+    const state = { ...emptyState(0) } as Record<string, unknown>
+    delete state.supervisor
+    await writeFile(join(root, '.devloop', 'STATE.json'), JSON.stringify(state), 'utf8')
+    const loaded = await loadState(root, 1)
+    expect(loaded.killSwitch).toBe(true)
+    expect(loaded.supervisor?.reason).toBe('invalid_state')
+  })
+
+  it('halts when updatedAt is omitted from STATE.json', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'devloop-'))
+    await mkdir(join(root, '.devloop'))
+    const state = { ...emptyState(0) } as Record<string, unknown>
+    delete state.updatedAt
+    await writeFile(join(root, '.devloop', 'STATE.json'), JSON.stringify(state), 'utf8')
+    const loaded = await loadState(root, 1)
+    expect(loaded.killSwitch).toBe(true)
+    expect(loaded.supervisor?.reason).toBe('invalid_state')
+  })
+
   it('halts when usage omits a hard-cap field', async () => {
     const root = await mkdtemp(join(tmpdir(), 'devloop-'))
     await mkdir(join(root, '.devloop'))

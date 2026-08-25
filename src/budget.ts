@@ -34,7 +34,8 @@ export function evaluateBudget(
   if (usage.costUsdSession >= limits.maxCostUsdPerSession) {
     return fail('session_cost_cap')
   }
-  if (usage.parallelWorkers >= limits.maxParallelWorkers && next.type === 'delegate') {
+  const running = state.tasks.filter(task => task.status === 'running').length
+  if (running >= limits.maxParallelWorkers && next.type === 'delegate') {
     return fail('max_parallel_workers', next.taskId)
   }
 

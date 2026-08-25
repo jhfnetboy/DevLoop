@@ -183,9 +183,10 @@ function isLoopState(value: unknown): value is LoopState {
   if (new Set(ids).size !== ids.length) return false
   if (!isUsageShape(record.usage)) return false
   if (!isActionShape(record.lastAction)) return false
-  if (record.supervisor !== null && record.supervisor !== undefined && !isSupervisorShape(record.supervisor)) {
+  if (record.supervisor !== null && !isSupervisorShape(record.supervisor)) {
     return false
   }
+  if (typeof record.updatedAt !== 'string' || record.updatedAt.length === 0) return false
   if (record.lastDispatchStatus !== undefined && record.lastDispatchStatus !== null && typeof record.lastDispatchStatus !== 'string') {
     return false
   }

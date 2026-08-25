@@ -107,3 +107,7 @@ External Codex CLI review on PR #1 returned REQUEST_CHANGES. Applied without re-
 
 External Codex CLI review on PR #1 returned REQUEST_CHANGES. Applied without re-judging: usage counters use own-property lookups, leftover `taskStartedAt` entries do not timeout missing tasks, and budget stops attribute the supervisor hold to the timed-out task.
 
+## 0.1.10 — 2026-08-25
+
+External Codex CLI review on PR #1 returned REQUEST_CHANGES. Applied without re-judging: parallel-worker cap is derived from `running` tasks, and persisted state requires `supervisor` plus `updatedAt`.
+

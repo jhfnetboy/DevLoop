@@ -62,7 +62,6 @@ describe('Plan 0.1.4 budget 1:1', () => {
   it.each([
     ['daily_cost_cap', { costUsdDay: 20 }, { type: 'plan' as const }, 'daily_cost_cap'],
     ['session_cost_cap', { costUsdSession: 2 }, { type: 'plan' as const }, 'session_cost_cap'],
-    ['max_parallel_workers', { parallelWorkers: 5 }, { type: 'delegate' as const, taskId: 't' }, 'max_parallel_workers'],
     ['max_review_cycles', { reviewCycles: { t: 2 } }, { type: 'review' as const, taskId: 't' }, 'max_review_cycles:t'],
   ])('%s', (_name, usagePatch, next, reason) => {
     const state = baseState({ usage: { ...emptyUsage(0), ...usagePatch } })
@@ -72,6 +71,17 @@ describe('Plan 0.1.4 budget 1:1', () => {
   it('recordAction increments review cycles', () => {
     const usage = recordAction(emptyUsage(0), { type: 'review', taskId: 't' }, 5)
     expect(usage.reviewCycles.t).toBe(1)
+  })
+
+  it('caps parallel workers from running tasks, not the stored counter', () => {
+    const tasks = Array.from({ length: 5 }, (_, index) => makeTask({ id: `r-${index}`, status: 'running' }))
+    const state = baseState({
+      tasks: [...tasks, makeTask({ id: 't', status: 'ready' })],
+    })
+    expect(evaluateBudget(state, limits, 0, { type: 'delegate', taskId: 't' })).toMatchObject({
+      ok: false,
+      reason: 'max_parallel_workers',
+    })
   })
 })
 
