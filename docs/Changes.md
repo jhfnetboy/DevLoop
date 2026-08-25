@@ -91,3 +91,7 @@ External Codex CLI review on PR #1 returned REQUEST_CHANGES. Applied the four it
 
 External Codex CLI review on PR #1 returned REQUEST_CHANGES. Applied the five P2 items without re-judging them: failed tasks escalate before normal work, token caps are per-task, stale LOCK is claimed by rename-then-exclusive-create, task records and nonnegative budget fields fail closed.
 
+## 0.1.6 — 2026-08-25
+
+External Codex CLI review on PR #1 returned REQUEST_CHANGES. Applied the three P2 items without re-judging them: missing `lastDispatchStatus` does not latch, persisted `LoopAction` is a full discriminated union, locks are stolen only when the holder pid is dead.
+

@@ -27,7 +27,7 @@ export function runTick(state: LoopState, limits: BudgetLimits, now: number): Ti
   let intended = decideNextAction(state)
   const latched = isWorkAction(intended)
     && actionKey(intended) === actionKey(state.lastAction)
-    && dispatchStatus(state, intended) === (state.lastDispatchStatus ?? dispatchStatus(state, state.lastAction))
+    && dispatchStatus(state, intended) === state.lastDispatchStatus
   if (latched) {
     intended = { type: 'idle' }
   }

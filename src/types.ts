@@ -65,7 +65,7 @@ export interface LoopState {
   readonly tasks: readonly Task[]
   readonly usage: BudgetUsage
   readonly lastAction: LoopAction
-  readonly lastDispatchStatus: string | null
+  readonly lastDispatchStatus?: string | null
   readonly updatedAt: string
 }
 

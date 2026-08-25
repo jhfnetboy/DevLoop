@@ -8,7 +8,6 @@ export const DEVLOOP_DIR = '.devloop'
 export const STATE_FILE = 'STATE.json'
 export const GOAL_FILE = 'GOAL.md'
 export const LOCK_FILE = 'LOCK'
-export const LOCK_STALE_MS = 30_000
 
 export function devloopDir(root: string): string {
   return join(root, DEVLOOP_DIR)
@@ -52,10 +51,7 @@ export async function loadState(root: string, now: number): Promise<LoopState> {
     const raw = await readFile(statePath(root), 'utf8')
     const parsed: unknown = JSON.parse(raw)
     if (!isLoopState(parsed)) return haltState(now, 'invalid_state')
-    return {
-      ...parsed,
-      lastDispatchStatus: parsed.lastDispatchStatus ?? null,
-    }
+    return parsed
   } catch (error) {
     if (isNotFound(error)) return emptyState(now)
     return haltState(now, 'unreadable_state')
@@ -82,12 +78,8 @@ export async function withStateLock<T>(root: string, fn: () => Promise<T>): Prom
 
 async function tryLock(file: string): Promise<boolean> {
   if (await exclusiveCreate(file)) return true
-  try {
-    const info = await stat(file)
-    if (Date.now() - info.mtimeMs < LOCK_STALE_MS) return false
-  } catch {
-    return exclusiveCreate(file)
-  }
+  const holder = await readHolderPid(file)
+  if (holder !== null && isPidAlive(holder)) return false
   const stolen = `${file}.${process.pid}.${Date.now()}.stale`
   try {
     await rename(file, stolen)
@@ -96,6 +88,26 @@ async function tryLock(file: string): Promise<boolean> {
   }
   await rm(stolen, { force: true })
   return exclusiveCreate(file)
+}
+
+async function readHolderPid(file: string): Promise<number | null> {
+  try {
+    const raw = (await readFile(file, 'utf8')).trim()
+    if (!/^[0-9]+$/.test(raw)) return null
+    const pid = Number(raw)
+    return Number.isInteger(pid) && pid > 0 ? pid : null
+  } catch {
+    return null
+  }
+}
+
+function isPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
 }
 
 async function exclusiveCreate(file: string): Promise<boolean> {
@@ -227,7 +239,26 @@ function isStringArray(value: unknown): boolean {
 function isActionShape(value: unknown): boolean {
   if (typeof value !== 'object' || value === null) return false
   const action = value as Record<string, unknown>
-  return typeof action.type === 'string'
+  switch (action.type) {
+    case 'idle':
+    case 'plan':
+      return true
+    case 'stop':
+      return action.reason === 'goal_complete'
+        || action.reason === 'budget'
+        || action.reason === 'blocked'
+        || action.reason === 'kill_switch'
+    case 'delegate':
+    case 'review':
+    case 'merge':
+      return typeof action.taskId === 'string' && action.taskId.length > 0
+    case 'escalate':
+      return typeof action.reason === 'string'
+        && action.reason.length > 0
+        && (action.taskId === null || typeof action.taskId === 'string')
+    default:
+      return false
+  }
 }
 
 function isSupervisorShape(value: unknown): boolean {

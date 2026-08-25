@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { resolveConfig } from '../src/config.ts'
-import { emptyState, loadState, saveState, withStateLock, workspaceArmed } from '../src/persist.ts'
+import { emptyState, loadState, lockPath, saveState, withStateLock, workspaceArmed } from '../src/persist.ts'
 import { runTick } from '../src/tick.ts'
 import type { Task } from '../src/types.ts'
 
@@ -181,6 +181,37 @@ describe('persist and tick', () => {
     expect(retry.skipped).toBe(false)
     expect(retry.action).toEqual({ type: 'delegate', taskId: 't-1' })
     expect(retry.state.usage.taskAttempts['t-1']).toBe(2)
+  })
+
+  it('does not latch rework when lastDispatchStatus is missing', () => {
+    const limits = resolveConfig({}).budget
+    const first = runTick({ ...emptyState(0), tasks: [sampleTask('ready')] }, limits, 10)
+    const { lastDispatchStatus: _omitted, ...rest } = first.state
+    const retry = runTick({
+      ...rest,
+      tasks: [sampleTask('rework')],
+    }, limits, 20)
+    expect(retry.skipped).toBe(false)
+    expect(retry.action).toEqual({ type: 'delegate', taskId: 't-1' })
+  })
+
+  it('halts on a stop action missing its reason', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'devloop-'))
+    await mkdir(join(root, '.devloop'))
+    await writeFile(join(root, '.devloop', 'STATE.json'), JSON.stringify({
+      ...emptyState(0),
+      lastAction: { type: 'stop' },
+    }), 'utf8')
+    const loaded = await loadState(root, 1)
+    expect(loaded.killSwitch).toBe(true)
+    expect(loaded.supervisor?.reason).toBe('invalid_state')
+  })
+
+  it('steals a lock whose holder pid is dead', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'devloop-'))
+    await mkdir(join(root, '.devloop'))
+    await writeFile(lockPath(root), '2147483647', 'utf8')
+    expect(await withStateLock(root, async () => 'stolen')).toBe('stolen')
   })
 
   it('stops on budget instead of delegating forever', () => {
