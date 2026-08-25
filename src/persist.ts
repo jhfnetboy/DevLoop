@@ -78,7 +78,9 @@ export async function withStateLock<T>(root: string, fn: () => Promise<T>): Prom
 
 async function tryLock(file: string): Promise<boolean> {
   if (await exclusiveCreate(file)) return true
-  const holder = await readHolderPid(file)
+  const observed = await readLockBody(file)
+  if (observed === null) return false
+  const holder = parseHolderPid(observed)
   if (holder === 'pending') return false
   if (holder !== null && isPidAlive(holder)) return false
   const stolen = `${file}.${process.pid}.${Date.now()}.stale`
@@ -87,28 +89,42 @@ async function tryLock(file: string): Promise<boolean> {
   } catch {
     return false
   }
+  const moved = await readLockBody(stolen)
+  if (moved !== observed) {
+    if (moved !== null) {
+      try {
+        await rename(stolen, file)
+      } catch {
+        // the live owner already recreated LOCK
+      }
+    }
+    return false
+  }
   await rm(stolen, { force: true })
   return exclusiveCreate(file)
 }
 
-async function readHolderPid(file: string): Promise<number | 'pending' | null> {
+async function readLockBody(file: string): Promise<string | null> {
   try {
-    const raw = (await readFile(file, 'utf8'))
-    if (raw.trim() === '') return 'pending'
-    if (!/^[0-9]+$/.test(raw.trim())) return null
-    const pid = Number(raw.trim())
-    return Number.isInteger(pid) && pid > 0 ? pid : null
+    return await readFile(file, 'utf8')
   } catch {
     return null
   }
+}
+
+function parseHolderPid(raw: string): number | 'pending' | null {
+  if (raw.trim() === '') return 'pending'
+  if (!/^[0-9]+$/.test(raw.trim())) return null
+  const pid = Number(raw.trim())
+  return Number.isInteger(pid) && pid > 0 ? pid : null
 }
 
 function isPidAlive(pid: number): boolean {
   try {
     process.kill(pid, 0)
     return true
-  } catch {
-    return false
+  } catch (error) {
+    return isErrno(error, 'EPERM')
   }
 }
 
@@ -163,6 +179,8 @@ function isLoopState(value: unknown): value is LoopState {
   if (typeof record.killSwitch !== 'boolean') return false
   if (!Array.isArray(record.tasks)) return false
   if (!record.tasks.every(isTaskShape)) return false
+  const ids = record.tasks.map(task => (task as { id: string }).id)
+  if (new Set(ids).size !== ids.length) return false
   if (!isUsageShape(record.usage)) return false
   if (!isActionShape(record.lastAction)) return false
   if (record.supervisor !== null && record.supervisor !== undefined && !isSupervisorShape(record.supervisor)) {

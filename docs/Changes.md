@@ -99,3 +99,7 @@ External Codex CLI review on PR #1 returned REQUEST_CHANGES. Applied the three P
 
 External Codex CLI review on PR #1 returned REQUEST_CHANGES. Applied without re-judging: lock ownership is published with `link`, failed/blocked queues idle instead of dispatching other work, review caps apply to rework delegates, prototype-reserved task ids fail closed, `maxSameAction` is capped at 20.
 
+## 0.1.8 — 2026-08-25
+
+External Codex CLI review on PR #1 returned REQUEST_CHANGES. Applied without re-judging: stale-lock takeover checks the renamed body still matches the observed dead owner, `EPERM` from `kill(pid,0)` is treated as live, duplicate task ids fail closed.
+

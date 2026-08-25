@@ -145,6 +145,29 @@ describe('persist and tick', () => {
     expect(loaded.supervisor?.reason).toBe('invalid_state')
   })
 
+  it('halts when two tasks share an id', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'devloop-'))
+    await mkdir(join(root, '.devloop'))
+    const task = {
+      id: 't-1',
+      title: 'dup',
+      tier: 'T1',
+      status: 'ready',
+      risk: 'low',
+      attempts: 0,
+      reviewCycles: 0,
+      allowedPaths: ['src/**'],
+      acceptance: ['ok'],
+    }
+    await writeFile(join(root, '.devloop', 'STATE.json'), JSON.stringify({
+      ...emptyState(0),
+      tasks: [task, { ...task, status: 'running' }],
+    }), 'utf8')
+    const loaded = await loadState(root, 1)
+    expect(loaded.killSwitch).toBe(true)
+    expect(loaded.supervisor?.reason).toBe('invalid_state')
+  })
+
   it('round-trips STATE.json', async () => {
     const root = await mkdtemp(join(tmpdir(), 'devloop-'))
     await mkdir(join(root, '.devloop'))
