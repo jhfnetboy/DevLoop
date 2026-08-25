@@ -145,6 +145,28 @@ describe('persist and tick', () => {
     expect(loaded.supervisor?.reason).toBe('invalid_state')
   })
 
+  it('halts when a task id is an inherited Object.prototype name', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'devloop-'))
+    await mkdir(join(root, '.devloop'))
+    await writeFile(join(root, '.devloop', 'STATE.json'), JSON.stringify({
+      ...emptyState(0),
+      tasks: [{
+        id: 'toString',
+        title: 'bad',
+        tier: 'T1',
+        status: 'ready',
+        risk: 'low',
+        attempts: 0,
+        reviewCycles: 0,
+        allowedPaths: ['src/**'],
+        acceptance: ['ok'],
+      }],
+    }), 'utf8')
+    const loaded = await loadState(root, 1)
+    expect(loaded.killSwitch).toBe(true)
+    expect(loaded.supervisor?.reason).toBe('invalid_state')
+  })
+
   it('halts when two tasks share an id', async () => {
     const root = await mkdtemp(join(tmpdir(), 'devloop-'))
     await mkdir(join(root, '.devloop'))
@@ -268,6 +290,20 @@ describe('persist and tick', () => {
     const result = runTick(blown, resolveConfig({}).budget, 10)
     expect(result.action).toEqual({ type: 'stop', reason: 'budget' })
     expect(result.state.supervisor?.reason).toBe('max_task_attempts:t-1')
+  })
+
+  it('attributes a timeout stop to the timed-out task', () => {
+    const result = runTick({
+      ...emptyState(0),
+      tasks: [sampleTask('running'), { ...sampleTask('ready'), id: 't-2' }],
+      usage: {
+        ...emptyState(0).usage,
+        taskStartedAt: { 't-1': 0 },
+        lastProgressAt: 44 * 60_000,
+      },
+    }, resolveConfig({}).budget, 45 * 60_000)
+    expect(result.action).toEqual({ type: 'stop', reason: 'budget' })
+    expect(result.state.supervisor).toEqual({ taskId: 't-1', reason: 'task_timeout:t-1' })
   })
 
   it('writes the recorded action onto disk', async () => {

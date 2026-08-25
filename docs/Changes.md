@@ -103,3 +103,7 @@ External Codex CLI review on PR #1 returned REQUEST_CHANGES. Applied without re-
 
 External Codex CLI review on PR #1 returned REQUEST_CHANGES. Applied without re-judging: stale-lock takeover checks the renamed body still matches the observed dead owner, `EPERM` from `kill(pid,0)` is treated as live, duplicate task ids fail closed.
 
+## 0.1.9 — 2026-08-25
+
+External Codex CLI review on PR #1 returned REQUEST_CHANGES. Applied without re-judging: usage counters use own-property lookups, leftover `taskStartedAt` entries do not timeout missing tasks, and budget stops attribute the supervisor hold to the timed-out task.
+

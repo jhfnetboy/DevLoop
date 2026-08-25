@@ -4,7 +4,7 @@ import { actionKey } from './loop.js'
 
 export type CircuitVerdict =
   | { readonly ok: true }
-  | { readonly ok: false; readonly reason: string }
+  | { readonly ok: false; readonly reason: string; readonly taskId: string | null }
 
 export function emptyUsage(now: number): BudgetUsage {
   return {
@@ -29,42 +29,42 @@ export function evaluateBudget(
   const usage = state.usage
 
   if (usage.costUsdDay >= limits.maxCostUsdPerDay) {
-    return { ok: false, reason: 'daily_cost_cap' }
+    return fail('daily_cost_cap')
   }
   if (usage.costUsdSession >= limits.maxCostUsdPerSession) {
-    return { ok: false, reason: 'session_cost_cap' }
+    return fail('session_cost_cap')
   }
   if (usage.parallelWorkers >= limits.maxParallelWorkers && next.type === 'delegate') {
-    return { ok: false, reason: 'max_parallel_workers' }
+    return fail('max_parallel_workers', next.taskId)
   }
 
   const timedOut = timedOutTaskId(state, limits, now)
   if (timedOut) {
-    return { ok: false, reason: `task_timeout:${timedOut}` }
+    return fail(`task_timeout:${timedOut}`, timedOut)
   }
 
   if (next.type === 'delegate') {
-    const attempts = usage.taskAttempts[next.taskId] ?? 0
+    const attempts = ownCount(usage.taskAttempts, next.taskId)
     if (attempts >= limits.maxTaskAttempts) {
-      return { ok: false, reason: `max_task_attempts:${next.taskId}` }
+      return fail(`max_task_attempts:${next.taskId}`, next.taskId)
     }
-    const cycles = usage.reviewCycles[next.taskId] ?? 0
+    const cycles = ownCount(usage.reviewCycles, next.taskId)
     if (cycles >= limits.maxReviewCycles) {
-      return { ok: false, reason: `max_review_cycles:${next.taskId}` }
+      return fail(`max_review_cycles:${next.taskId}`, next.taskId)
     }
   }
 
   if (next.type === 'review') {
-    const cycles = usage.reviewCycles[next.taskId] ?? 0
+    const cycles = ownCount(usage.reviewCycles, next.taskId)
     if (cycles >= limits.maxReviewCycles) {
-      return { ok: false, reason: `max_review_cycles:${next.taskId}` }
+      return fail(`max_review_cycles:${next.taskId}`, next.taskId)
     }
   }
 
   if (next.type === 'delegate' || next.type === 'review') {
-    const used = usage.tokens[next.taskId] ?? 0
+    const used = ownCount(usage.tokens, next.taskId)
     if (used >= limits.maxTokensPerTask) {
-      return { ok: false, reason: 'max_tokens_per_task' }
+      return fail('max_tokens_per_task', next.taskId)
     }
   }
 
@@ -72,13 +72,13 @@ export function evaluateBudget(
   if (next.type !== 'idle' && next.type !== 'stop') {
     const same = countTrailing(usage.lastActions, key)
     if (same >= limits.maxSameAction) {
-      return { ok: false, reason: `duplicate_action:${key}` }
+      return fail(`duplicate_action:${key}`, taskIdOf(next))
     }
   }
 
   const idleMs = now - usage.lastProgressAt
   if (idleMs >= limits.noProgressMinutes * 60_000 && next.type === 'idle') {
-    return { ok: false, reason: 'no_progress' }
+    return fail('no_progress')
   }
 
   return { ok: true }
@@ -91,13 +91,13 @@ export function recordAction(usage: BudgetUsage, action: LoopAction, now: number
   const taskStartedAt = { ...usage.taskStartedAt }
   const reviewCycles = { ...usage.reviewCycles }
   if (action.type === 'delegate') {
-    taskAttempts[action.taskId] = (taskAttempts[action.taskId] ?? 0) + 1
-    if (taskStartedAt[action.taskId] === undefined) {
+    taskAttempts[action.taskId] = ownCount(taskAttempts, action.taskId) + 1
+    if (!Object.hasOwn(taskStartedAt, action.taskId)) {
       taskStartedAt[action.taskId] = now
     }
   }
   if (action.type === 'review') {
-    reviewCycles[action.taskId] = (reviewCycles[action.taskId] ?? 0) + 1
+    reviewCycles[action.taskId] = ownCount(reviewCycles, action.taskId) + 1
   }
   const progressed = action.type !== 'idle' && action.type !== 'stop'
   return {
@@ -116,9 +116,25 @@ function timedOutTaskId(state: LoopState, limits: BudgetLimits, now: number): st
   for (const [taskId, started] of Object.entries(state.usage.taskStartedAt)) {
     if (typeof started !== 'number') continue
     const task = state.tasks.find(entry => entry.id === taskId)
-    if (task && TERMINAL_STATUS.has(task.status)) continue
+    if (!task || TERMINAL_STATUS.has(task.status)) continue
     if ((now - started) / 60_000 >= limits.taskTimeoutMinutes) return taskId
   }
+}
+
+function ownCount(record: Readonly<Record<string, number>>, id: string): number {
+  return Object.hasOwn(record, id) ? record[id] ?? 0 : 0
+}
+
+function fail(reason: string, taskId: string | null = null): CircuitVerdict {
+  return { ok: false, reason, taskId }
+}
+
+function taskIdOf(action: LoopAction): string | null {
+  if (action.type === 'delegate' || action.type === 'review' || action.type === 'merge') {
+    return action.taskId
+  }
+  if (action.type === 'escalate') return action.taskId
+  return null
 }
 
 function countTrailing(actions: readonly string[], key: string): number {

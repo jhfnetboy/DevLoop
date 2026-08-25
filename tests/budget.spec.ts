@@ -28,7 +28,7 @@ describe('evaluateBudget', () => {
       0,
       { type: 'plan' },
     )
-    expect(verdict).toEqual({ ok: false, reason: 'daily_cost_cap' })
+    expect(verdict).toEqual({ ok: false, reason: 'daily_cost_cap', taskId: null })
   })
 
   it('trips max attempts on delegate', () => {
@@ -38,7 +38,7 @@ describe('evaluateBudget', () => {
       0,
       { type: 'delegate', taskId: 't-1' },
     )
-    expect(verdict).toEqual({ ok: false, reason: 'max_task_attempts:t-1' })
+    expect(verdict).toEqual({ ok: false, reason: 'max_task_attempts:t-1', taskId: 't-1' })
   })
 
   it('trips task wall-clock timeout on idle while a task is running', () => {
@@ -65,17 +65,40 @@ describe('evaluateBudget', () => {
       45 * 60_000,
       { type: 'idle' },
     )
-    expect(verdict).toEqual({ ok: false, reason: 'task_timeout:t-1' })
+    expect(verdict).toEqual({ ok: false, reason: 'task_timeout:t-1', taskId: 't-1' })
   })
 
   it('trips task wall-clock timeout on delegate', () => {
     const verdict = evaluateBudget(
-      base({ usage: { ...emptyUsage(0), taskStartedAt: { 't-1': 0 } } }),
+      base({
+        tasks: [{
+          id: 't-1',
+          title: 't-1',
+          tier: 'T1',
+          status: 'ready',
+          risk: 'low',
+          attempts: 0,
+          reviewCycles: 0,
+          allowedPaths: ['src/**'],
+          acceptance: ['tests pass'],
+        }],
+        usage: { ...emptyUsage(0), taskStartedAt: { 't-1': 0 } },
+      }),
       limits,
       45 * 60_000,
       { type: 'delegate', taskId: 't-1' },
     )
-    expect(verdict).toEqual({ ok: false, reason: 'task_timeout:t-1' })
+    expect(verdict).toEqual({ ok: false, reason: 'task_timeout:t-1', taskId: 't-1' })
+  })
+
+  it('ignores leftover start times for tasks that left the queue', () => {
+    const verdict = evaluateBudget(
+      base({ usage: { ...emptyUsage(0), taskStartedAt: { gone: 0 } } }),
+      limits,
+      45 * 60_000,
+      { type: 'plan' },
+    )
+    expect(verdict).toEqual({ ok: true })
   })
 
   it('trips duplicate action', () => {
@@ -90,7 +113,7 @@ describe('evaluateBudget', () => {
       0,
       { type: 'delegate', taskId: 't-1' },
     )
-    expect(verdict).toEqual({ ok: false, reason: 'duplicate_action:delegate:t-1' })
+    expect(verdict).toEqual({ ok: false, reason: 'duplicate_action:delegate:t-1', taskId: 't-1' })
   })
 
   it('trips no-progress watchdog on idle', () => {
@@ -100,7 +123,7 @@ describe('evaluateBudget', () => {
       15 * 60_000,
       { type: 'idle' },
     )
-    expect(verdict).toEqual({ ok: false, reason: 'no_progress' })
+    expect(verdict).toEqual({ ok: false, reason: 'no_progress', taskId: null })
   })
 
   it('allows a fresh delegate under the caps', () => {
@@ -115,7 +138,7 @@ describe('evaluateBudget', () => {
       0,
       { type: 'delegate', taskId: 't-1' },
     )
-    expect(verdict).toEqual({ ok: false, reason: 'max_tokens_per_task' })
+    expect(verdict).toEqual({ ok: false, reason: 'max_tokens_per_task', taskId: 't-1' })
   })
 
   it('trips review cap on a rework delegate', () => {
@@ -125,7 +148,7 @@ describe('evaluateBudget', () => {
       0,
       { type: 'delegate', taskId: 't-1' },
     )
-    expect(verdict).toEqual({ ok: false, reason: 'max_review_cycles:t-1' })
+    expect(verdict).toEqual({ ok: false, reason: 'max_review_cycles:t-1', taskId: 't-1' })
   })
 
   it('does not apply another task token cap to a fresh task', () => {

@@ -51,7 +51,7 @@ export function runTick(state: LoopState, limits: BudgetLimits, now: number): Ti
     killSwitch: action.type === 'stop',
     supervisor: circuit.ok
       ? state.supervisor
-      : { taskId: taskIdOf(intended), reason: circuit.reason },
+      : { taskId: circuit.taskId, reason: circuit.reason },
   }
 
   return { action, state: next, skipped: false }
@@ -68,13 +68,5 @@ function dispatchStatus(state: LoopState, action: LoopAction): string | null {
   if (action.type === 'escalate') {
     return action.reason
   }
-  return null
-}
-
-function taskIdOf(action: LoopAction): string | null {
-  if (action.type === 'delegate' || action.type === 'review' || action.type === 'merge') {
-    return action.taskId
-  }
-  if (action.type === 'escalate') return action.taskId
   return null
 }

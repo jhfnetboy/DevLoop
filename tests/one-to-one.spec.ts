@@ -66,7 +66,7 @@ describe('Plan 0.1.4 budget 1:1', () => {
     ['max_review_cycles', { reviewCycles: { t: 2 } }, { type: 'review' as const, taskId: 't' }, 'max_review_cycles:t'],
   ])('%s', (_name, usagePatch, next, reason) => {
     const state = baseState({ usage: { ...emptyUsage(0), ...usagePatch } })
-    expect(evaluateBudget(state, limits, 0, next)).toEqual({ ok: false, reason })
+    expect(evaluateBudget(state, limits, 0, next)).toMatchObject({ ok: false, reason })
   })
 
   it('recordAction increments review cycles', () => {
@@ -125,6 +125,7 @@ describe('Features 0.1 1:1', () => {
     expect(evaluateBudget(state, limits, 0, { type: 'plan' })).toEqual({
       ok: false,
       reason: 'daily_cost_cap',
+      taskId: null,
     })
   })
 

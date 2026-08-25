@@ -253,7 +253,7 @@ function isNonNegNumberRecord(value: unknown): boolean {
 }
 
 function isSafeKey(id: string): boolean {
-  return id.length > 0 && id !== '__proto__' && id !== 'constructor' && id !== 'prototype'
+  return id.length > 0 && id !== '__proto__' && !Object.hasOwn(Object.prototype, id)
 }
 
 function isStringArray(value: unknown): boolean {
