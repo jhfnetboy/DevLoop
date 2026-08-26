@@ -1,9 +1,8 @@
 import { clearInterval, setInterval } from 'node:timers'
 import { Service, type Context } from '@deepseek-ai/cordis'
 import {
-  RecordingBackend,
-  isAgentAction,
-  runInputFor,
+  NoopBackend,
+  dispatchTick,
   type AgentBackend,
 } from './backend.js'
 import { ConfigSchema, resolveConfig, type Config } from './config.js'
@@ -34,7 +33,7 @@ export default class DevloopService extends Service {
   constructor(
     ctx: Context,
     rawConfig: Config,
-    private readonly backend: AgentBackend = new RecordingBackend(),
+    private readonly backend: AgentBackend = new NoopBackend(),
   ) {
     super(ctx, 'devloop')
     this.config = resolveConfig(rawConfig)
@@ -97,26 +96,21 @@ export default class DevloopService extends Service {
         this.ctx.logger.info('[dsh-devloop] tick skipped: lock held')
         return
       }
+      if (this.disposed) return
       if (outcome.value && !outcome.value.skipped) {
-        await this.dispatch(outcome.value)
+        await dispatchTick(
+          this.backend,
+          this.config.root,
+          outcome.value.action,
+          outcome.value.state,
+          this.config.budget,
+          this.ctx.logger,
+        )
       }
     } catch (error) {
       this.ctx.logger.error('[dsh-devloop] tick failed', error)
     } finally {
       this.busy = false
-    }
-  }
-
-  private async dispatch(result: TickResult): Promise<void> {
-    if (this.disposed || !isAgentAction(result.action)) return
-    const input = runInputFor(this.config.root, result.action, result.state, this.config.budget)
-    if (result.action.type !== 'plan' && !input.contract) {
-      this.ctx.logger.error(`[dsh-devloop] skip backend: missing task ${result.action.taskId}`)
-      return
-    }
-    const dispatched = await this.backend.run(input)
-    if (dispatched.status === 'failed') {
-      this.ctx.logger.error(`[dsh-devloop] backend failed: ${dispatched.detail ?? 'unknown'}`)
     }
   }
 }

@@ -116,6 +116,7 @@ describe('Plan 0.1.5 router 1:1', () => {
   it('Task Contract forbids GOAL.md', () => {
     const contract = contractForTask('AUTH-001', 'schema', 'T1', ['src/**'], ['tests pass'], 45, 3)
     expect(contract.forbidden).toContain('.devloop/GOAL.md')
+    expect(contract.forbidden).toContain('.devloop/')
     expect(contract.forbidden).toContain('package.json')
     expect(contract.budget.maxAttempts).toBe(3)
   })

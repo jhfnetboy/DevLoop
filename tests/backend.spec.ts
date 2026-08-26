@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { RecordingBackend, isAgentAction, runInputFor } from '../src/backend.ts'
+import { RecordingBackend, dispatchTick, isAgentAction, runInputFor } from '../src/backend.ts'
+import type { AgentBackend, AgentRunInput, AgentRunResult } from '../src/backend.ts'
 import { resolveConfig } from '../src/config.ts'
 import { makeTask, baseState } from './helpers.ts'
 
@@ -43,7 +44,7 @@ describe('runInputFor', () => {
       title: 'Add persist',
       tier: 'T1',
       allowedPaths: ['src/persist.ts'],
-      forbidden: ['package.json', '.devloop/GOAL.md'],
+      forbidden: ['package.json', '.devloop/GOAL.md', '.devloop/'],
       acceptance: ['tests pass'],
       budget: { maxMinutes: limits.taskTimeoutMinutes, maxAttempts: limits.maxTaskAttempts },
     })
@@ -68,5 +69,68 @@ describe('isAgentAction', () => {
     expect(isAgentAction({ type: 'merge', taskId: 'a' })).toBe(false)
     expect(isAgentAction({ type: 'idle' })).toBe(false)
     expect(isAgentAction({ type: 'stop', reason: 'budget' })).toBe(false)
+  })
+})
+
+describe('dispatchTick', () => {
+  const logs: string[] = []
+  const log = { error: (message: string) => { logs.push(message) } }
+
+  it('skips backend.run when delegate/review has no matching task', async () => {
+    const backend = new RecordingBackend()
+    await dispatchTick(
+      backend,
+      '/repo',
+      { type: 'review', taskId: 'ghost' },
+      baseState(),
+      limits,
+      log,
+    )
+    expect(backend.runs).toHaveLength(0)
+    expect(logs.some(line => line.includes('missing task ghost'))).toBe(true)
+  })
+
+  it('does not dispatch merge', async () => {
+    const backend = new RecordingBackend()
+    await dispatchTick(
+      backend,
+      '/repo',
+      { type: 'merge', taskId: 'm1' },
+      baseState({ tasks: [makeTask({ id: 'm1', status: 'merge_ready' })] }),
+      limits,
+      log,
+    )
+    expect(backend.runs).toHaveLength(0)
+  })
+
+  it('logs a throw without retrying', async () => {
+    const backend: AgentBackend = {
+      async run(_input: AgentRunInput): Promise<AgentRunResult> {
+        throw new Error('boom')
+      },
+      async cancel() {},
+      async health() { return 'ok' },
+    }
+    await expect(dispatchTick(
+      backend,
+      '/repo',
+      { type: 'plan' },
+      baseState(),
+      limits,
+      log,
+    )).resolves.toBeUndefined()
+    expect(logs.some(line => line.includes('backend threw'))).toBe(true)
+  })
+
+  it('logs status=failed without throwing', async () => {
+    const backend: AgentBackend = {
+      async run(): Promise<AgentRunResult> {
+        return { status: 'failed', detail: 'nope' }
+      },
+      async cancel() {},
+      async health() { return 'ok' },
+    }
+    await dispatchTick(backend, '/repo', { type: 'plan' }, baseState(), limits, log)
+    expect(logs.some(line => line.includes('backend failed: nope'))).toBe(true)
   })
 })

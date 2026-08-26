@@ -4,9 +4,11 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { RecordingBackend } from '../src/backend.ts'
+import type { AgentBackend, AgentRunInput, AgentRunResult } from '../src/backend.ts'
 import { resolveConfig } from '../src/config.ts'
-import { loadState, withStateLock, workspaceArmed } from '../src/persist.ts'
+import { emptyState, loadState, saveState, withStateLock, workspaceArmed } from '../src/persist.ts'
 import DevloopService from '../src/service.ts'
+import { makeTask } from './helpers.ts'
 
 async function waitForAction(root: string, type: string, timeoutMs = 2000): Promise<void> {
   const start = Date.now()
@@ -17,6 +19,22 @@ async function waitForAction(root: string, type: string, timeoutMs = 2000): Prom
   }
   const last = await loadState(root, Date.now())
   throw new Error(`timed out waiting for action ${type}, last=${last.lastAction.type}`)
+}
+
+async function waitForRuns(backend: RecordingBackend, n: number, timeoutMs = 2000): Promise<void> {
+  const start = Date.now()
+  while (Date.now() - start < timeoutMs) {
+    if (backend.runs.length >= n) return
+    await new Promise(resolve => setTimeout(resolve, 20))
+  }
+  throw new Error(`timed out waiting for ${n} runs, have ${backend.runs.length}`)
+}
+
+async function armWorkspace(): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), 'devloop-svc-'))
+  await mkdir(join(root, '.devloop'))
+  await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
+  return root
 }
 
 class LockProbeBackend extends RecordingBackend {
@@ -78,12 +96,77 @@ describe('DevloopService', () => {
     const service = new DevloopService(ctx, resolveConfig({ root, tickIntervalMs: 60_000 }), backend)
     services.push(service)
     await waitForAction(root, 'plan')
+    await waitForRuns(backend, 1)
     expect(backend.runs).toHaveLength(1)
     expect(backend.runs[0]?.action).toEqual({ type: 'plan' })
     expect(backend.runs[0]?.workspaceRoot).toBe(root)
     expect(backend.runs[0]?.contract).toBeNull()
     await service.tick()
     expect(backend.runs).toHaveLength(1)
+  })
+
+  it('dispatches delegate with a frozen contract', async () => {
+    const root = await armWorkspace()
+    await saveState(root, {
+      ...emptyState(Date.now()),
+      tasks: [makeTask({
+        id: 'd1',
+        status: 'ready',
+        title: 'Add persist',
+        allowedPaths: ['src/persist.ts'],
+      })],
+    })
+    const backend = new RecordingBackend()
+    const ctx = new Context()
+    const service = new DevloopService(ctx, resolveConfig({ root, tickIntervalMs: 60_000 }), backend)
+    services.push(service)
+    await waitForAction(root, 'delegate')
+    await waitForRuns(backend, 1)
+    expect(backend.runs[0]?.action).toEqual({ type: 'delegate', taskId: 'd1' })
+    expect(backend.runs[0]?.contract?.taskId).toBe('d1')
+    expect(backend.runs[0]?.contract?.forbidden).toContain('.devloop/')
+  })
+
+  it('does not dispatch merge to AgentBackend', async () => {
+    const root = await armWorkspace()
+    await saveState(root, {
+      ...emptyState(Date.now()),
+      tasks: [makeTask({ id: 'm1', status: 'merge_ready' })],
+    })
+    const backend = new RecordingBackend()
+    const ctx = new Context()
+    const service = new DevloopService(ctx, resolveConfig({ root, tickIntervalMs: 60_000 }), backend)
+    services.push(service)
+    await waitForAction(root, 'merge')
+    await service.tick()
+    expect(backend.runs).toHaveLength(0)
+  })
+
+  it('does not retry after a throwing backend; STATE stays latched', async () => {
+    const root = await armWorkspace()
+    const backend: AgentBackend & { calls: number } = {
+      calls: 0,
+      async run(_input: AgentRunInput): Promise<AgentRunResult> {
+        this.calls += 1
+        throw new Error('boom')
+      },
+      async cancel() {},
+      async health() { return 'ok' },
+    }
+    const ctx = new Context()
+    const service = new DevloopService(ctx, resolveConfig({ root, tickIntervalMs: 60_000 }), backend)
+    services.push(service)
+    await waitForAction(root, 'plan')
+    const start = Date.now()
+    while (backend.calls < 1 && Date.now() - start < 2000) {
+      await new Promise(resolve => setTimeout(resolve, 20))
+    }
+    expect(backend.calls).toBe(1)
+    await service.tick()
+    expect(backend.calls).toBe(1)
+    const loaded = await loadState(root, Date.now())
+    expect(loaded.lastAction).toEqual({ type: 'plan' })
+    expect(loaded.killSwitch).toBe(false)
   })
 
   it('releases the STATE lock before AgentBackend.run', async () => {
@@ -95,6 +178,7 @@ describe('DevloopService', () => {
     const service = new DevloopService(ctx, resolveConfig({ root, tickIntervalMs: 60_000 }), backend)
     services.push(service)
     await waitForAction(root, 'plan')
+    await waitForRuns(backend, 1)
     expect(backend.lockOk).toBe(true)
     expect(backend.runs).toHaveLength(1)
   })
