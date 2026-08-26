@@ -1,9 +1,9 @@
-import { mkdir, mkdtemp, readFile, readdir, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, symlink, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { resolveConfig } from '../src/config.ts'
-import { emptyState, loadState, lockPath, saveState, withStateLock, workspaceArmed } from '../src/persist.ts'
+import { emptyState, loadState, LOCK_STALE_MS, lockPath, saveState, withStateLock, workspaceArmed } from '../src/persist.ts'
 import { runTick } from '../src/tick.ts'
 import type { Task } from '../src/types.ts'
 
@@ -123,9 +123,9 @@ describe('persist and tick', () => {
       return 'inside'
     })
     await started
-    expect(await withStateLock(root, async () => 'second')).toBe('locked')
+    expect(await withStateLock(root, async () => 'second')).toEqual({ ok: false })
     release()
-    expect(await held).toBe('inside')
+    expect(await held).toEqual({ ok: true, value: 'inside' })
   })
 
   it('halts on partial usage that would crash evaluateBudget', async () => {
@@ -169,14 +169,14 @@ describe('persist and tick', () => {
     expect(loaded.supervisor?.reason).toBe('invalid_state')
   })
 
-  it('halts when a task id is prototype-reserved', async () => {
+  it('loads prototype-reserved task ids instead of killing the workspace', async () => {
     const root = await mkdtemp(join(tmpdir(), 'devloop-'))
     await mkdir(join(root, '.devloop'))
     await writeFile(join(root, '.devloop', 'STATE.json'), JSON.stringify({
       ...emptyState(0),
       tasks: [{
         id: '__proto__',
-        title: 'bad',
+        title: 'ok',
         tier: 'T1',
         status: 'ready',
         risk: 'low',
@@ -187,18 +187,18 @@ describe('persist and tick', () => {
       }],
     }), 'utf8')
     const loaded = await loadState(root, 1)
-    expect(loaded.killSwitch).toBe(true)
-    expect(loaded.supervisor?.reason).toBe('invalid_state')
+    expect(loaded.killSwitch).toBe(false)
+    expect(loaded.tasks[0]?.id).toBe('__proto__')
   })
 
-  it('halts when a task id is an inherited Object.prototype name', async () => {
+  it('loads a toString task id instead of killing the workspace', async () => {
     const root = await mkdtemp(join(tmpdir(), 'devloop-'))
     await mkdir(join(root, '.devloop'))
     await writeFile(join(root, '.devloop', 'STATE.json'), JSON.stringify({
       ...emptyState(0),
       tasks: [{
         id: 'toString',
-        title: 'bad',
+        title: 'ok',
         tier: 'T1',
         status: 'ready',
         risk: 'low',
@@ -209,8 +209,8 @@ describe('persist and tick', () => {
       }],
     }), 'utf8')
     const loaded = await loadState(root, 1)
-    expect(loaded.killSwitch).toBe(true)
-    expect(loaded.supervisor?.reason).toBe('invalid_state')
+    expect(loaded.killSwitch).toBe(false)
+    expect(loaded.tasks[0]?.id).toBe('toString')
   })
 
   it('halts when two tasks share an id', async () => {
@@ -340,7 +340,7 @@ describe('persist and tick', () => {
     const root = await mkdtemp(join(tmpdir(), 'devloop-'))
     await mkdir(join(root, '.devloop'))
     await writeFile(lockPath(root), '2147483647', 'utf8')
-    expect(await withStateLock(root, async () => 'stolen')).toBe('stolen')
+    expect(await withStateLock(root, async () => 'stolen')).toEqual({ ok: true, value: 'stolen' })
   })
 
   it('recovers a takeover claim whose holder pid is dead', async () => {
@@ -348,7 +348,7 @@ describe('persist and tick', () => {
     await mkdir(join(root, '.devloop'))
     await writeFile(lockPath(root), '2147483647', 'utf8')
     await writeFile(`${lockPath(root)}.taking.2147483647`, '2147483647', 'utf8')
-    expect(await withStateLock(root, async () => 'stolen')).toBe('stolen')
+    expect(await withStateLock(root, async () => 'stolen')).toEqual({ ok: true, value: 'stolen' })
   })
 
   it('recovers an empty takeover claim', async () => {
@@ -356,7 +356,25 @@ describe('persist and tick', () => {
     await mkdir(join(root, '.devloop'))
     await writeFile(lockPath(root), '2147483647', 'utf8')
     await writeFile(`${lockPath(root)}.taking.2147483647`, '', 'utf8')
-    expect(await withStateLock(root, async () => 'stolen')).toBe('stolen')
+    expect(await withStateLock(root, async () => 'stolen')).toEqual({ ok: true, value: 'stolen' })
+  })
+
+  it('steals a stale lock even when the recorded pid is still alive', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'devloop-'))
+    await mkdir(join(root, '.devloop'))
+    const file = lockPath(root)
+    await writeFile(file, '1', 'utf8')
+    const past = new Date(Date.now() - LOCK_STALE_MS - 1_000)
+    await utimes(file, past, past)
+    expect(await withStateLock(root, async () => 'stolen')).toEqual({ ok: true, value: 'stolen' })
+  })
+
+  it('does not steal a fresh lock from a live holder', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'devloop-'))
+    await mkdir(join(root, '.devloop'))
+    const file = lockPath(root)
+    await writeFile(file, String(process.pid), 'utf8')
+    expect(await withStateLock(root, async () => 'no')).toEqual({ ok: false })
   })
 
   it('stops on budget instead of delegating forever', () => {
@@ -409,7 +427,7 @@ describe('persist and tick', () => {
     const root = await mkdtemp(join(tmpdir(), 'devloop-'))
     await mkdir(join(root, '.devloop'))
     await writeFile(lockPath(root), '../outside', 'utf8')
-    expect(await withStateLock(root, async () => 'stolen')).toBe('stolen')
+    expect(await withStateLock(root, async () => 'stolen')).toEqual({ ok: true, value: 'stolen' })
     const names = await readdir(join(root, '.devloop'))
     expect(names).not.toContain('outside')
     expect(names.some(name => name.includes('..'))).toBe(false)

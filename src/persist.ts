@@ -56,7 +56,8 @@ export async function loadState(root: string, now: number): Promise<LoopState> {
     return parsed
   } catch (error) {
     if (isNotFound(error)) return emptyState(now)
-    return haltState(now, 'unreadable_state')
+    if (error instanceof SyntaxError) return haltState(now, 'invalid_state')
+    return haltState(now, 'unreadable_state', { permanent: false })
   }
 }
 
@@ -89,16 +90,22 @@ async function assertLocalDevloopDir(root: string): Promise<void> {
   }
 }
 
+export const LOCK_STALE_MS = 30_000
+
+export type LockResult<T> =
+  | { readonly ok: true; readonly value: T }
+  | { readonly ok: false }
+
 /**
  * Cross-process mutex for one read-modify-write tick.
- * Returns `locked` when another live holder already owns the file.
+ * `ok: false` means another live, fresh holder owns the file.
  */
-export async function withStateLock<T>(root: string, fn: () => Promise<T>): Promise<T | 'locked'> {
+export async function withStateLock<T>(root: string, fn: () => Promise<T>): Promise<LockResult<T>> {
   await assertLocalDevloopDir(root)
   const file = lockPath(root)
-  if (!await tryLock(file)) return 'locked'
+  if (!await tryLock(file)) return { ok: false }
   try {
-    return await fn()
+    return { ok: true, value: await fn() }
   } finally {
     await releaseLock(file)
   }
@@ -109,8 +116,12 @@ async function tryLock(file: string): Promise<boolean> {
   const observed = await readLockBody(file)
   if (observed === null) return false
   const holder = parseHolderPid(observed)
-  if (holder === 'pending') return false
-  if (holder !== null && isPidAlive(holder)) return false
+  const stale = await isLockStale(file)
+  if (holder === 'pending') {
+    if (!stale) return false
+  } else if (holder !== null && isPidAlive(holder) && !stale) {
+    return false
+  }
   const taking = `${file}.taking.${lockNameToken(observed)}`
   if (!await claimFile(taking)) return false
   try {
@@ -180,6 +191,15 @@ function parseHolderPid(raw: string): number | 'pending' | null {
   return Number.isInteger(pid) && pid > 0 ? pid : null
 }
 
+async function isLockStale(file: string): Promise<boolean> {
+  try {
+    const meta = await lstat(file)
+    return Date.now() - meta.mtimeMs >= LOCK_STALE_MS
+  } catch {
+    return false
+  }
+}
+
 function isPidAlive(pid: number): boolean {
   try {
     process.kill(pid, 0)
@@ -229,12 +249,13 @@ export async function saveState(root: string, state: LoopState): Promise<void> {
   await rename(temp, file)
 }
 
-function haltState(now: number, reason: string): LoopState {
+function haltState(now: number, reason: string, options: { permanent?: boolean } = {}): LoopState {
+  const permanent = options.permanent !== false
   return {
     ...emptyState(now),
-    killSwitch: true,
+    killSwitch: permanent,
     supervisor: { taskId: null, reason },
-    lastAction: { type: 'stop', reason: 'kill_switch' },
+    lastAction: permanent ? { type: 'stop', reason: 'kill_switch' } : { type: 'idle' },
     updatedAt: new Date(now).toISOString(),
   }
 }
@@ -328,7 +349,7 @@ function isNonNegNumberRecord(value: unknown): boolean {
 }
 
 function isSafeKey(id: string): boolean {
-  return id.length > 0 && id !== '__proto__' && !Object.hasOwn(Object.prototype, id)
+  return id.length > 0
 }
 
 function isStringArray(value: unknown): boolean {

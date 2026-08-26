@@ -59,3 +59,13 @@ README flowcharts for the 0.1 tick versus the 0.2 factory, plus an honest capabi
 ### 可能影响
 
 - 只改说明，不改调度语义
+
+## 0.1.4 — 2026-08-26
+
+External review on PR #3: loader no longer kills the workspace for prototype-reserved task ids; stale LOCK files can be stolen even if the recorded pid is still alive; lock results are a discriminated union.
+
+### 可能影响
+
+- `toString` / `__proto__` 任务 id 可以读回 STATE
+- `kill -9` 后 pid 复用不再把工作区永远锁死（超过 30s 的 LOCK 可夺）
+- `withStateLock` 返回 `{ ok, value }`，不再用 `'locked'` 字符串

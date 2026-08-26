@@ -63,6 +63,10 @@ export default class DevloopService extends Service {
       const outcome = await withStateLock(this.config.root, async () => {
         if (this.disposed) return
         const current = await loadState(this.config.root, now)
+        if (current.supervisor?.reason === 'unreadable_state') {
+          this.ctx.logger.error('[dsh-devloop] tick skipped: unreadable STATE.json')
+          return
+        }
         if (current.killSwitch || current.lastAction.type === 'stop') {
           this.stop()
           return
@@ -77,7 +81,7 @@ export default class DevloopService extends Service {
           this.stop()
         }
       })
-      if (outcome === 'locked') {
+      if (!outcome.ok) {
         this.ctx.logger.info('[dsh-devloop] tick skipped: lock held')
       }
     } catch (error) {
