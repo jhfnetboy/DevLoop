@@ -39,6 +39,7 @@ File-backed `.devloop/` state, exclusive LOCK, and the installable DSH plugin Se
 - 新增 `withStateLock`：跨进程互斥，过期 LOCK 可回收
 - 新增 Cordis `DevloopService` + `cordis.patch.yml` + `templates/GOAL.md`
 - 新增 persist / flow / service 测试，补齐 Plan 0.1.2 / 0.1.6 一对一覆盖
+- LOCK takeover 文件名只允许数字 token；拒绝 `.devloop` 符号链接逃逸
 
 ### 可能影响
 

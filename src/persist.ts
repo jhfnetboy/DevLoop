@@ -1,4 +1,4 @@
-import { link, mkdir, readFile, rename, rm, stat, unlink, writeFile } from 'node:fs/promises'
+import { link, lstat, mkdir, readFile, realpath, rename, rm, unlink, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { emptyUsage } from './budget.js'
 import type { LoopState, ModelTier, Risk, TaskStatus } from './types.js'
@@ -23,10 +23,9 @@ export function goalPath(root: string): string {
 
 export async function workspaceArmed(root: string): Promise<boolean> {
   try {
-    const dir = await stat(devloopDir(root))
-    if (!dir.isDirectory()) return false
-    const goal = await stat(goalPath(root))
-    return goal.isFile()
+    if (!await isLocalDevloopDir(root)) return false
+    const goal = await lstat(goalPath(root))
+    return goal.isFile() && !goal.isSymbolicLink()
   } catch {
     return false
   }
@@ -47,6 +46,9 @@ export function emptyState(now: number): LoopState {
 }
 
 export async function loadState(root: string, now: number): Promise<LoopState> {
+  if (!await isLocalDevloopDir(root, { allowMissing: true })) {
+    return haltState(now, 'escaped_devloop')
+  }
   try {
     const raw = await readFile(statePath(root), 'utf8')
     const parsed: unknown = JSON.parse(raw)
@@ -62,11 +64,37 @@ export function lockPath(root: string): string {
   return join(devloopDir(root), LOCK_FILE)
 }
 
+function lockNameToken(raw: string): string {
+  const trimmed = raw.trim()
+  return /^[0-9]{1,16}$/.test(trimmed) ? trimmed : 'corrupt'
+}
+
+async function isLocalDevloopDir(root: string, options: { allowMissing?: boolean } = {}): Promise<boolean> {
+  const dir = devloopDir(root)
+  let meta
+  try {
+    meta = await lstat(dir)
+  } catch (error) {
+    return options.allowMissing === true && isNotFound(error)
+  }
+  if (meta.isSymbolicLink() || !meta.isDirectory()) return false
+  const resolvedRoot = await realpath(root)
+  const resolvedDir = await realpath(dir)
+  return resolvedDir === join(resolvedRoot, DEVLOOP_DIR)
+}
+
+async function assertLocalDevloopDir(root: string): Promise<void> {
+  if (!await isLocalDevloopDir(root, { allowMissing: true })) {
+    throw new Error('devloop directory must be a real directory inside the workspace')
+  }
+}
+
 /**
  * Cross-process mutex for one read-modify-write tick.
  * Returns `locked` when another live holder already owns the file.
  */
 export async function withStateLock<T>(root: string, fn: () => Promise<T>): Promise<T | 'locked'> {
+  await assertLocalDevloopDir(root)
   const file = lockPath(root)
   if (!await tryLock(file)) return 'locked'
   try {
@@ -83,7 +111,7 @@ async function tryLock(file: string): Promise<boolean> {
   const holder = parseHolderPid(observed)
   if (holder === 'pending') return false
   if (holder !== null && isPidAlive(holder)) return false
-  const taking = `${file}.taking.${observed.trim() || 'corrupt'}`
+  const taking = `${file}.taking.${lockNameToken(observed)}`
   if (!await claimFile(taking)) return false
   try {
     const current = await readLockBody(file)
@@ -193,6 +221,7 @@ async function releaseLock(file: string): Promise<void> {
 }
 
 export async function saveState(root: string, state: LoopState): Promise<void> {
+  await assertLocalDevloopDir(root)
   const file = statePath(root)
   await mkdir(dirname(file), { recursive: true })
   const temp = `${file}.${String(process.pid)}.${String(Date.now())}.tmp`

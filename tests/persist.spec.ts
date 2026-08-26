@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -403,5 +403,27 @@ describe('persist and tick', () => {
     await saveState(root, result.state)
     const raw = await readFile(join(root, '.devloop', 'STATE.json'), 'utf8')
     expect(raw).toContain('"type": "plan"')
+  })
+
+  it('keeps takeover claims beside LOCK when the body has path separators', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'devloop-'))
+    await mkdir(join(root, '.devloop'))
+    await writeFile(lockPath(root), '../outside', 'utf8')
+    expect(await withStateLock(root, async () => 'stolen')).toBe('stolen')
+    const names = await readdir(join(root, '.devloop'))
+    expect(names).not.toContain('outside')
+    expect(names.some(name => name.includes('..'))).toBe(false)
+  })
+
+  it('treats a .devloop symlink as unarmed and refuses writes', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'devloop-'))
+    const outside = await mkdtemp(join(tmpdir(), 'devloop-out-'))
+    await symlink(outside, join(root, '.devloop'))
+    expect(await workspaceArmed(root)).toBe(false)
+    const loaded = await loadState(root, 1)
+    expect(loaded.killSwitch).toBe(true)
+    expect(loaded.supervisor?.reason).toBe('escaped_devloop')
+    await expect(saveState(root, emptyState(0))).rejects.toThrow(/devloop directory/)
+    await expect(withStateLock(root, async () => 'no')).rejects.toThrow(/devloop directory/)
   })
 })
