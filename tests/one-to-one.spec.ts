@@ -3,8 +3,10 @@ import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { Context } from '@deepseek-ai/cordis'
+import DevloopService from '../src/service.ts'
 import { evaluateBudget, emptyUsage, recordAction } from '../src/budget.ts'
-import { RecordingBackend } from '../src/backend.ts'
+import { NoopBackend, runInputFor } from '../src/backend.ts'
 import { resolveConfig } from '../src/config.ts'
 import { actionKey, decideNextAction } from '../src/loop.ts'
 import { workspaceArmed } from '../src/persist.ts'
@@ -170,11 +172,21 @@ describe('Features 0.1 1:1', () => {
 })
 
 describe('Plan 0.2.1 AgentBackend recording 1:1', () => {
-  it('exposes run, cancel, and health on the recording adapter', async () => {
-    const backend = new RecordingBackend()
-    expect(typeof backend.run).toBe('function')
-    expect(typeof backend.cancel).toBe('function')
-    expect(typeof backend.health).toBe('function')
+  it('NoopBackend records, cancels, and reports health', async () => {
+    const backend = new NoopBackend()
+    const input = runInputFor('/repo', { type: 'plan' }, baseState(), limits)
+    await expect(backend.run(input)).resolves.toEqual({ status: 'recorded' })
+    await backend.cancel('task-1')
     await expect(backend.health()).resolves.toBe('ok')
+  })
+
+  it('DevloopService defaults to NoopBackend when cordis passes only ctx and config', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'devloop-default-backend-'))
+    const ctx = new Context()
+    const service = new DevloopService(ctx, resolveConfig({ root: dir, enabled: false }))
+    expect(service.backend).toBeInstanceOf(NoopBackend)
+    const input = runInputFor(dir, { type: 'plan' }, baseState(), limits)
+    await expect(service.backend.run(input)).resolves.toEqual({ status: 'recorded' })
+    await expect(service.backend.health()).resolves.toBe('ok')
   })
 })
