@@ -45,8 +45,8 @@ export const ConfigSchema: s<Config> = s.object({
     taskTimeoutMinutes: s.number().step(1).min(1).default(45),
     maxParallelWorkers: s.number().step(1).min(1).default(5),
     maxTokensPerTask: s.number().step(1).min(1).default(500_000),
-    maxCostUsdPerSession: s.number().min(0).default(2),
-    maxCostUsdPerDay: s.number().min(0).default(20),
+    maxCostUsdPerSession: finiteCostCap(2),
+    maxCostUsdPerDay: finiteCostCap(20),
     maxSameAction: s.number().step(1).min(1).max(20).default(3),
     noProgressMinutes: s.number().step(1).min(1).default(15),
   }).default({
@@ -84,5 +84,18 @@ export const ConfigSchema: s<Config> = s.object({
 export const Config = ConfigSchema
 
 export function resolveConfig(raw: unknown): Config {
-  return ConfigSchema((raw ?? {}) as Config)
+  const config = ConfigSchema((raw ?? {}) as Config)
+  assertFiniteCost(config.budget.maxCostUsdPerSession, 'budget.maxCostUsdPerSession')
+  assertFiniteCost(config.budget.maxCostUsdPerDay, 'budget.maxCostUsdPerDay')
+  return config
+}
+
+function finiteCostCap(fallback: number) {
+  return s.number().min(0).max(Number.MAX_VALUE).default(fallback)
+}
+
+function assertFiniteCost(value: number, name: string): void {
+  if (!Number.isFinite(value) || value < 0) {
+    throw new Error(`${name} must be a finite non-negative number`)
+  }
 }

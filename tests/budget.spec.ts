@@ -198,4 +198,31 @@ describe('evaluateBudget', () => {
       { type: 'delegate', taskId: '__proto__' },
     )).toEqual({ ok: false, reason: 'max_task_attempts:__proto__', taskId: '__proto__' })
   })
+
+  it('trips timeout for an empty task id', () => {
+    const verdict = evaluateBudget(
+      base({
+        tasks: [{
+          id: '',
+          title: 'empty',
+          tier: 'T1',
+          status: 'running',
+          risk: 'low',
+          attempts: 0,
+          reviewCycles: 0,
+          allowedPaths: ['src/**'],
+          acceptance: ['tests pass'],
+        }],
+        usage: {
+          ...emptyUsage(0),
+          taskStartedAt: { '': 0 },
+          lastProgressAt: 44 * 60_000,
+        },
+      }),
+      limits,
+      45 * 60_000,
+      { type: 'idle' },
+    )
+    expect(verdict).toEqual({ ok: false, reason: 'task_timeout:', taskId: '' })
+  })
 })

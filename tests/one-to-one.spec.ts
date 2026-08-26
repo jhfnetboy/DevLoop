@@ -32,7 +32,8 @@ describe('Plan 0.1.3 decideNextAction 1:1', () => {
 
   it('actionKey is stable for work actions', () => {
     expect(actionKey({ type: 'delegate', taskId: 'x' })).toBe('delegate:x')
-    expect(actionKey({ type: 'escalate', taskId: null, reason: 'wait' })).toBe('escalate:_:wait')
+    expect(actionKey({ type: 'escalate', taskId: null, reason: 'wait' })).toBe('escalate:null:wait')
+    expect(actionKey({ type: 'escalate', taskId: '_', reason: 'wait' })).toBe('escalate:id:_:wait')
   })
 })
 
@@ -59,6 +60,17 @@ describe('Plan 0.1.4 budget 1:1', () => {
     const result = runTick(state, limits, 0)
     expect(result.skipped).toBe(true)
     expect(result.state.killSwitch).toBe(false)
+  })
+
+  it('does not latch a later _ task escalation against a null-task one', () => {
+    const first = runTick(baseState({ supervisor: { taskId: null, reason: 'wait' } }), limits, 10)
+    expect(first.action).toEqual({ type: 'escalate', taskId: null, reason: 'wait' })
+    const second = runTick({
+      ...first.state,
+      supervisor: { taskId: '_', reason: 'wait' },
+    }, limits, 20)
+    expect(second.skipped).toBe(false)
+    expect(second.action).toEqual({ type: 'escalate', taskId: '_', reason: 'wait' })
   })
 })
 
@@ -92,6 +104,11 @@ describe('Plan 0.1.7 config defaults 1:1', () => {
     expect(config.tickIntervalMs).toBe(2000)
     expect(config.budget.maxTaskAttempts).toBe(3)
     expect(config.budget.maxCostUsdPerDay).toBe(20)
+  })
+
+  it('rejects non-finite cost caps', () => {
+    expect(() => resolveConfig({ budget: { maxCostUsdPerDay: Number.POSITIVE_INFINITY } })).toThrow()
+    expect(() => resolveConfig({ budget: { maxCostUsdPerSession: Number.NaN } })).toThrow()
   })
 })
 

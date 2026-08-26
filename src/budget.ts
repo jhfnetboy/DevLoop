@@ -36,7 +36,7 @@ export function evaluateBudget(
   }
 
   const timedOut = timedOutTaskId(state, limits, now)
-  if (timedOut) {
+  if (timedOut !== undefined) {
     return fail(`task_timeout:${timedOut}`, timedOut)
   }
 
@@ -59,7 +59,7 @@ export function evaluateBudget(
   }
 
   const overTokens = overTokenTaskId(state, limits)
-  if (overTokens) {
+  if (overTokens !== undefined) {
     return fail('max_tokens_per_task', overTokens)
   }
 
