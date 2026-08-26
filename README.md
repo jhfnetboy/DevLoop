@@ -9,8 +9,9 @@ This repository is `dsh-devloop`. It is not another coding agent and it does not
 - Installs into a DSH profile as a bundle plugin
 - On each tick, if the workspace has `.devloop/GOAL.md`, reads `STATE.json` and records the next loop action (plan / delegate / review / merge / stop)
 - Enforces budget / circuit-breaker rules in-process
-- Does **not** spawn DeepSeek / Claude / Codex workers or create git worktrees
+- Does **not** spawn DeepSeek / Claude / Codex workers
 - 0.2.1: after writing STATE, plan / delegate / review is handed to `AgentBackend.run` (NoopBackend in production, outside the lock)
+- 0.2.2: `delegate` creates `.devloop/worktrees/<taskId>` and writes `.devloop/CONTRACT.json` inside it
 
 ## How it fits
 
@@ -77,7 +78,7 @@ flowchart TB
     Progress --> SM
 ```
 
-Until 0.2, `delegate` / `review` / `merge` are recorded in `STATE.json` only. No worktree, no headless agent, no merge.
+Until 0.2.3, `delegate` writes a worktree plus contract but does not spawn a headless agent. `merge` is still STATE-only.
 
 ## Can 0.1 meet the product goal?
 

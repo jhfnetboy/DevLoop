@@ -1,6 +1,7 @@
 import type { BudgetLimits } from './config.js'
 import { contractForTask } from './router.js'
 import type { LoopAction, LoopState, TaskContract } from './types.js'
+import { prepareDelegateWorktree } from './worktree.js'
 
 export type AgentAction = Extract<LoopAction, { type: 'plan' } | { type: 'delegate' } | { type: 'review' }>
 
@@ -8,6 +9,7 @@ export interface AgentRunInput {
   readonly action: AgentAction
   readonly contract: TaskContract | null
   readonly workspaceRoot: string
+  readonly worktreeRoot: string | null
 }
 
 export interface AgentRunResult {
@@ -36,11 +38,11 @@ export function runInputFor(
   limits: BudgetLimits,
 ): AgentRunInput {
   if (action.type === 'plan') {
-    return { action, contract: null, workspaceRoot }
+    return { action, contract: null, workspaceRoot, worktreeRoot: null }
   }
   const task = state.tasks.find(item => item.id === action.taskId)
   if (!task) {
-    return { action, contract: null, workspaceRoot }
+    return { action, contract: null, workspaceRoot, worktreeRoot: null }
   }
   return {
     action,
@@ -54,6 +56,7 @@ export function runInputFor(
       limits.maxTaskAttempts,
     ),
     workspaceRoot,
+    worktreeRoot: null,
   }
 }
 
@@ -79,8 +82,17 @@ export async function dispatchTick(
     log.error(`[dsh-devloop] skip backend: missing task ${action.taskId}`)
     return
   }
+  let worktreeRoot: string | null = null
+  if (action.type === 'delegate' && input.contract) {
+    try {
+      worktreeRoot = await prepareDelegateWorktree(workspaceRoot, input.contract)
+    } catch (error) {
+      log.error('[dsh-devloop] worktree failed', error)
+      return
+    }
+  }
   try {
-    const dispatched = await backend.run(input)
+    const dispatched = await backend.run({ ...input, worktreeRoot })
     if (dispatched.status === 'failed') {
       log.error(`[dsh-devloop] backend failed: ${dispatched.detail ?? 'unknown'}`)
     }

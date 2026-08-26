@@ -9,6 +9,7 @@ import { resolveConfig } from '../src/config.ts'
 import { actionKey, decideNextAction } from '../src/loop.ts'
 import { workspaceArmed } from '../src/persist.ts'
 import { runTick } from '../src/tick.ts'
+import { worktreeTaskToken } from '../src/worktree.ts'
 import {
   assertReviewerAllowed,
   contractForTask,
@@ -176,5 +177,13 @@ describe('Plan 0.2.1 AgentBackend recording 1:1', () => {
     expect(typeof backend.cancel).toBe('function')
     expect(typeof backend.health).toBe('function')
     await expect(backend.health()).resolves.toBe('ok')
+  })
+})
+
+describe('Plan 0.2.2 worktree contract 1:1', () => {
+  it('rejects task ids that are not a single path segment', () => {
+    expect(worktreeTaskToken('d1')).toBe('d1')
+    expect(worktreeTaskToken('../etc')).toBeNull()
+    expect(worktreeTaskToken('a..b')).toBeNull()
   })
 })

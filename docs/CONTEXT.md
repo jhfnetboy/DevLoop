@@ -62,7 +62,7 @@
 
 ### Worktree / 工作树
 **定义**：一个 Task 的隔离 git checkout。Worker 只在这里写。
-**区别于**：主工作区。0.1 只预留字段，不创建 worktree。
+**区别于**：主工作区。0.2.2 在 `.devloop/worktrees/<taskId>` 创建隔离 checkout，并写入 `.devloop/CONTRACT.json`。
 
 ### Winner / 参考实现
 **定义**：社区插件 `dsh-devflow`，作为「已经跑通 DSH 插件层流水线」的参考。

@@ -85,3 +85,19 @@ AgentBackend dispatch after the state lock is released. No worker process, no wo
 
 - tick 先写 STATE 再派 backend，是 at-most-once：backend throw / `failed` 只打独立日志，不改已写入的状态，也不重试（后续 tick 被 latch 成 idle）
 - 仍不 spawn DeepSeek / Claude / Codex，不创建 git worktree
+
+## 0.2.2 — 2026-08-26
+
+Delegate creates a git worktree and writes the frozen Task Contract. Still no worker process.
+
+### 代码
+
+- 新增 `prepareDelegateWorktree`：在 `.devloop/worktrees/<taskId>` 建 worktree，分支 `devloop/<taskId>`
+- 合同写到 worktree 内 `.devloop/CONTRACT.json`（worker 禁止改 `.devloop/`）
+- task id 必须是单路径段；拒绝已存在但不是 worktree 的目录、符号链接 pool
+- worktree 准备失败则不调用 `backend.run`（与 backend 失败一样 at-most-once）
+
+### 可能影响
+
+- 目标仓库必须是 git toplevel；非 git 目录的 delegate 只写 STATE、不建树
+- 仍不 spawn DeepSeek / Claude / Codex，不合入、不删 worktree

@@ -18,7 +18,8 @@ declare module '@deepseek-ai/cordis' {
 /**
  * Host service: a process-local timer drives one deterministic tick against
  * `<root>/.devloop/`. After STATE is written, plan/delegate/review is handed to
- * `AgentBackend` outside the lock. 0.2.1 records only; it does not spawn workers.
+ * `AgentBackend` outside the lock. Delegate also creates a git worktree and
+ * writes CONTRACT.json. 0.2.2 still does not spawn workers.
  */
 export default class DevloopService extends Service {
   static inject = []
