@@ -1,0 +1,23 @@
+# User-case tests (0.1)
+
+0.1 does not spawn workers. These cases map product flows to automated specs. Manual checks after install are listed at the end.
+
+| ID | Actor | Flow | Automated spec |
+|---|---|---|---|
+| UC-01 | Operator | Write `GOAL.md` to arm the workspace | `tests/flow.spec.ts` (pipeline), `tests/persist.spec.ts` |
+| UC-02 | Loop | No tasks → record `plan` | Plan 0.1.3 / Features F1 in `tests/one-to-one.spec.ts` |
+| UC-03 | Operator | Inject a ready task → record `delegate` | `tests/flow.spec.ts` |
+| UC-04 | Operator | Mark `review_pending` → record `review` | `tests/flow.spec.ts` |
+| UC-05 | Operator | Mark `merge_ready` → record `merge` | `tests/flow.spec.ts` |
+| UC-06 | Operator | Mark `done` → `stop` / kill switch | `tests/flow.spec.ts` |
+| UC-07 | Reviewer | Rework after failed review → retry delegate | `tests/flow.spec.ts`, `tests/persist.spec.ts` |
+| UC-08 | Budget | Exhausted attempts halt and stay halted | `tests/flow.spec.ts`, Plan 0.1.4 |
+| UC-09 | Security | High-risk ready task escalates | Features P4 in `tests/one-to-one.spec.ts` |
+| UC-10 | Install | Package is a DSH bundle plugin | Plan 0.1.2 in `tests/one-to-one.spec.ts` |
+
+## Manual after GitHub publish
+
+1. `pnpm install && pnpm test && pnpm build`
+2. Install into a DSH profile as in README
+3. Confirm an unarmed repo stays idle
+4. Copy `templates/GOAL.md` to `<repo>/.devloop/GOAL.md` and confirm the host logs a `plan` tick

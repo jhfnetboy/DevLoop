@@ -1,6 +1,6 @@
 # DevLoop
-a dsh plugin for myself
 
+A DSH plugin for myself. Design and decisions: [`docs/`](./docs/).
 
 Thanks for:
 deepseek-ai/deepseek-harness
