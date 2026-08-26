@@ -9,7 +9,8 @@ This repository is `dsh-devloop`. It is not another coding agent and it does not
 - Installs into a DSH profile as a bundle plugin
 - On each tick, if the workspace has `.devloop/GOAL.md`, reads `STATE.json` and records the next loop action (plan / delegate / review / merge / stop)
 - Enforces budget / circuit-breaker rules in-process
-- Does **not** yet spawn DeepSeek / Claude / Codex workers (that is 0.2)
+- Does **not** spawn DeepSeek / Claude / Codex workers or create git worktrees
+- 0.2.1: after writing STATE, plan / delegate / review is handed to `AgentBackend.run` (recording no-op, outside the lock)
 
 ## How it fits
 

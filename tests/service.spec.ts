@@ -3,8 +3,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
+import { RecordingBackend } from '../src/backend.ts'
 import { resolveConfig } from '../src/config.ts'
-import { loadState, workspaceArmed } from '../src/persist.ts'
+import { loadState, withStateLock, workspaceArmed } from '../src/persist.ts'
 import DevloopService from '../src/service.ts'
 
 async function waitForAction(root: string, type: string, timeoutMs = 2000): Promise<void> {
@@ -16,6 +17,20 @@ async function waitForAction(root: string, type: string, timeoutMs = 2000): Prom
   }
   const last = await loadState(root, Date.now())
   throw new Error(`timed out waiting for action ${type}, last=${last.lastAction.type}`)
+}
+
+class LockProbeBackend extends RecordingBackend {
+  lockOk = false
+
+  constructor(private readonly workspaceRoot: string) {
+    super()
+  }
+
+  override async run(input: Parameters<RecordingBackend['run']>[0]) {
+    const outcome = await withStateLock(this.workspaceRoot, async () => 'acquired')
+    this.lockOk = outcome.ok
+    return super.run(input)
+  }
 }
 
 describe('DevloopService', () => {
@@ -52,6 +67,36 @@ describe('DevloopService', () => {
     const second = await loadState(root, Date.now())
     expect(second.lastAction).toEqual({ type: 'plan' })
     expect(second.updatedAt).toBe(updatedAt)
+  })
+
+  it('hands plan to AgentBackend after STATE is written, once', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'devloop-svc-'))
+    await mkdir(join(root, '.devloop'))
+    await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
+    const backend = new RecordingBackend()
+    const ctx = new Context()
+    const service = new DevloopService(ctx, resolveConfig({ root, tickIntervalMs: 60_000 }), backend)
+    services.push(service)
+    await waitForAction(root, 'plan')
+    expect(backend.runs).toHaveLength(1)
+    expect(backend.runs[0]?.action).toEqual({ type: 'plan' })
+    expect(backend.runs[0]?.workspaceRoot).toBe(root)
+    expect(backend.runs[0]?.contract).toBeNull()
+    await service.tick()
+    expect(backend.runs).toHaveLength(1)
+  })
+
+  it('releases the STATE lock before AgentBackend.run', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'devloop-svc-'))
+    await mkdir(join(root, '.devloop'))
+    await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
+    const backend = new LockProbeBackend(root)
+    const ctx = new Context()
+    const service = new DevloopService(ctx, resolveConfig({ root, tickIntervalMs: 60_000 }), backend)
+    services.push(service)
+    await waitForAction(root, 'plan')
+    expect(backend.lockOk).toBe(true)
+    expect(backend.runs).toHaveLength(1)
   })
 
   it('does not start when disabled', async () => {

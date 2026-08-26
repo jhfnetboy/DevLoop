@@ -62,7 +62,7 @@ T0 / T1 / T2 / T3 是产品角色。界面和配置谈角色，不谈「今天 D
 
 ### T4 Backend 接口预留
 
-0.1 先把 `AgentBackend` 形状定下来（run / cancel / health），只接「记录下一步」的空跑。后续接 DSH headless、Codex exec、Claude CLI、OpenCode，不改 Loop。
+0.2.1 把 `AgentBackend` 形状落地为 `run` / `cancel` / `health`，默认 `RecordingBackend` 空跑。后续接 DSH headless、Codex exec、Claude CLI、OpenCode，不改 Loop。
 
 ### T5 参考而不耦合 winner
 

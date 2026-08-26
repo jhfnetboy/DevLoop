@@ -1,4 +1,6 @@
 export { default } from './service.js'
+export { RecordingBackend, isAgentAction, runInputFor } from './backend.js'
+export type { AgentAction, AgentBackend, AgentRunInput, AgentRunResult } from './backend.js'
 export { Config, ConfigSchema, resolveConfig } from './config.js'
 export type { BudgetLimits, RoutingTable } from './config.js'
 export { decideNextAction, actionKey } from './loop.js'

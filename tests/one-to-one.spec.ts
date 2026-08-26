@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { evaluateBudget, emptyUsage, recordAction } from '../src/budget.ts'
+import { RecordingBackend } from '../src/backend.ts'
 import { resolveConfig } from '../src/config.ts'
 import { actionKey, decideNextAction } from '../src/loop.ts'
 import { workspaceArmed } from '../src/persist.ts'
@@ -164,5 +165,15 @@ describe('Features 0.1 1:1', () => {
 
   it('T2: decideNextAction does not return a Promise', () => {
     expect(decideNextAction(baseState())).not.toBeInstanceOf(Promise)
+  })
+})
+
+describe('Plan 0.2.1 AgentBackend recording 1:1', () => {
+  it('exposes run, cancel, and health on the recording adapter', async () => {
+    const backend = new RecordingBackend()
+    expect(typeof backend.run).toBe('function')
+    expect(typeof backend.cancel).toBe('function')
+    expect(typeof backend.health).toBe('function')
+    await expect(backend.health()).resolves.toBe('ok')
   })
 })

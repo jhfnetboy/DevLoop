@@ -1,8 +1,14 @@
 import { clearInterval, setInterval } from 'node:timers'
 import { Service, type Context } from '@deepseek-ai/cordis'
+import {
+  RecordingBackend,
+  isAgentAction,
+  runInputFor,
+  type AgentBackend,
+} from './backend.js'
 import { ConfigSchema, resolveConfig, type Config } from './config.js'
 import { loadState, saveState, withStateLock, workspaceArmed } from './persist.js'
-import { runTick } from './tick.js'
+import { runTick, type TickResult } from './tick.js'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -12,7 +18,8 @@ declare module '@deepseek-ai/cordis' {
 
 /**
  * Host service: a process-local timer drives one deterministic tick against
- * `<root>/.devloop/`. 0.1 records the next action; it does not spawn workers.
+ * `<root>/.devloop/`. After STATE is written, plan/delegate/review is handed to
+ * `AgentBackend` outside the lock. 0.2.1 records only; it does not spawn workers.
  */
 export default class DevloopService extends Service {
   static inject = []
@@ -24,7 +31,11 @@ export default class DevloopService extends Service {
   private busy = false
   private disposed = false
 
-  constructor(ctx: Context, rawConfig: Config) {
+  constructor(
+    ctx: Context,
+    rawConfig: Config,
+    private readonly backend: AgentBackend = new RecordingBackend(),
+  ) {
     super(ctx, 'devloop')
     this.config = resolveConfig(rawConfig)
     if (!this.config.enabled) {
@@ -60,7 +71,7 @@ export default class DevloopService extends Service {
     try {
       if (this.disposed) return
       if (!await workspaceArmed(this.config.root)) return
-      const outcome = await withStateLock(this.config.root, async () => {
+      const outcome = await withStateLock(this.config.root, async (): Promise<TickResult | undefined> => {
         if (this.disposed) return
         const current = await loadState(this.config.root, now)
         if (current.supervisor?.reason === 'unreadable_state') {
@@ -80,14 +91,32 @@ export default class DevloopService extends Service {
         if (result.action.type === 'stop' || result.state.killSwitch) {
           this.stop()
         }
+        return result
       })
       if (!outcome.ok) {
         this.ctx.logger.info('[dsh-devloop] tick skipped: lock held')
+        return
+      }
+      if (outcome.value && !outcome.value.skipped) {
+        await this.dispatch(outcome.value)
       }
     } catch (error) {
       this.ctx.logger.error('[dsh-devloop] tick failed', error)
     } finally {
       this.busy = false
+    }
+  }
+
+  private async dispatch(result: TickResult): Promise<void> {
+    if (this.disposed || !isAgentAction(result.action)) return
+    const input = runInputFor(this.config.root, result.action, result.state, this.config.budget)
+    if (result.action.type !== 'plan' && !input.contract) {
+      this.ctx.logger.error(`[dsh-devloop] skip backend: missing task ${result.action.taskId}`)
+      return
+    }
+    const dispatched = await this.backend.run(input)
+    if (dispatched.status === 'failed') {
+      this.ctx.logger.error(`[dsh-devloop] backend failed: ${dispatched.detail ?? 'unknown'}`)
     }
   }
 }
