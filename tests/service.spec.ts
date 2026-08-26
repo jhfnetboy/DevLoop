@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { RecordingBackend } from '../src/backend.ts'
 import type { AgentBackend, AgentRunInput, AgentRunResult } from '../src/backend.ts'
@@ -154,6 +154,27 @@ describe('DevloopService', () => {
     expect(backend.runs[0]?.worktreeRoot).toBeTruthy()
   })
 
+  it('dispatches review into an existing worktree, not the workspace root', async () => {
+    const root = await mkdtempInRepo('devloop-svc-review-')
+    await mkdir(join(root, '.devloop'))
+    await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
+    const dest = join(root, '.devloop', 'worktrees', 'd1')
+    await mkdir(dest, { recursive: true })
+    await saveState(root, {
+      ...emptyState(Date.now()),
+      tasks: [makeTask({ id: 'd1', status: 'review_pending', title: 'Add persist' })],
+    })
+    const backend = new RecordingBackend()
+    const ctx = new Context()
+    const service = new DevloopService(ctx, resolveConfig({ root, tickIntervalMs: 60_000 }), backend)
+    services.push(service)
+    await waitForAction(root, 'review')
+    await waitForRuns(backend, 1)
+    expect(backend.runs[0]?.action).toEqual({ type: 'review', taskId: 'd1' })
+    expect(backend.runs[0]?.worktreeRoot).toBe(dest)
+    expect(backend.runs[0]?.workspaceRoot).toBe(root)
+  })
+
   it('does not dispatch merge to AgentBackend', async () => {
     const root = await armWorkspace()
     await saveState(root, {
@@ -221,5 +242,49 @@ describe('DevloopService', () => {
     await new Promise(resolve => setTimeout(resolve, 50))
     const loaded = await loadState(root, Date.now())
     expect(loaded.lastAction).toEqual({ type: 'idle' })
+  })
+
+  it('aborts a hung backend after taskTimeoutMinutes and unsticks busy', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      const root = await armWorkspace()
+      let seen: AbortSignal | undefined
+      let calls = 0
+      const hung: AgentBackend = {
+        async run(input) {
+          calls += 1
+          seen = input.signal
+          if (calls === 1) await new Promise(() => {})
+          return { status: 'recorded' }
+        },
+        async cancel() {},
+        async health() { return 'ok' },
+      }
+      const ctx = new Context()
+      const service = new DevloopService(ctx, resolveConfig({
+        root,
+        enabled: false,
+        budget: { taskTimeoutMinutes: 1 },
+      }), hung)
+      services.push(service)
+      const first = service.tick()
+      const start = Date.now()
+      while (seen === undefined && Date.now() - start < 2000) {
+        await new Promise(resolve => setImmediate(resolve))
+      }
+      expect(seen).toBeDefined()
+      vi.advanceTimersByTime(60_000)
+      await first
+      expect(seen?.aborted).toBe(true)
+      expect(calls).toBe(1)
+      await saveState(root, {
+        ...await loadState(root, Date.now()),
+        tasks: [makeTask({ id: 'd1', status: 'review_pending' })],
+      })
+      await service.tick()
+      expect(calls).toBe(2)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

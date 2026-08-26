@@ -84,7 +84,9 @@ function isWorkAction(action: LoopAction): boolean {
 
 function dispatchStatus(state: LoopState, action: LoopAction): string | null {
   if (action.type === 'delegate' || action.type === 'review' || action.type === 'merge') {
-    return state.tasks.find(task => task.id === action.taskId)?.status ?? null
+    const task = state.tasks.find(item => item.id === action.taskId)
+    if (!task) return null
+    return `${task.status}:${task.attempts}:${task.reviewCycles}`
   }
   if (action.type === 'escalate') {
     return action.reason

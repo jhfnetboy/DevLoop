@@ -103,3 +103,21 @@ Delegate creates a git worktree and writes the frozen Task Contract. Still no wo
 - 目标仓库必须是 git toplevel；非 git 目录的 delegate 不 latch，修好仓库后下一拍会再试
 - backend 派发失败才是 at-most-once（已开工/已花钱）；准备失败不是
 - 仍不 spawn DeepSeek / Claude / Codex，不合入、不删 worktree
+
+## 0.2.3 — 2026-08-26
+
+DSH headless one-shot on plan / delegate / review. Default stays Noop so existing installs do not spawn.
+
+### 代码
+
+- 新增 `DshHeadlessBackend`：`execFile` 跑 `dsh --profile headless "<task>"`，cwd 为 worktree（无则 workspace）
+- `Config.agentBackend`：`'noop' | 'dsh'`，默认 `'noop'`；`createBackend()` 按此项选择，cordis 两参构造即可切到 headless
+- `AgentRunInput.signal`：派发与 `budget.taskTimeoutMinutes` 竞速，超时 abort；`stop()` 也会 abort 在途 run
+- latch 键带上 `task.attempts` / `reviewCycles`，ready 重新武装且 attempts++ 会再派一次
+- `review` 若已有 `.devloop/worktrees/<taskId>` 则在该 worktree 派工，不在主工作区 spawn
+
+### 可能影响
+
+- 默认仍不 spawn；要真派工需在 DSH 插件配置里设 `agentBackend: dsh`，且本机有 `dsh`
+- backend 失败仍 at-most-once；超时只松开 `busy` 并 abort 子进程，不改已 latch 的 STATE
+- 0.2.4 之前 merge 仍只写 STATE，不合入、不删 worktree

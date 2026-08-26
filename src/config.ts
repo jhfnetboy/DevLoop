@@ -24,6 +24,7 @@ export interface Config {
   readonly root: string
   readonly enabled: boolean
   readonly tickIntervalMs: number
+  readonly agentBackend: 'noop' | 'dsh'
   readonly budget: BudgetLimits
   readonly routing: RoutingTable
 }
@@ -39,6 +40,7 @@ export const ConfigSchema: s<Config> = s.object({
   root: s.string().default(process.cwd()),
   enabled: s.boolean().default(true),
   tickIntervalMs: s.number().step(1).min(500).default(2000),
+  agentBackend: s.union([s.const('noop'), s.const('dsh')]).default('noop'),
   budget: s.object({
     maxTaskAttempts: s.number().step(1).min(1).default(3),
     maxReviewCycles: s.number().step(1).min(1).default(2),

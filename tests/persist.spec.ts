@@ -312,6 +312,41 @@ describe('persist and tick', () => {
     expect(retry.state.usage.taskAttempts['t-1']).toBe(2)
   })
 
+  it('re-delegates when ready is re-armed with a higher attempt count', () => {
+    const limits = resolveConfig({}).budget
+    const first = runTick({ ...emptyState(0), tasks: [sampleTask('ready')] }, limits, 10)
+    const retry = runTick({
+      ...first.state,
+      tasks: [{ ...sampleTask('ready'), attempts: 1 }],
+    }, limits, 20)
+    expect(retry.skipped).toBe(false)
+    expect(retry.action).toEqual({ type: 'delegate', taskId: 't-1' })
+  })
+
+  it('still latches ready when attempts did not change', () => {
+    const limits = resolveConfig({}).budget
+    const first = runTick({ ...emptyState(0), tasks: [sampleTask('ready')] }, limits, 10)
+    const again = runTick({
+      ...first.state,
+      tasks: [sampleTask('ready')],
+    }, limits, 20)
+    expect(again.skipped).toBe(true)
+  })
+
+  it('re-reviews when review_pending is re-armed with a higher reviewCycles', () => {
+    const limits = resolveConfig({}).budget
+    const first = runTick({
+      ...emptyState(0),
+      tasks: [sampleTask('review_pending')],
+    }, limits, 10)
+    const retry = runTick({
+      ...first.state,
+      tasks: [{ ...sampleTask('review_pending'), reviewCycles: 1 }],
+    }, limits, 20)
+    expect(retry.skipped).toBe(false)
+    expect(retry.action).toEqual({ type: 'review', taskId: 't-1' })
+  })
+
   it('does not latch rework when lastDispatchStatus is missing', () => {
     const limits = resolveConfig({}).budget
     const first = runTick({ ...emptyState(0), tasks: [sampleTask('ready')] }, limits, 10)
