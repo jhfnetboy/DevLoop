@@ -27,17 +27,15 @@ export default class DevloopService extends Service {
   static readonly provide = 'devloop'
 
   private readonly config: Config
+  readonly backend: AgentBackend
   private timer: ReturnType<typeof setInterval> | null = null
   private busy = false
   private disposed = false
 
-  constructor(
-    ctx: Context,
-    rawConfig: Config,
-    private readonly backend: AgentBackend = new NoopBackend(),
-  ) {
+  constructor(ctx: Context, rawConfig: Config, backend?: AgentBackend) {
     super(ctx, 'devloop')
     this.config = resolveConfig(rawConfig)
+    this.backend = backend ?? this.createBackend()
     if (!this.config.enabled) {
       ctx.logger.info('[dsh-devloop] disabled by config')
       return
@@ -113,5 +111,13 @@ export default class DevloopService extends Service {
     } finally {
       this.busy = false
     }
+  }
+
+  /**
+   * Cordis constructs `(ctx, config)` only. 0.2.3 overrides this to return a
+   * DSH headless backend without changing the constructor signature.
+   */
+  protected createBackend(): AgentBackend {
+    return new NoopBackend()
   }
 }
