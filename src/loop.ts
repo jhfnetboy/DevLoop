@@ -84,7 +84,9 @@ export function actionKey(action: LoopAction): string {
     case 'merge':
       return `${action.type}:${action.taskId}`
     case 'escalate':
-      return `escalate:${action.taskId ?? '_'}:${action.reason}`
+      return action.taskId === null
+        ? `escalate:null:${action.reason}`
+        : `escalate:id:${action.taskId}:${action.reason}`
     default:
       return action.type
   }
