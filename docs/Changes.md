@@ -28,3 +28,19 @@ Deterministic loop core without file persistence or DSH Service.
 ### 可能影响
 
 - 尚无 `dsh plugin add` 入口；未写 `.devloop/`
+
+## 0.1.2 — 2026-08-26
+
+File-backed `.devloop/` state, exclusive LOCK, and the installable DSH plugin Service.
+
+### 代码
+
+- 新增 `persist.ts`：`STATE.json` 校验、无 `GOAL.md` 不武装、损坏状态安全停机
+- 新增 `withStateLock`：跨进程互斥，过期 LOCK 可回收
+- 新增 Cordis `DevloopService` + `cordis.patch.yml` + `templates/GOAL.md`
+- 新增 persist / flow / service 测试，补齐 Plan 0.1.2 / 0.1.6 一对一覆盖
+
+### 可能影响
+
+- 用户主动 `dsh plugin add` 后，DSH profile 会多一行 `devloop`；未放置 `.devloop/GOAL.md` 时 tick 保持 idle
+- 尚不派真实 Worker，不改业务仓库代码
