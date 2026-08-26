@@ -46,3 +46,16 @@ File-backed `.devloop/` state, exclusive LOCK, and the installable DSH plugin Se
 
 - 用户主动 `dsh plugin add` 后，DSH profile 会多一行 `devloop`；未放置 `.devloop/GOAL.md` 时 tick 保持 idle
 - 尚不派真实 Worker，不改业务仓库代码
+
+## 0.1.3 — 2026-08-26
+
+README flowcharts for the 0.1 tick versus the 0.2 factory, plus an honest capability table.
+
+### 文档
+
+- 根 README 增加 mermaid：插件位置、0.1 tick（budget 在 `runTick`）、目标工厂图
+- 写明 0.1 不能派 Worker、不能完成无人值守里程碑
+
+### 可能影响
+
+- 只改说明，不改调度语义
