@@ -1,7 +1,12 @@
+import { readFileSync } from 'node:fs'
+import { mkdtemp } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { evaluateBudget, emptyUsage, recordAction } from '../src/budget.ts'
 import { resolveConfig } from '../src/config.ts'
 import { actionKey, decideNextAction } from '../src/loop.ts'
+import { workspaceArmed } from '../src/persist.ts'
 import { runTick } from '../src/tick.ts'
 import {
   assertReviewerAllowed,
@@ -15,6 +20,24 @@ import { makeTask, baseState } from './helpers.ts'
 
 const limits = resolveConfig({}).budget
 const table = resolveConfig({}).routing
+const root = join(import.meta.dirname, '..')
+
+describe('Plan 0.1.2 plugin bundle 1:1', () => {
+  it('declares a DSH bundle patch', () => {
+    const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as {
+      name: string
+      dsh: { bundle: { patch: string } }
+    }
+    expect(pkg.name).toBe('dsh-devloop')
+    expect(pkg.dsh.bundle.patch).toBe('./cordis.patch.yml')
+  })
+
+  it('inserts the devloop row', () => {
+    const patch = readFileSync(join(root, 'cordis.patch.yml'), 'utf8')
+    expect(patch).toContain('id: devloop')
+    expect(patch).toContain('name: dsh-devloop')
+  })
+})
 
 describe('Plan 0.1.3 decideNextAction 1:1', () => {
   it.each([
@@ -94,6 +117,13 @@ describe('Plan 0.1.5 router 1:1', () => {
     expect(contract.forbidden).toContain('.devloop/GOAL.md')
     expect(contract.forbidden).toContain('package.json')
     expect(contract.budget.maxAttempts).toBe(3)
+  })
+})
+
+describe('Plan 0.1.6 file state 1:1', () => {
+  it('unarmed without GOAL.md', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'devloop-unarmed-'))
+    expect(await workspaceArmed(dir)).toBe(false)
   })
 })
 

@@ -1,6 +1,6 @@
 import type { LoopState, Task, TaskStatus } from '../src/types.ts'
 import { emptyUsage } from '../src/budget.ts'
-import { STATE_VERSION } from '../src/types.ts'
+import { emptyState } from '../src/persist.ts'
 
 export function makeTask(partial: Partial<Task> & Pick<Task, 'id' | 'status'>): Task {
   return {
@@ -28,15 +28,8 @@ export function setStatus(state: LoopState, id: string, status: TaskStatus): Loo
 
 export function baseState(overrides: Partial<LoopState> = {}): LoopState {
   return {
-    version: STATE_VERSION,
-    goalCompleted: false,
-    killSwitch: false,
-    supervisor: null,
-    tasks: [],
+    ...emptyState(0),
     usage: emptyUsage(0),
-    lastAction: { type: 'idle' },
-    lastDispatchStatus: null,
-    updatedAt: new Date(0).toISOString(),
     ...overrides,
   }
 }

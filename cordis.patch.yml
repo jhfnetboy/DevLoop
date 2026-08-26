@@ -1,0 +1,6 @@
+# Bundle patch applied when the plugin is installed through `dsh plugin add`.
+# Zero required config: `root` defaults to process.cwd(). Override in the
+# profile's own cordis.patch.yml if the workspace is not the DSH cwd.
+- insert:
+    - id: devloop
+      name: dsh-devloop
