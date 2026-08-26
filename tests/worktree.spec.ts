@@ -1,5 +1,7 @@
+import { execFile } from 'node:child_process'
 import { mkdir, readFile, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { promisify } from 'node:util'
 import { describe, expect, it } from 'vitest'
 import { resolveConfig } from '../src/config.ts'
 import { contractForTask } from '../src/router.ts'
@@ -10,6 +12,7 @@ import {
 } from '../src/worktree.ts'
 import { initGitRepo, makeTask, mkdtempInRepo } from './helpers.ts'
 
+const execFileAsync = promisify(execFile)
 const limits = resolveConfig({}).budget
 
 function contractFor(id: string) {
@@ -100,6 +103,26 @@ describe('prepareDelegateWorktree', () => {
     const evil = await mkdtempInRepo('devloop-evil-')
     await symlink(evil, join(root, '.devloop', 'worktrees'))
     await expect(prepareDelegateWorktree(root, contractFor('d1'))).rejects.toThrow(/symlink/)
+  })
+
+  it('keeps CONTRACT.json out of a worker git add -A commit', async () => {
+    const root = await gitWorkspace()
+    const dest = await prepareDelegateWorktree(root, contractFor('d1'))
+    await writeFile(join(dest, 'src.txt'), 'worker\n', 'utf8')
+    await execFileAsync('git', ['-C', dest, 'add', '-A'])
+    await execFileAsync('git', ['-C', dest, 'commit', '-m', 'worker'])
+    const { stdout } = await execFileAsync('git', ['-C', dest, 'show', '--name-only', '--pretty=format:', 'HEAD'], { encoding: 'utf8' })
+    expect(stdout).toContain('src.txt')
+    expect(stdout).not.toContain('CONTRACT.json')
+  })
+
+  it('reattaches a detached worktree HEAD onto the task branch', async () => {
+    const root = await gitWorkspace()
+    const dest = await prepareDelegateWorktree(root, contractFor('d1'))
+    await execFileAsync('git', ['-C', dest, 'checkout', '--detach'])
+    await expect(prepareDelegateWorktree(root, contractFor('d1'))).resolves.toBe(dest)
+    const { stdout } = await execFileAsync('git', ['-C', dest, 'symbolic-ref', '--quiet', 'HEAD'], { encoding: 'utf8' })
+    expect(stdout.trim()).toBe('refs/heads/devloop/d1')
   })
 
   it('throws on an unsafe task id', async () => {

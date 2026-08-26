@@ -192,7 +192,7 @@ describe('Plan 0.2.1 AgentBackend recording 1:1', () => {
   })
 })
 
-describe('Plan 0.2.2 worktree contract 1:1', () => {
+describe('Plan 0.2.2 task-id token', () => {
   it('rejects task ids that are not a single path segment', () => {
     expect(worktreeTaskToken('d1')).toBe('d1')
     expect(worktreeTaskToken('../etc')).toBeNull()

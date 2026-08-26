@@ -63,10 +63,7 @@ export async function prepareDelegateWorktree(root: string, contract: TaskContra
       throw new Error('worktree destination exists but is not a git worktree')
     }
     await assertInside(pool, dest)
-    const current = (await git(dest, ['rev-parse', '--abbrev-ref', 'HEAD'])).trim()
-    if (current !== branch) {
-      throw new Error(`worktree branch must be ${branch}, found ${current}`)
-    }
+    await ensureWorktreeBranch(dest, branch)
     await writeContractFile(dest, contract)
     return dest
   }
@@ -88,6 +85,7 @@ async function writeContractFile(worktreeRoot: string, contract: TaskContract): 
   }
   await writeFile(file, `${JSON.stringify(contract, null, 2)}\n`, 'utf8')
   await assertInside(dir, file)
+  await ignoreDir(dir)
 }
 
 async function ensureRealDir(path: string, parent: string): Promise<string> {
@@ -132,7 +130,11 @@ async function listedWorktreePaths(root: string): Promise<Set<string>> {
 }
 
 async function ignoreWorktrees(pool: string): Promise<void> {
-  const file = join(pool, '.gitignore')
+  await ignoreDir(pool)
+}
+
+async function ignoreDir(dir: string): Promise<void> {
+  const file = join(dir, '.gitignore')
   try {
     const meta = await lstat(file)
     if (meta.isSymbolicLink()) throw new Error('refusing symlink gitignore')
@@ -140,7 +142,29 @@ async function ignoreWorktrees(pool: string): Promise<void> {
     if (!isNotFound(error)) throw error
   }
   await writeFile(file, '*\n', 'utf8')
-  await assertInside(pool, file)
+  await assertInside(dir, file)
+}
+
+async function ensureWorktreeBranch(dest: string, branch: string): Promise<void> {
+  const expected = `refs/heads/${branch}`
+  if (await symbolicHead(dest) === expected) return
+  try {
+    await git(dest, ['switch', branch])
+  } catch (error) {
+    throw new Error(`worktree branch must be ${branch}`, { cause: error })
+  }
+  if (await symbolicHead(dest) !== expected) {
+    throw new Error(`worktree branch must be ${branch}`)
+  }
+}
+
+async function symbolicHead(worktreeRoot: string): Promise<string | null> {
+  try {
+    const ref = (await git(worktreeRoot, ['symbolic-ref', '--quiet', 'HEAD'])).trim()
+    return ref.length > 0 ? ref : null
+  } catch {
+    return null
+  }
 }
 
 async function pathExists(path: string): Promise<boolean> {

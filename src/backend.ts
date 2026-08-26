@@ -1,7 +1,6 @@
 import type { BudgetLimits } from './config.js'
 import { contractForTask } from './router.js'
 import type { LoopAction, LoopState, TaskContract } from './types.js'
-import { prepareDelegateWorktree } from './worktree.js'
 
 export type AgentAction = Extract<LoopAction, { type: 'plan' } | { type: 'delegate' } | { type: 'review' }>
 
@@ -65,8 +64,9 @@ export interface DispatchLog {
 }
 
 /**
- * Hand a persisted tick to the adapter. At-most-once: STATE is already latched,
- * so a throw or `failed` is logged and not retried.
+ * Hand a persisted tick to the adapter. At-most-once applies only after STATE
+ * is latched: a throw or `failed` is logged and not retried.
+ * Worktree prepare happens earlier, inside the lock, and is not latched on failure.
  */
 export async function dispatchTick(
   backend: AgentBackend,
@@ -75,21 +75,13 @@ export async function dispatchTick(
   state: LoopState,
   limits: BudgetLimits,
   log: DispatchLog,
+  worktreeRoot: string | null = null,
 ): Promise<void> {
   if (!isAgentAction(action)) return
   const input = runInputFor(workspaceRoot, action, state, limits)
   if (action.type !== 'plan' && !input.contract) {
     log.error(`[dsh-devloop] skip backend: missing task ${action.taskId}`)
     return
-  }
-  let worktreeRoot: string | null = null
-  if (action.type === 'delegate' && input.contract) {
-    try {
-      worktreeRoot = await prepareDelegateWorktree(workspaceRoot, input.contract)
-    } catch (error) {
-      log.error('[dsh-devloop] worktree failed', error)
-      return
-    }
   }
   try {
     const dispatched = await backend.run({ ...input, worktreeRoot })

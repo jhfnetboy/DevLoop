@@ -133,6 +133,27 @@ describe('DevloopService', () => {
     expect(JSON.parse(raw).taskId).toBe('d1')
   })
 
+  it('does not latch delegate when worktree prepare fails; retries after the repo is a git toplevel', async () => {
+    const root = await armWorkspace()
+    await saveState(root, {
+      ...emptyState(Date.now()),
+      tasks: [makeTask({ id: 'd1', status: 'ready' })],
+    })
+    const backend = new RecordingBackend()
+    const ctx = new Context()
+    const service = new DevloopService(ctx, resolveConfig({ root, tickIntervalMs: 60_000 }), backend)
+    services.push(service)
+    await service.tick()
+    const first = await loadState(root, Date.now())
+    expect(first.lastAction).toEqual({ type: 'idle' })
+    expect(backend.runs).toHaveLength(0)
+    await initGitRepo(root)
+    await service.tick()
+    await waitForAction(root, 'delegate')
+    await waitForRuns(backend, 1)
+    expect(backend.runs[0]?.worktreeRoot).toBeTruthy()
+  })
+
   it('does not dispatch merge to AgentBackend', async () => {
     const root = await armWorkspace()
     await saveState(root, {

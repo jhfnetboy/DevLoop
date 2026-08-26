@@ -1,6 +1,3 @@
-import { mkdir, mkdtemp } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { RecordingBackend, dispatchTick, isAgentAction, runInputFor } from '../src/backend.ts'
 import type { AgentBackend, AgentRunInput, AgentRunResult } from '../src/backend.ts'
@@ -135,22 +132,5 @@ describe('dispatchTick', () => {
     }
     await dispatchTick(backend, '/repo', { type: 'plan' }, baseState(), limits, log)
     expect(logs.some(line => line.includes('backend failed: nope'))).toBe(true)
-  })
-
-  it('skips backend.run when worktree prepare fails', async () => {
-    logs.length = 0
-    const backend = new RecordingBackend()
-    const root = await mkdtemp(join(tmpdir(), 'devloop-nongit-'))
-    await mkdir(join(root, '.devloop'))
-    await dispatchTick(
-      backend,
-      root,
-      { type: 'delegate', taskId: 'd1' },
-      baseState({ tasks: [makeTask({ id: 'd1', status: 'ready' })] }),
-      limits,
-      log,
-    )
-    expect(backend.runs).toHaveLength(0)
-    expect(logs.some(line => line.includes('worktree failed'))).toBe(true)
   })
 })
