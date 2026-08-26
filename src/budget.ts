@@ -8,10 +8,10 @@ export type CircuitVerdict =
 
 export function emptyUsage(now: number): BudgetUsage {
   return {
-    taskAttempts: {},
-    reviewCycles: {},
-    taskStartedAt: {},
-    tokens: {},
+    taskAttempts: counts(),
+    reviewCycles: counts(),
+    taskStartedAt: counts(),
+    tokens: counts(),
     costUsdSession: 0,
     costUsdDay: 0,
     lastActions: [],
@@ -89,9 +89,9 @@ export function evaluateBudget(
 export function recordAction(usage: BudgetUsage, action: LoopAction, now: number): BudgetUsage {
   const key = actionKey(action)
   const lastActions = [...usage.lastActions, key].slice(-20)
-  const taskAttempts = { ...usage.taskAttempts }
-  const taskStartedAt = { ...usage.taskStartedAt }
-  const reviewCycles = { ...usage.reviewCycles }
+  const taskAttempts = counts(usage.taskAttempts)
+  const taskStartedAt = counts(usage.taskStartedAt)
+  const reviewCycles = counts(usage.reviewCycles)
   if (action.type === 'delegate') {
     taskAttempts[action.taskId] = ownCount(taskAttempts, action.taskId) + 1
     if (!Object.hasOwn(taskStartedAt, action.taskId)) {
@@ -128,6 +128,10 @@ function overTokenTaskId(state: LoopState, limits: BudgetLimits): string | undef
     if (task.status !== 'running') continue
     if (ownCount(state.usage.tokens, task.id) >= limits.maxTokensPerTask) return task.id
   }
+}
+
+function counts(source: Readonly<Record<string, number>> = {}): Record<string, number> {
+  return Object.assign(Object.create(null) as Record<string, number>, source)
 }
 
 function ownCount(record: Readonly<Record<string, number>>, id: string): number {

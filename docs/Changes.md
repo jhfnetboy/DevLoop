@@ -23,6 +23,7 @@ Deterministic loop core without file persistence or DSH Service.
 
 - 新增 `decideNextAction`、budget 熔断、tier router、`runTick`
 - 新增 vitest 覆盖 Plan 0.1.3–0.1.5 / 0.1.7
+- usage 计数用 null-prototype 对象，避免 `__proto__` 任务 id 绕过 attempts/timeout
 
 ### 可能影响
 

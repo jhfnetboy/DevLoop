@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { emptyUsage, evaluateBudget } from '../src/budget.ts'
+import { emptyUsage, evaluateBudget, recordAction } from '../src/budget.ts'
 import { resolveConfig } from '../src/config.ts'
 import type { LoopState } from '../src/types.ts'
 
@@ -182,5 +182,20 @@ describe('evaluateBudget', () => {
       { type: 'delegate', taskId: 't-2' },
     )
     expect(verdict).toEqual({ ok: true })
+  })
+
+  it('records and caps attempts for prototype-reserved task ids', () => {
+    let usage = emptyUsage(0)
+    for (let index = 0; index < 3; index += 1) {
+      usage = recordAction(usage, { type: 'delegate', taskId: '__proto__' }, index)
+    }
+    expect(usage.taskAttempts['__proto__']).toBe(3)
+    expect(Object.hasOwn(usage.taskAttempts, '__proto__')).toBe(true)
+    expect(evaluateBudget(
+      base({ usage }),
+      limits,
+      0,
+      { type: 'delegate', taskId: '__proto__' },
+    )).toEqual({ ok: false, reason: 'max_task_attempts:__proto__', taskId: '__proto__' })
   })
 })
