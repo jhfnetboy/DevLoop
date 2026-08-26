@@ -14,3 +14,18 @@
 ### 可能影响
 
 - 只增加设计文档，不安装插件，不改运行时
+
+## 0.1.1 — 2026-08-26
+
+Deterministic loop core without file persistence or DSH Service.
+
+### 代码
+
+- 新增 `decideNextAction`、budget 熔断、tier router、`runTick`
+- 新增 vitest 覆盖 Plan 0.1.3–0.1.5 / 0.1.7
+- usage 计数用 null-prototype 对象，避免 `__proto__` 任务 id 绕过 attempts/timeout
+- 拒绝非有限 cost cap；escalate latch key 区分 `null` 与 `_`；空 task id 也触发 timeout/token 熔断
+
+### 可能影响
+
+- 尚无 `dsh plugin add` 入口；未写 `.devloop/`
