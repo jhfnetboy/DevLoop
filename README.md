@@ -146,6 +146,8 @@ Optional overrides in `~/.dsh/profiles/web/cordis.patch.yml`:
     agentBackend: dsh
     budget:
       maxCostUsdPerDay: 20
+      taskTimeoutMinutes: 45
+      taskLifetimeMinutes: 135
 ```
 
 `agentBackend` defaults to `noop` (no spawn). Set `dsh` only when the host can run `dsh --profile headless`.

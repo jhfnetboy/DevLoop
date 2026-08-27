@@ -114,12 +114,16 @@ export function recordAction(usage: BudgetUsage, action: LoopAction, now: number
 
 const TERMINAL_STATUS = new Set(['done', 'failed'])
 
+function lifetimeMinutes(limits: BudgetLimits): number {
+  return Math.max(limits.taskLifetimeMinutes, limits.taskTimeoutMinutes * limits.maxTaskAttempts)
+}
+
 function timedOutTaskId(state: LoopState, limits: BudgetLimits, now: number): string | undefined {
   for (const [taskId, started] of Object.entries(state.usage.taskStartedAt)) {
     if (typeof started !== 'number') continue
     const task = state.tasks.find(entry => entry.id === taskId)
     if (!task || TERMINAL_STATUS.has(task.status)) continue
-    if ((now - started) / 60_000 >= limits.taskTimeoutMinutes) return taskId
+    if ((now - started) / 60_000 >= lifetimeMinutes(limits)) return taskId
   }
 }
 

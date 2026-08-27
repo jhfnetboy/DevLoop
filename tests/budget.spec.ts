@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { emptyUsage, evaluateBudget, recordAction } from '../src/budget.ts'
-import { resolveConfig } from '../src/config.ts'
+import { ConfigSchema, resolveConfig } from '../src/config.ts'
 import type { LoopState } from '../src/types.ts'
 
 const limits = resolveConfig({}).budget
@@ -21,6 +21,18 @@ function base(overrides: Partial<LoopState> = {}): LoopState {
 }
 
 describe('evaluateBudget', () => {
+  it('fills taskLifetimeMinutes from per-attempt timeout times max attempts', () => {
+    const budget = resolveConfig({ budget: { taskTimeoutMinutes: 1, maxTaskAttempts: 3 } }).budget
+    expect(budget.taskTimeoutMinutes).toBe(1)
+    expect(budget.taskLifetimeMinutes).toBeGreaterThanOrEqual(3)
+  })
+
+  it('raises lifetime after ConfigSchema has already filled the 135 default', () => {
+    const viaSchema = resolveConfig(ConfigSchema({ budget: { taskTimeoutMinutes: 90 } }))
+    expect(viaSchema.budget.taskTimeoutMinutes).toBe(90)
+    expect(viaSchema.budget.taskLifetimeMinutes).toBeGreaterThanOrEqual(270)
+  })
+
   it('trips the daily cost cap', () => {
     const verdict = evaluateBudget(
       base({ usage: { ...emptyUsage(0), costUsdDay: 20 } }),
@@ -41,7 +53,7 @@ describe('evaluateBudget', () => {
     expect(verdict).toEqual({ ok: false, reason: 'max_task_attempts:t-1', taskId: 't-1' })
   })
 
-  it('trips task wall-clock timeout on idle while a task is running', () => {
+  it('does not trip lifetime after one full per-attempt window', () => {
     const verdict = evaluateBudget(
       base({
         tasks: [{
@@ -62,13 +74,13 @@ describe('evaluateBudget', () => {
         },
       }),
       limits,
-      45 * 60_000,
+      limits.taskTimeoutMinutes * 60_000,
       { type: 'idle' },
     )
-    expect(verdict).toEqual({ ok: false, reason: 'task_timeout:t-1', taskId: 't-1' })
+    expect(verdict).toEqual({ ok: true })
   })
 
-  it('trips task wall-clock timeout on delegate', () => {
+  it('does not trip lifetime at half of one per-attempt window', () => {
     const verdict = evaluateBudget(
       base({
         tasks: [{
@@ -85,7 +97,59 @@ describe('evaluateBudget', () => {
         usage: { ...emptyUsage(0), taskStartedAt: { 't-1': 0 } },
       }),
       limits,
-      45 * 60_000,
+      limits.taskTimeoutMinutes * 30_000,
+      { type: 'delegate', taskId: 't-1' },
+    )
+    expect(verdict).toEqual({ ok: true })
+  })
+
+  it('trips task lifetime timeout on idle while a task is running', () => {
+    const life = limits.taskLifetimeMinutes * 60_000
+    const verdict = evaluateBudget(
+      base({
+        tasks: [{
+          id: 't-1',
+          title: 't-1',
+          tier: 'T1',
+          status: 'running',
+          risk: 'low',
+          attempts: 0,
+          reviewCycles: 0,
+          allowedPaths: ['src/**'],
+          acceptance: ['tests pass'],
+        }],
+        usage: {
+          ...emptyUsage(0),
+          taskStartedAt: { 't-1': 0 },
+          lastProgressAt: life - 60_000,
+        },
+      }),
+      limits,
+      life,
+      { type: 'idle' },
+    )
+    expect(verdict).toEqual({ ok: false, reason: 'task_timeout:t-1', taskId: 't-1' })
+  })
+
+  it('trips task lifetime timeout on delegate', () => {
+    const life = limits.taskLifetimeMinutes * 60_000
+    const verdict = evaluateBudget(
+      base({
+        tasks: [{
+          id: 't-1',
+          title: 't-1',
+          tier: 'T1',
+          status: 'ready',
+          risk: 'low',
+          attempts: 0,
+          reviewCycles: 0,
+          allowedPaths: ['src/**'],
+          acceptance: ['tests pass'],
+        }],
+        usage: { ...emptyUsage(0), taskStartedAt: { 't-1': 0 } },
+      }),
+      limits,
+      life,
       { type: 'delegate', taskId: 't-1' },
     )
     expect(verdict).toEqual({ ok: false, reason: 'task_timeout:t-1', taskId: 't-1' })
@@ -216,11 +280,11 @@ describe('evaluateBudget', () => {
         usage: {
           ...emptyUsage(0),
           taskStartedAt: { '': 0 },
-          lastProgressAt: 44 * 60_000,
+          lastProgressAt: limits.taskLifetimeMinutes * 60_000 - 60_000,
         },
       }),
       limits,
-      45 * 60_000,
+      limits.taskLifetimeMinutes * 60_000,
       { type: 'idle' },
     )
     expect(verdict).toEqual({ ok: false, reason: 'task_timeout:', taskId: '' })

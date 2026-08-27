@@ -447,17 +447,31 @@ describe('persist and tick', () => {
   })
 
   it('attributes a timeout stop to the timed-out task', () => {
+    const life = resolveConfig({}).budget.taskLifetimeMinutes * 60_000
     const result = runTick({
       ...emptyState(0),
       tasks: [sampleTask('running'), { ...sampleTask('ready'), id: 't-2' }],
       usage: {
         ...emptyState(0).usage,
         taskStartedAt: { 't-1': 0 },
-        lastProgressAt: 44 * 60_000,
+        lastProgressAt: life - 60_000,
       },
-    }, resolveConfig({}).budget, 45 * 60_000)
+    }, resolveConfig({}).budget, life)
     expect(result.action).toEqual({ type: 'stop', reason: 'budget' })
     expect(result.state.supervisor).toEqual({ taskId: 't-1', reason: 'task_timeout:t-1' })
+  })
+
+  it('re-delegates after one full per-attempt window instead of killing the task', () => {
+    const limits = resolveConfig({}).budget
+    const first = runTick({ ...emptyState(0), tasks: [sampleTask('ready')] }, limits, 0)
+    expect(first.action).toEqual({ type: 'delegate', taskId: 't-1' })
+    const retry = runTick({
+      ...first.state,
+      tasks: [{ ...sampleTask('ready'), attempts: 1 }],
+    }, limits, limits.taskTimeoutMinutes * 60_000)
+    expect(retry.skipped).toBe(false)
+    expect(retry.action).toEqual({ type: 'delegate', taskId: 't-1' })
+    expect(retry.state.killSwitch).toBe(false)
   })
 
   it('keeps goal_complete instead of rewriting it as a budget stop', () => {
