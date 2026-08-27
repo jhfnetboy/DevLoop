@@ -185,6 +185,12 @@ async function git(root: string, args: readonly string[]): Promise<string> {
   const { stdout } = await execFileAsync('git', ['-C', root, ...args], {
     encoding: 'utf8',
     timeout: 30_000,
+    env: {
+      ...process.env,
+      GIT_PAGER: 'cat',
+      GIT_TERMINAL_PROMPT: '0',
+      GIT_OPTIONAL_LOCKS: '0',
+    },
   })
   return stdout
 }

@@ -1,4 +1,4 @@
-import { link, lstat, mkdir, readFile, realpath, rename, rm, unlink, writeFile } from 'node:fs/promises'
+import { link, lstat, mkdir, readFile, realpath, rename, rm, unlink, utimes, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { emptyUsage } from './budget.js'
 import type { LoopState, ModelTier, Risk, TaskStatus } from './types.js'
@@ -91,6 +91,7 @@ async function assertLocalDevloopDir(root: string): Promise<void> {
 }
 
 export const LOCK_STALE_MS = 30_000
+export const LOCK_HEARTBEAT_MS = 5_000
 
 export type LockResult<T> =
   | { readonly ok: true; readonly value: T }
@@ -99,14 +100,24 @@ export type LockResult<T> =
 /**
  * Cross-process mutex for one read-modify-write tick.
  * `ok: false` means another live, fresh holder owns the file.
+ *
+ * The critical section may outlast `LOCK_STALE_MS` (git worktree prepare
+ * sits inside it). Heartbeats refresh LOCK mtime so a live holder is not
+ * stolen. Steal still requires stale mtime; a dead holder without
+ * heartbeats remains takeable after `LOCK_STALE_MS`.
  */
 export async function withStateLock<T>(root: string, fn: () => Promise<T>): Promise<LockResult<T>> {
   await assertLocalDevloopDir(root)
   const file = lockPath(root)
   if (!await tryLock(file)) return { ok: false }
+  const beat = setInterval(() => {
+    void touchLock(file)
+  }, LOCK_HEARTBEAT_MS)
+  beat.unref()
   try {
     return { ok: true, value: await fn() }
   } finally {
+    clearInterval(beat)
     await releaseLock(file)
   }
 }
@@ -197,6 +208,17 @@ async function isLockStale(file: string): Promise<boolean> {
     return Date.now() - meta.mtimeMs >= LOCK_STALE_MS
   } catch {
     return false
+  }
+}
+
+async function touchLock(file: string): Promise<void> {
+  try {
+    const body = await readFile(file, 'utf8')
+    if (body.trim() !== String(process.pid)) return
+    const now = new Date()
+    await utimes(file, now, now)
+  } catch {
+    return
   }
 }
 

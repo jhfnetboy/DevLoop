@@ -97,6 +97,7 @@ Delegate creates a git worktree and writes the frozen Task Contract. Still no wo
 - task id 必须是单路径段；拒绝已存在但不是 worktree 的目录、符号链接 pool
 - worktree 准备在 LOCK 内、latch 之前；失败不写 STATE，下一拍可重试
 - 复用 worktree 时用 `symbolic-ref` 认分支；detached HEAD 会 `switch` 回去
+- LOCK 在临界区内每 5s `utimes` 心跳，git 准备超过 30s 也不会被第二把锁夺走
 
 ### 可能影响
 
