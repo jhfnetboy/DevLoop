@@ -1,8 +1,13 @@
 import { clearInterval, setInterval } from 'node:timers'
 import { Service, type Context } from '@deepseek-ai/cordis'
+import {
+  NoopBackend,
+  dispatchTick,
+  type AgentBackend,
+} from './backend.js'
 import { ConfigSchema, resolveConfig, type Config } from './config.js'
 import { loadState, saveState, withStateLock, workspaceArmed } from './persist.js'
-import { runTick } from './tick.js'
+import { runTick, type TickResult } from './tick.js'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -12,7 +17,8 @@ declare module '@deepseek-ai/cordis' {
 
 /**
  * Host service: a process-local timer drives one deterministic tick against
- * `<root>/.devloop/`. 0.1 records the next action; it does not spawn workers.
+ * `<root>/.devloop/`. After STATE is written, plan/delegate/review is handed to
+ * `AgentBackend` outside the lock. 0.2.1 records only; it does not spawn workers.
  */
 export default class DevloopService extends Service {
   static inject = []
@@ -20,13 +26,15 @@ export default class DevloopService extends Service {
   static readonly provide = 'devloop'
 
   private readonly config: Config
+  readonly backend: AgentBackend
   private timer: ReturnType<typeof setInterval> | null = null
   private busy = false
   private disposed = false
 
-  constructor(ctx: Context, rawConfig: Config) {
+  constructor(ctx: Context, rawConfig: Config, backend?: AgentBackend) {
     super(ctx, 'devloop')
     this.config = resolveConfig(rawConfig)
+    this.backend = backend ?? this.createBackend()
     if (!this.config.enabled) {
       ctx.logger.info('[dsh-devloop] disabled by config')
       return
@@ -60,7 +68,7 @@ export default class DevloopService extends Service {
     try {
       if (this.disposed) return
       if (!await workspaceArmed(this.config.root)) return
-      const outcome = await withStateLock(this.config.root, async () => {
+      const outcome = await withStateLock(this.config.root, async (): Promise<TickResult | undefined> => {
         if (this.disposed) return
         const current = await loadState(this.config.root, now)
         if (current.supervisor?.reason === 'unreadable_state') {
@@ -80,14 +88,35 @@ export default class DevloopService extends Service {
         if (result.action.type === 'stop' || result.state.killSwitch) {
           this.stop()
         }
+        return result
       })
       if (!outcome.ok) {
         this.ctx.logger.info('[dsh-devloop] tick skipped: lock held')
+        return
+      }
+      if (this.disposed) return
+      if (outcome.value && !outcome.value.skipped) {
+        await dispatchTick(
+          this.backend,
+          this.config.root,
+          outcome.value.action,
+          outcome.value.state,
+          this.config.budget,
+          this.ctx.logger,
+        )
       }
     } catch (error) {
       this.ctx.logger.error('[dsh-devloop] tick failed', error)
     } finally {
       this.busy = false
     }
+  }
+
+  /**
+   * Cordis constructs `(ctx, config)` only. 0.2.3 overrides this to return a
+   * DSH headless backend without changing the constructor signature.
+   */
+  protected createBackend(): AgentBackend {
+    return new NoopBackend()
   }
 }

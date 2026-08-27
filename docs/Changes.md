@@ -69,3 +69,19 @@ External review on PR #3: loader no longer kills the workspace for prototype-res
 - `toString` / `__proto__` 任务 id 可以读回 STATE
 - `kill -9` 后 pid 复用不再把工作区永远锁死（超过 30s 的 LOCK 可夺）
 - `withStateLock` 返回 `{ ok, value }`，不再用 `'locked'` 字符串
+
+## 0.2.1 — 2026-08-26
+
+AgentBackend dispatch after the state lock is released. No worker process, no worktree.
+
+### 代码
+
+- 新增 `AgentBackend`：`run` / `cancel` / `health`
+- 生产默认 `NoopBackend`（不攒历史）；`RecordingBackend` 只给测试用
+- `DevloopService` 在 LOCK 外对 plan / delegate / review 调用 `dispatchTick`；merge 仍只写 STATE
+- Task Contract 禁止 `.devloop/`（含 STATE.json）
+
+### 可能影响
+
+- tick 先写 STATE 再派 backend，是 at-most-once：backend throw / `failed` 只打独立日志，不改已写入的状态，也不重试（后续 tick 被 latch 成 idle）
+- 仍不 spawn DeepSeek / Claude / Codex，不创建 git worktree

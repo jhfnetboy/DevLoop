@@ -3,7 +3,10 @@ import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { Context } from '@deepseek-ai/cordis'
+import DevloopService from '../src/service.ts'
 import { evaluateBudget, emptyUsage, recordAction } from '../src/budget.ts'
+import { NoopBackend, runInputFor } from '../src/backend.ts'
 import { resolveConfig } from '../src/config.ts'
 import { actionKey, decideNextAction } from '../src/loop.ts'
 import { workspaceArmed } from '../src/persist.ts'
@@ -115,6 +118,7 @@ describe('Plan 0.1.5 router 1:1', () => {
   it('Task Contract forbids GOAL.md', () => {
     const contract = contractForTask('AUTH-001', 'schema', 'T1', ['src/**'], ['tests pass'], 45, 3)
     expect(contract.forbidden).toContain('.devloop/GOAL.md')
+    expect(contract.forbidden).toContain('.devloop/')
     expect(contract.forbidden).toContain('package.json')
     expect(contract.budget.maxAttempts).toBe(3)
   })
@@ -164,5 +168,25 @@ describe('Features 0.1 1:1', () => {
 
   it('T2: decideNextAction does not return a Promise', () => {
     expect(decideNextAction(baseState())).not.toBeInstanceOf(Promise)
+  })
+})
+
+describe('Plan 0.2.1 AgentBackend recording 1:1', () => {
+  it('NoopBackend records, cancels, and reports health', async () => {
+    const backend = new NoopBackend()
+    const input = runInputFor('/repo', { type: 'plan' }, baseState(), limits)
+    await expect(backend.run(input)).resolves.toEqual({ status: 'recorded' })
+    await backend.cancel('task-1')
+    await expect(backend.health()).resolves.toBe('ok')
+  })
+
+  it('DevloopService defaults to NoopBackend when cordis passes only ctx and config', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'devloop-default-backend-'))
+    const ctx = new Context()
+    const service = new DevloopService(ctx, resolveConfig({ root: dir, enabled: false }))
+    expect(service.backend).toBeInstanceOf(NoopBackend)
+    const input = runInputFor(dir, { type: 'plan' }, baseState(), limits)
+    await expect(service.backend.run(input)).resolves.toEqual({ status: 'recorded' })
+    await expect(service.backend.health()).resolves.toBe('ok')
   })
 })

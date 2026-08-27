@@ -65,7 +65,7 @@ export function contractForTask(
     title,
     tier,
     allowedPaths,
-    forbidden: ['package.json', '.devloop/GOAL.md'],
+    forbidden: ['package.json', '.devloop/GOAL.md', '.devloop/'],
     acceptance,
     budget: { maxMinutes, maxAttempts },
   }
