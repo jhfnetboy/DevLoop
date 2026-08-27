@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -8,7 +8,7 @@ import type { AgentBackend, AgentRunInput, AgentRunResult } from '../src/backend
 import { resolveConfig } from '../src/config.ts'
 import { emptyState, loadState, saveState, withStateLock, workspaceArmed } from '../src/persist.ts'
 import DevloopService from '../src/service.ts'
-import { makeTask } from './helpers.ts'
+import { initGitRepo, makeTask, mkdtempInRepo } from './helpers.ts'
 
 async function waitForAction(root: string, type: string, timeoutMs = 2000): Promise<void> {
   const start = Date.now()
@@ -105,8 +105,11 @@ describe('DevloopService', () => {
     expect(backend.runs).toHaveLength(1)
   })
 
-  it('dispatches delegate with a frozen contract', async () => {
-    const root = await armWorkspace()
+  it('dispatches delegate with a frozen contract into a worktree', async () => {
+    const root = await mkdtempInRepo('devloop-svc-')
+    await mkdir(join(root, '.devloop'))
+    await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
+    await initGitRepo(root)
     await saveState(root, {
       ...emptyState(Date.now()),
       tasks: [makeTask({
@@ -125,6 +128,30 @@ describe('DevloopService', () => {
     expect(backend.runs[0]?.action).toEqual({ type: 'delegate', taskId: 'd1' })
     expect(backend.runs[0]?.contract?.taskId).toBe('d1')
     expect(backend.runs[0]?.contract?.forbidden).toContain('.devloop/')
+    expect(backend.runs[0]?.worktreeRoot).toBe(join(root, '.devloop', 'worktrees', 'd1'))
+    const raw = await readFile(join(root, '.devloop', 'worktrees', 'd1', '.devloop', 'CONTRACT.json'), 'utf8')
+    expect(JSON.parse(raw).taskId).toBe('d1')
+  })
+
+  it('does not latch delegate when worktree prepare fails; retries after the repo is a git toplevel', async () => {
+    const root = await armWorkspace()
+    await saveState(root, {
+      ...emptyState(Date.now()),
+      tasks: [makeTask({ id: 'd1', status: 'ready' })],
+    })
+    const backend = new RecordingBackend()
+    const ctx = new Context()
+    const service = new DevloopService(ctx, resolveConfig({ root, tickIntervalMs: 60_000 }), backend)
+    services.push(service)
+    await service.tick()
+    const first = await loadState(root, Date.now())
+    expect(first.lastAction).toEqual({ type: 'idle' })
+    expect(backend.runs).toHaveLength(0)
+    await initGitRepo(root)
+    await service.tick()
+    await waitForAction(root, 'delegate')
+    await waitForRuns(backend, 1)
+    expect(backend.runs[0]?.worktreeRoot).toBeTruthy()
   })
 
   it('does not dispatch merge to AgentBackend', async () => {

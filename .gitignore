@@ -1,4 +1,5 @@
-# Logs
+# Agent / test scratch git repos
+.tmp/
 logs
 *.log
 npm-debug.log*

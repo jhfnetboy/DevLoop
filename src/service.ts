@@ -3,11 +3,13 @@ import { Service, type Context } from '@deepseek-ai/cordis'
 import {
   NoopBackend,
   dispatchTick,
+  runInputFor,
   type AgentBackend,
 } from './backend.js'
 import { ConfigSchema, resolveConfig, type Config } from './config.js'
 import { loadState, saveState, withStateLock, workspaceArmed } from './persist.js'
 import { runTick, type TickResult } from './tick.js'
+import { prepareDelegateWorktree } from './worktree.js'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -18,7 +20,8 @@ declare module '@deepseek-ai/cordis' {
 /**
  * Host service: a process-local timer drives one deterministic tick against
  * `<root>/.devloop/`. After STATE is written, plan/delegate/review is handed to
- * `AgentBackend` outside the lock. 0.2.1 records only; it does not spawn workers.
+ * `AgentBackend` outside the lock. Delegate also creates a git worktree and
+ * writes CONTRACT.json. 0.2.2 still does not spawn workers.
  */
 export default class DevloopService extends Service {
   static inject = []
@@ -68,7 +71,10 @@ export default class DevloopService extends Service {
     try {
       if (this.disposed) return
       if (!await workspaceArmed(this.config.root)) return
-      const outcome = await withStateLock(this.config.root, async (): Promise<TickResult | undefined> => {
+      const outcome = await withStateLock(this.config.root, async (): Promise<{
+        result: TickResult
+        worktreeRoot: string | null
+      } | undefined> => {
         if (this.disposed) return
         const current = await loadState(this.config.root, now)
         if (current.supervisor?.reason === 'unreadable_state') {
@@ -81,6 +87,18 @@ export default class DevloopService extends Service {
         }
         const result = runTick(current, this.config.budget, now)
         if (this.disposed) return
+        let worktreeRoot: string | null = null
+        if (!result.skipped && result.action.type === 'delegate') {
+          const input = runInputFor(this.config.root, result.action, result.state, this.config.budget)
+          if (input.contract) {
+            try {
+              worktreeRoot = await prepareDelegateWorktree(this.config.root, input.contract)
+            } catch (error) {
+              this.ctx.logger.error('[dsh-devloop] worktree failed', error)
+              return
+            }
+          }
+        }
         if (!result.skipped) {
           await saveState(this.config.root, result.state)
           this.ctx.logger.info(`[dsh-devloop] tick action=${result.action.type}`)
@@ -88,21 +106,22 @@ export default class DevloopService extends Service {
         if (result.action.type === 'stop' || result.state.killSwitch) {
           this.stop()
         }
-        return result
+        return { result, worktreeRoot }
       })
       if (!outcome.ok) {
         this.ctx.logger.info('[dsh-devloop] tick skipped: lock held')
         return
       }
       if (this.disposed) return
-      if (outcome.value && !outcome.value.skipped) {
+      if (outcome.value && !outcome.value.result.skipped) {
         await dispatchTick(
           this.backend,
           this.config.root,
-          outcome.value.action,
-          outcome.value.state,
+          outcome.value.result.action,
+          outcome.value.result.state,
           this.config.budget,
           this.ctx.logger,
+          outcome.value.worktreeRoot,
         )
       }
     } catch (error) {

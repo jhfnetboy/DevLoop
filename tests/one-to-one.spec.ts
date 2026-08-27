@@ -11,6 +11,7 @@ import { resolveConfig } from '../src/config.ts'
 import { actionKey, decideNextAction } from '../src/loop.ts'
 import { workspaceArmed } from '../src/persist.ts'
 import { runTick } from '../src/tick.ts'
+import { worktreeTaskToken } from '../src/worktree.ts'
 import {
   assertReviewerAllowed,
   contractForTask,
@@ -188,5 +189,13 @@ describe('Plan 0.2.1 AgentBackend recording 1:1', () => {
     const input = runInputFor(dir, { type: 'plan' }, baseState(), limits)
     await expect(service.backend.run(input)).resolves.toEqual({ status: 'recorded' })
     await expect(service.backend.health()).resolves.toBe('ok')
+  })
+})
+
+describe('Plan 0.2.2 task-id token', () => {
+  it('rejects task ids that are not a single path segment', () => {
+    expect(worktreeTaskToken('d1')).toBe('d1')
+    expect(worktreeTaskToken('../etc')).toBeNull()
+    expect(worktreeTaskToken('a..b')).toBeNull()
   })
 })

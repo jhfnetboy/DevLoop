@@ -8,6 +8,7 @@ export interface AgentRunInput {
   readonly action: AgentAction
   readonly contract: TaskContract | null
   readonly workspaceRoot: string
+  readonly worktreeRoot: string | null
 }
 
 export interface AgentRunResult {
@@ -36,11 +37,11 @@ export function runInputFor(
   limits: BudgetLimits,
 ): AgentRunInput {
   if (action.type === 'plan') {
-    return { action, contract: null, workspaceRoot }
+    return { action, contract: null, workspaceRoot, worktreeRoot: null }
   }
   const task = state.tasks.find(item => item.id === action.taskId)
   if (!task) {
-    return { action, contract: null, workspaceRoot }
+    return { action, contract: null, workspaceRoot, worktreeRoot: null }
   }
   return {
     action,
@@ -54,6 +55,7 @@ export function runInputFor(
       limits.maxTaskAttempts,
     ),
     workspaceRoot,
+    worktreeRoot: null,
   }
 }
 
@@ -62,8 +64,9 @@ export interface DispatchLog {
 }
 
 /**
- * Hand a persisted tick to the adapter. At-most-once: STATE is already latched,
- * so a throw or `failed` is logged and not retried.
+ * Hand a persisted tick to the adapter. At-most-once applies only after STATE
+ * is latched: a throw or `failed` is logged and not retried.
+ * Worktree prepare happens earlier, inside the lock, and is not latched on failure.
  */
 export async function dispatchTick(
   backend: AgentBackend,
@@ -72,6 +75,7 @@ export async function dispatchTick(
   state: LoopState,
   limits: BudgetLimits,
   log: DispatchLog,
+  worktreeRoot: string | null = null,
 ): Promise<void> {
   if (!isAgentAction(action)) return
   const input = runInputFor(workspaceRoot, action, state, limits)
@@ -80,7 +84,7 @@ export async function dispatchTick(
     return
   }
   try {
-    const dispatched = await backend.run(input)
+    const dispatched = await backend.run({ ...input, worktreeRoot })
     if (dispatched.status === 'failed') {
       log.error(`[dsh-devloop] backend failed: ${dispatched.detail ?? 'unknown'}`)
     }
