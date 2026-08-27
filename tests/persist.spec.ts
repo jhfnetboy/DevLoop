@@ -412,6 +412,29 @@ describe('persist and tick', () => {
     expect(await withStateLock(root, async () => 'no')).toEqual({ ok: false })
   })
 
+  it('does not steal a live lock that outlasts LOCK_STALE_MS; after release the next holder can take it', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'devloop-'))
+    await mkdir(join(root, '.devloop'))
+    let release!: () => void
+    let entered!: () => void
+    const started = new Promise<void>(resolve => {
+      entered = resolve
+    })
+    const held = withStateLock(root, async () => {
+      entered()
+      await new Promise<void>(resolve => {
+        release = resolve
+      })
+      return 'A-done'
+    })
+    await started
+    await new Promise(resolve => setTimeout(resolve, LOCK_STALE_MS + 5_000))
+    expect(await withStateLock(root, async () => 'B')).toEqual({ ok: false })
+    release()
+    expect(await held).toEqual({ ok: true, value: 'A-done' })
+    expect(await withStateLock(root, async () => 'B-after')).toEqual({ ok: true, value: 'B-after' })
+  }, 45_000)
+
   it('stops on budget instead of delegating forever', () => {
     const blown = {
       ...emptyState(0),

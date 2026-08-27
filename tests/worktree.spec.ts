@@ -1,8 +1,8 @@
 import { execFile } from 'node:child_process'
-import { mkdir, readFile, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import { resolveConfig } from '../src/config.ts'
 import { contractForTask } from '../src/router.ts'
 import {
@@ -14,6 +14,7 @@ import { initGitRepo, makeTask, mkdtempInRepo } from './helpers.ts'
 
 const execFileAsync = promisify(execFile)
 const limits = resolveConfig({}).budget
+const scratch: string[] = []
 
 function contractFor(id: string) {
   const task = makeTask({ id, status: 'ready', title: 'Add persist', allowedPaths: ['src/persist.ts'] })
@@ -30,11 +31,17 @@ function contractFor(id: string) {
 
 async function gitWorkspace(): Promise<string> {
   const root = await mkdtempInRepo('devloop-wt-')
+  scratch.push(root)
   await initGitRepo(root)
   await mkdir(join(root, '.devloop'))
   await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
   return root
 }
+
+afterEach(async () => {
+  const dirs = scratch.splice(0)
+  await Promise.all(dirs.map(dir => rm(dir, { recursive: true, force: true })))
+})
 
 describe('worktreeTaskToken', () => {
   it('accepts a single path segment and rejects escapes', () => {
@@ -82,7 +89,9 @@ describe('prepareDelegateWorktree', () => {
     const root = await gitWorkspace()
     const pool = join(root, '.devloop', 'worktrees')
     await mkdir(pool, { recursive: true })
-    const evil = join(await mkdtempInRepo('devloop-gi-'), 'outside')
+    const gi = await mkdtempInRepo('devloop-gi-')
+    scratch.push(gi)
+    const evil = join(gi, 'outside')
     await writeFile(evil, 'pwned\n', 'utf8')
     await symlink(evil, join(pool, '.gitignore'))
     await expect(prepareDelegateWorktree(root, contractFor('d1'))).rejects.toThrow(/symlink gitignore/)
@@ -101,6 +110,7 @@ describe('prepareDelegateWorktree', () => {
   it('refuses a symlink worktrees pool', async () => {
     const root = await gitWorkspace()
     const evil = await mkdtempInRepo('devloop-evil-')
+    scratch.push(evil)
     await symlink(evil, join(root, '.devloop', 'worktrees'))
     await expect(prepareDelegateWorktree(root, contractFor('d1'))).rejects.toThrow(/symlink/)
   })
