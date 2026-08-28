@@ -124,3 +124,9 @@ DSH headless one-shot on plan / delegate / review. Default stays Noop so existin
 - backend 失败仍 at-most-once；超时只松开 `busy` 并 abort 子进程，不改已 latch 的 STATE
 - 单次尝试用满 `taskTimeoutMinutes` 之后，`maxTaskAttempts` 仍生效；整段任务墙钟看 `taskLifetimeMinutes`
 - 0.2.4 之前 merge 仍只写 STATE，不合入、不删 worktree
+
+### Packaging — 2026-08-28
+
+No scheduler behavior change. `package.json` version aligned to **0.2.3** (was still `0.1.0` after the stacked merges). Added `docs/Install.md`, `docs/Release.md`, `docs/Deploy.md`. GitHub tag `v0.2.3` is cut after this lands on `main`. npm registry is not part of this cut.
+
+Possible impact: Git / GitHub installs report `0.2.3`. Plan 0.2.4 (mechanical merge) and 0.2.5 (T3 CLI) are still not done.

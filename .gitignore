@@ -1,5 +1,9 @@
+# Accidental nested clone of this repo
+/DevLoop/
+
 # Agent / test scratch git repos
 .tmp/
+
 logs
 *.log
 npm-debug.log*

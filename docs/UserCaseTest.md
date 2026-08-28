@@ -1,6 +1,6 @@
-# User-case tests (0.1)
+# User-case tests (0.1–0.2.3)
 
-0.1 does not spawn workers. These cases map product flows to automated specs. Manual checks after install are listed at the end.
+Default `agentBackend: noop` does not spawn workers. These cases map product flows to automated specs. Manual checks after install are listed at the end.
 
 | ID | Actor | Flow | Automated spec |
 |---|---|---|---|
@@ -19,6 +19,7 @@
 ## Manual after GitHub publish
 
 1. `pnpm install && pnpm test && pnpm build`
-2. Install into a DSH profile as in README
+2. After GitHub Release `v0.2.3` exists, install as in [`Install.md`](./Install.md) (`github:jhfnetboy/DevLoop#v0.2.3` or the Release tarball). Until then, `github:jhfnetboy/DevLoop` tracks `main`.
 3. Confirm an unarmed repo stays idle
-4. Copy `templates/GOAL.md` to `<repo>/.devloop/GOAL.md` and confirm the host logs a `plan` tick
+4. Copy the bundled `templates/GOAL.md` (from `node_modules/dsh-devloop` after install, or this checkout) to `<repo>/.devloop/GOAL.md` and confirm the host logs a `plan` tick
+5. Default `agentBackend` must not spawn `dsh`; `agentBackend: dsh` may spawn one-shot headless

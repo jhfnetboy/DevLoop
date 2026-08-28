@@ -2,17 +2,19 @@
 
 DeepSeek Harness plugin: **expensive models plan and review, cheap models implement, a program loop keeps the factory inside budget.**
 
-This repository is `dsh-devloop`. It is not another coding agent and it does not fork DSH core. Design and decisions: [`docs/`](./docs/).
+This repository is `dsh-devloop`. It is not another coding agent and it does not fork DSH core. Design and decisions: [docs/](https://github.com/jhfnetboy/DevLoop/tree/main/docs).
 
-## What 0.1 does
+## What 0.2.3 does
 
 - Installs into a DSH profile as a bundle plugin
 - On each tick, if the workspace has `.devloop/GOAL.md`, reads `STATE.json` and records the next loop action (plan / delegate / review / merge / stop)
 - Enforces budget / circuit-breaker rules in-process
 - Does **not** spawn DeepSeek / Claude / Codex workers by default (`agentBackend: noop`)
-- 0.2.1: after writing STATE, plan / delegate / review is handed to `AgentBackend.run` (NoopBackend in production, outside the lock)
-- 0.2.2: `delegate` creates `.devloop/worktrees/<taskId>` and writes `.devloop/CONTRACT.json` inside it
-- 0.2.3: set `agentBackend: dsh` to spawn `dsh --profile headless "<task>"` in the worktree (or workspace). Default is still `noop`.
+- After writing STATE, plan / delegate / review is handed to `AgentBackend.run` (NoopBackend in production, outside the lock)
+- `delegate` creates `.devloop/worktrees/<taskId>` and writes `.devloop/CONTRACT.json` inside it
+- Set `agentBackend: dsh` to spawn `dsh --profile headless "<task>"` in the worktree (or workspace)
+
+Install: [`docs/Install.md`](./docs/Install.md). This cut: [`docs/Release.md`](./docs/Release.md).
 
 ## How it fits
 
@@ -21,14 +23,14 @@ flowchart LR
     You[You] --> Goal[GOAL.md]
     Goal --> Plugin[dsh-devloop plugin]
     Plugin --> DSH[DeepSeek Harness]
-    DSH -->|0.2 plus| Workers[T0 T1 T2 workers]
-    Plugin -->|0.1| State[".devloop/STATE.json"]
+    DSH -->|opt-in headless| Workers[T0 T1 T2 workers]
+    Plugin -->|STATE| State[".devloop/STATE.json"]
     Plugin -->|escalate| You
 ```
 
-Harness is the agent runtime. This plugin is the engineering scheduler. 0.1 writes the next action; it does not run the workers yet.
+Harness is the agent runtime. This plugin is the engineering scheduler. Default `noop` only writes the next action. `agentBackend: dsh` also spawns one-shot headless. Merge is still STATE-only.
 
-## 0.1 tick (what ships now)
+## Tick (what ships now)
 
 ```mermaid
 flowchart TB
@@ -81,21 +83,21 @@ flowchart TB
 
 Until 0.2.4, `merge` is still STATE-only. Headless spawn is opt-in via `agentBackend: dsh`.
 
-## Can 0.1 meet the product goal?
+## Can 0.2.3 meet the product goal?
 
 The goal is: expensive models plan and review, cheap models implement, a program loop keeps the factory inside budget.
 
-| Goal slice | 0.1 |
+| Goal slice | 0.2.3 |
 |---|---|
 | DSH plugin, not a new runtime | Yes. Bundle + Cordis Service. |
 | Program loop, one transition per tick | Yes. Pure `decideNextAction` plus `runTick`. |
 | Hard budget / kill switch | Yes, in-process. No live token/cost feed yet. |
-| File-backed recoverability | Partial. `GOAL.md` + `STATE.json` + `LOCK`. No PLAN / PROGRESS / runs yet. |
-| Cheap workers actually implement | **No.** 0.2. |
-| Expensive models actually review | **No.** 0.2. |
+| File-backed recoverability | Partial. `GOAL.md` + `STATE.json` + `LOCK` + worktree `CONTRACT.json`. No PLAN / PROGRESS yet. |
+| Cheap workers actually implement | Partial. Opt-in `agentBackend: dsh` spawns one-shot `dsh --profile headless`; it does not pick a cheap worker via `contract.tier`. Merge still does not land code. |
+| Expensive models actually review | Partial. Plan / delegate / review all use that same headless command; there is no higher-tier reviewer routing. PASS / REWORK is operator-driven. |
 | Unattended milestone completion | **No.** 0.3. |
 
-0.1 is the installable scheduler core. It can be loaded, armed, and proven to stop. It cannot yet turn a GOAL into merged code.
+0.2.3 is the installable scheduler plus optional headless dispatch. It cannot yet turn a GOAL into merged code (Plan 0.2.4).
 
 ## Requirements
 
@@ -116,11 +118,19 @@ Git installs run `prepare` → `pnpm build`, so the published entry is `lib/`.
 
 ## Install into DSH
 
+Pinned GitHub tag (needs git tag `v0.2.3`; until then `github:jhfnetboy/DevLoop`). Git install runs `prepare` → `pnpm build`. pnpm ≥10 may ignore that build and still exit 0 — if it prints `Ignored build scripts`, approve `dsh-devloop` (`onlyBuiltDependencies` on pnpm 10.1–10.25, `allowBuilds` on ≥10.26, or `pnpm approve-builds`) and re-run `add` (not `pnpm rebuild`), even when `add` succeeded:
+
+```bash
+dsh plugin --profile web add github:jhfnetboy/DevLoop#v0.2.3
+```
+
 From this checkout (after `pnpm build`):
 
 ```bash
 dsh plugin --profile web add /absolute/path/to/DevLoop
 ```
+
+Full operator steps: [`docs/Install.md`](./docs/Install.md).
 
 Restart the profile:
 
@@ -154,11 +164,14 @@ Optional overrides in `~/.dsh/profiles/web/cordis.patch.yml`:
 
 ## Arm a project
 
-The plugin is idle until the target workspace contains `.devloop/`:
+The plugin is idle until the target workspace contains `.devloop/GOAL.md` (a regular file). A bare `.devloop/` directory does not arm it.
 
 ```bash
 mkdir -p /path/to/your/project/.devloop
-cp templates/GOAL.md /path/to/your/project/.devloop/GOAL.md
+# after plugin install:
+cp ~/.dsh/profiles/web/node_modules/dsh-devloop/templates/GOAL.md \
+  /path/to/your/project/.devloop/GOAL.md
+# from a local checkout, use templates/GOAL.md instead
 # edit GOAL.md, then start dsh from that project (or set config.root)
 ```
 
