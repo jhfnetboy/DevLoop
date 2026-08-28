@@ -28,7 +28,7 @@ tar -tzf dsh-devloop-0.2.3.tgz
 rm -f dsh-devloop-0.2.3.tgz
 ```
 
-Expected contents: `package.json`, `cordis.patch.yml`, `lib/**`, `templates/**`, plus npm defaults (`README.md`, `LICENSE`). No `src/`, no tests, no `.devloop/`.
+Expected contents: `package.json`, `cordis.patch.yml`, `lib/**`, `templates/**`, `docs/Install.md`, `docs/Release.md`, `docs/Deploy.md`, plus npm defaults (`README.md`, `LICENSE`). No `src/`, no tests, no `.devloop/`.
 
 ## GitHub Release
 

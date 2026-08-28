@@ -15,7 +15,10 @@
   "files": [
     "cordis.patch.yml",
     "lib",
-    "templates"
+    "templates",
+    "docs/Install.md",
+    "docs/Release.md",
+    "docs/Deploy.md"
   ],
   "dsh": {
     "bundle": {

@@ -2,7 +2,7 @@
 
 DeepSeek Harness plugin: **expensive models plan and review, cheap models implement, a program loop keeps the factory inside budget.**
 
-This repository is `dsh-devloop`. It is not another coding agent and it does not fork DSH core. Design and decisions: [`docs/`](./docs/).
+This repository is `dsh-devloop`. It is not another coding agent and it does not fork DSH core. Design and decisions: [docs/](https://github.com/jhfnetboy/DevLoop/tree/main/docs).
 
 ## What 0.2.3 does
 
