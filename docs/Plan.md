@@ -2,6 +2,8 @@
 
 按阶段推进。每阶段一个分支、一个 PR，不把前一阶段自行合进 main。新阶段从最新阶段分支拉出。
 
+**当前 `main` / tag `v0.2.3`：0.1 与 0.2.1–0.2.3 已完成。0.2.4 未开始。**
+
 0.1 只做「能安装的 DSH 插件 + 可测试的调度核心」。不在本阶段接真实 Worker 进程。
 
 ## Milestone 0.1 — Plugin scaffold and deterministic core
@@ -24,17 +26,19 @@
 
 0.2 把「记录下一步」变成「真的派工」。仍不接 Web UI。每项一个 stacked PR，从 `main`（0.1 已合入）拉出。
 
-| ID | 事项 | 验收 |
-|---|---|---|
-| 0.2.1 | `AgentBackend` 接口 + Noop 空跑 | `run` / `cancel` / `health` 有单测；plan/delegate/review 在释放 LOCK 之后才交给 backend；生产默认 `NoopBackend`；不 spawn、不建 worktree |
-| 0.2.2 | git worktree + 写入 Task Contract | delegate 时隔离目录存在合同文件 |
-| 0.2.3 | DSH headless 实现 `AgentBackend.run` | 覆盖 `createBackend()`（cordis 只传 ctx+config）；`agentBackend: dsh` 真派一次 `dsh --profile headless`；默认 `noop` 不 spawn；超时 abort；不改 Loop 纯函数 |
-| 0.2.4 | 机械 `/merge` 脚本 | 无 Review PASS 不能合；合完删 worktree |
-| 0.2.5 | Codex / Claude CLI 作为 T3 最小接线 | 可选 adapter，默认仍可 Recording |
+| ID | 事项 | 验收 | 状态 |
+|---|---|---|---|
+| 0.2.1 | `AgentBackend` 接口 + Noop 空跑 | `run` / `cancel` / `health` 有单测；plan/delegate/review 在释放 LOCK 之后才交给 backend；生产默认 `NoopBackend`；不 spawn、不建 worktree | **Done** (PR #5) |
+| 0.2.2 | git worktree + 写入 Task Contract | delegate 时隔离目录存在合同文件 | **Done** (PR #6) |
+| 0.2.3 | DSH headless 实现 `AgentBackend.run` | 覆盖 `createBackend()`（cordis 只传 ctx+config）；`agentBackend: dsh` 真派一次 `dsh --profile headless`；默认 `noop` 不 spawn；超时 abort；不改 Loop 纯函数 | **Done** (PR #7, tag v0.2.3) |
+| 0.2.4 | 机械 `/merge` 脚本 | 无 Review PASS 不能合；合完删 worktree | **Not started** |
+| 0.2.5 | Codex / Claude CLI 作为 T3 最小接线 | 可选 adapter；生产默认仍是 `noop` / `dsh`，不经过 `RecordingBackend` | **Not started** |
 
 **本阶段明确不做**：Web UI、OpenCode adapter、LiteLLM、日预算面板。
 
 ## Milestone 0.3 — Unattended loop
+
+**未开始。** 在 0.2.4 与 0.2.5 都已合入 `main` 之后开始。这才是「24 小时按规划路径自我迭代」的里程碑。
 
 - `devloop run` 式持续 tick（程序循环）
 - 自动泵：一任务一 fresh agent
@@ -42,6 +46,8 @@
 - 进度汇总写入 PROGRESS.md
 
 ## Milestone 0.4 — Operator surface
+
+**未开始。** 在 0.3 的无人值守循环能跑之后。不是到达产品目标的前置条件。
 
 - 最小 Web 或 DSH sidebar 入口（需要时再借鉴 dsh-devflow 的挂载方式）
 - 人类等待队列
