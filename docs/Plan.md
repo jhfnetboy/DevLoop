@@ -28,7 +28,7 @@
 |---|---|---|
 | 0.2.1 | `AgentBackend` 接口 + Noop 空跑 | `run` / `cancel` / `health` 有单测；plan/delegate/review 在释放 LOCK 之后才交给 backend；生产默认 `NoopBackend`；不 spawn、不建 worktree |
 | 0.2.2 | git worktree + 写入 Task Contract | delegate 时隔离目录存在合同文件 |
-| 0.2.3 | DSH headless 实现 `AgentBackend.run` | 覆盖 `createBackend()`（cordis 只传 ctx+config）；真派一次 headless，不改 Loop 纯函数 |
+| 0.2.3 | DSH headless 实现 `AgentBackend.run` | 覆盖 `createBackend()`（cordis 只传 ctx+config）；`agentBackend: dsh` 真派一次 `dsh --profile headless`；默认 `noop` 不 spawn；超时 abort；不改 Loop 纯函数 |
 | 0.2.4 | 机械 `/merge` 脚本 | 无 Review PASS 不能合；合完删 worktree |
 | 0.2.5 | Codex / Claude CLI 作为 T3 最小接线 | 可选 adapter，默认仍可 Recording |
 

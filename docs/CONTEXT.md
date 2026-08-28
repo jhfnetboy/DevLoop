@@ -37,7 +37,7 @@
 ### Tick / 节拍
 **定义**：Loop 的一次执行：读状态 → 决定动作 → 写回 STATE →（0.2.1 对 plan/delegate/review 在 LOCK 外调用 AgentBackend）→ 结束。
 **区别于**：一次完整的 plan→merge 流水线。
-**代码中的体现**：`DevloopService.tick` 写完 STATE 后，对 plan / delegate / review 调用 `AgentBackend.run`（0.2.1 生产默认 NoopBackend）
+**代码中的体现**：`DevloopService.tick` 写完 STATE 后，对 plan / delegate / review 调用 `AgentBackend.run`（默认 NoopBackend；`agentBackend: 'dsh'` 时为 `dsh --profile headless`）
 
 ### Worker / 工人
 **定义**：执行 Task Contract 的廉价 Agent（默认 DSH + DeepSeek）。

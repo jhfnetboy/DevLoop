@@ -14,6 +14,7 @@
 | UC-08 | Budget | Exhausted attempts halt and stay halted | `tests/flow.spec.ts`, Plan 0.1.4 |
 | UC-09 | Security | High-risk ready task escalates | Features P4 in `tests/one-to-one.spec.ts` |
 | UC-10 | Install | Package is a DSH bundle plugin | Plan 0.1.2 in `tests/one-to-one.spec.ts` |
+| UC-11 | Operator | Opt-in `agentBackend: dsh` spawns one-shot headless; default stays Noop | Plan 0.2.3 in `tests/dsh.spec.ts`, `tests/one-to-one.spec.ts` |
 
 ## Manual after GitHub publish
 

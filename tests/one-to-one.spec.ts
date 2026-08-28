@@ -7,6 +7,7 @@ import { Context } from '@deepseek-ai/cordis'
 import DevloopService from '../src/service.ts'
 import { evaluateBudget, emptyUsage, recordAction } from '../src/budget.ts'
 import { NoopBackend, runInputFor } from '../src/backend.ts'
+import { DshHeadlessBackend } from '../src/dsh.ts'
 import { resolveConfig } from '../src/config.ts'
 import { actionKey, decideNextAction } from '../src/loop.ts'
 import { workspaceArmed } from '../src/persist.ts'
@@ -197,5 +198,18 @@ describe('Plan 0.2.2 task-id token', () => {
     expect(worktreeTaskToken('d1')).toBe('d1')
     expect(worktreeTaskToken('../etc')).toBeNull()
     expect(worktreeTaskToken('a..b')).toBeNull()
+  })
+})
+
+describe('Plan 0.2.3 DSH headless 1:1', () => {
+  it('createBackend returns DshHeadlessBackend when config says dsh', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'devloop-dsh-backend-'))
+    const ctx = new Context()
+    const service = new DevloopService(ctx, resolveConfig({
+      root: dir,
+      enabled: false,
+      agentBackend: 'dsh',
+    }))
+    expect(service.backend).toBeInstanceOf(DshHeadlessBackend)
   })
 })

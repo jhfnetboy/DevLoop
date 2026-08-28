@@ -1,3 +1,4 @@
+import { lstat } from 'node:fs/promises'
 import { clearInterval, setInterval } from 'node:timers'
 import { Service, type Context } from '@deepseek-ai/cordis'
 import {
@@ -7,9 +8,10 @@ import {
   type AgentBackend,
 } from './backend.js'
 import { ConfigSchema, resolveConfig, type Config } from './config.js'
+import { DshHeadlessBackend } from './dsh.js'
 import { loadState, saveState, withStateLock, workspaceArmed } from './persist.js'
 import { runTick, type TickResult } from './tick.js'
-import { prepareDelegateWorktree } from './worktree.js'
+import { prepareDelegateWorktree, worktreePath } from './worktree.js'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -21,7 +23,7 @@ declare module '@deepseek-ai/cordis' {
  * Host service: a process-local timer drives one deterministic tick against
  * `<root>/.devloop/`. After STATE is written, plan/delegate/review is handed to
  * `AgentBackend` outside the lock. Delegate also creates a git worktree and
- * writes CONTRACT.json. 0.2.2 still does not spawn workers.
+ * writes CONTRACT.json. Set `agentBackend: 'dsh'` to spawn one-shot headless.
  */
 export default class DevloopService extends Service {
   static inject = []
@@ -33,6 +35,7 @@ export default class DevloopService extends Service {
   private timer: ReturnType<typeof setInterval> | null = null
   private busy = false
   private disposed = false
+  private dispatchAbort: AbortController | null = null
 
   constructor(ctx: Context, rawConfig: Config, backend?: AgentBackend) {
     super(ctx, 'devloop')
@@ -59,6 +62,7 @@ export default class DevloopService extends Service {
 
   stop(): void {
     this.disposed = true
+    this.dispatchAbort?.abort()
     if (this.timer) {
       clearInterval(this.timer)
       this.timer = null
@@ -98,6 +102,8 @@ export default class DevloopService extends Service {
               return
             }
           }
+        } else if (!result.skipped && result.action.type === 'review') {
+          worktreeRoot = await existingWorktreeRoot(this.config.root, result.action.taskId)
         }
         if (!result.skipped) {
           await saveState(this.config.root, result.state)
@@ -114,15 +120,32 @@ export default class DevloopService extends Service {
       }
       if (this.disposed) return
       if (outcome.value && !outcome.value.result.skipped) {
-        await dispatchTick(
-          this.backend,
-          this.config.root,
-          outcome.value.result.action,
-          outcome.value.result.state,
-          this.config.budget,
-          this.ctx.logger,
-          outcome.value.worktreeRoot,
-        )
+        const abort = new AbortController()
+        this.dispatchAbort = abort
+        const timeoutMs = this.config.budget.taskTimeoutMinutes * 60_000
+        const timer = setTimeout(() => abort.abort(), timeoutMs)
+        try {
+          await raceAbort(
+            dispatchTick(
+              this.backend,
+              this.config.root,
+              outcome.value.result.action,
+              outcome.value.result.state,
+              this.config.budget,
+              this.ctx.logger,
+              outcome.value.worktreeRoot,
+              abort.signal,
+            ),
+            abort.signal,
+          )
+        } catch (error) {
+          if (!this.disposed) {
+            this.ctx.logger.error('[dsh-devloop] backend timed out', error)
+          }
+        } finally {
+          clearTimeout(timer)
+          if (this.dispatchAbort === abort) this.dispatchAbort = null
+        }
       }
     } catch (error) {
       this.ctx.logger.error('[dsh-devloop] tick failed', error)
@@ -132,10 +155,41 @@ export default class DevloopService extends Service {
   }
 
   /**
-   * Cordis constructs `(ctx, config)` only. 0.2.3 overrides this to return a
-   * DSH headless backend without changing the constructor signature.
+   * Cordis constructs `(ctx, config)` only. `agentBackend: 'dsh'` returns
+   * DshHeadlessBackend; the default stays NoopBackend so tests without the
+   * third constructor arg do not spawn.
    */
   protected createBackend(): AgentBackend {
+    if (this.config.agentBackend === 'dsh') return new DshHeadlessBackend()
     return new NoopBackend()
+  }
+}
+
+function raceAbort<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(new Error('backend timeout'))
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(new Error('backend timeout'))
+    signal.addEventListener('abort', onAbort, { once: true })
+    work.then(
+      value => {
+        signal.removeEventListener('abort', onAbort)
+        resolve(value)
+      },
+      error => {
+        signal.removeEventListener('abort', onAbort)
+        reject(error)
+      },
+    )
+  })
+}
+
+async function existingWorktreeRoot(root: string, taskId: string): Promise<string | null> {
+  try {
+    const dest = worktreePath(root, taskId)
+    const meta = await lstat(dest)
+    if (meta.isSymbolicLink() || !meta.isDirectory()) return null
+    return dest
+  } catch {
+    return null
   }
 }

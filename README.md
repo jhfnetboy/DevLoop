@@ -9,9 +9,10 @@ This repository is `dsh-devloop`. It is not another coding agent and it does not
 - Installs into a DSH profile as a bundle plugin
 - On each tick, if the workspace has `.devloop/GOAL.md`, reads `STATE.json` and records the next loop action (plan / delegate / review / merge / stop)
 - Enforces budget / circuit-breaker rules in-process
-- Does **not** spawn DeepSeek / Claude / Codex workers
+- Does **not** spawn DeepSeek / Claude / Codex workers by default (`agentBackend: noop`)
 - 0.2.1: after writing STATE, plan / delegate / review is handed to `AgentBackend.run` (NoopBackend in production, outside the lock)
 - 0.2.2: `delegate` creates `.devloop/worktrees/<taskId>` and writes `.devloop/CONTRACT.json` inside it
+- 0.2.3: set `agentBackend: dsh` to spawn `dsh --profile headless "<task>"` in the worktree (or workspace). Default is still `noop`.
 
 ## How it fits
 
@@ -78,7 +79,7 @@ flowchart TB
     Progress --> SM
 ```
 
-Until 0.2.3, `delegate` writes a worktree plus contract but does not spawn a headless agent. `merge` is still STATE-only.
+Until 0.2.4, `merge` is still STATE-only. Headless spawn is opt-in via `agentBackend: dsh`.
 
 ## Can 0.1 meet the product goal?
 
@@ -142,9 +143,14 @@ Optional overrides in `~/.dsh/profiles/web/cordis.patch.yml`:
   config:
     root: /path/to/your/project
     tickIntervalMs: 2000
+    agentBackend: dsh
     budget:
       maxCostUsdPerDay: 20
+      taskTimeoutMinutes: 45
+      taskLifetimeMinutes: 135
 ```
+
+`agentBackend` defaults to `noop` (no spawn). Set `dsh` only when the host can run `dsh --profile headless`.
 
 ## Arm a project
 
@@ -156,7 +162,7 @@ cp templates/GOAL.md /path/to/your/project/.devloop/GOAL.md
 # edit GOAL.md, then start dsh from that project (or set config.root)
 ```
 
-Each tick writes `.devloop/STATE.json` with `lastAction`. 0.1 stops at recording; it does not edit your source tree.
+Each tick writes `.devloop/STATE.json` with `lastAction`. With `agentBackend: noop` (default) it still does not edit your source tree. `dsh` mode runs one-shot headless in the worktree.
 
 ## Uninstall
 

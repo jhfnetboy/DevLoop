@@ -5,6 +5,7 @@ export interface BudgetLimits {
   readonly maxTaskAttempts: number
   readonly maxReviewCycles: number
   readonly taskTimeoutMinutes: number
+  readonly taskLifetimeMinutes: number
   readonly maxParallelWorkers: number
   readonly maxTokensPerTask: number
   readonly maxCostUsdPerSession: number
@@ -24,6 +25,7 @@ export interface Config {
   readonly root: string
   readonly enabled: boolean
   readonly tickIntervalMs: number
+  readonly agentBackend: 'noop' | 'dsh'
   readonly budget: BudgetLimits
   readonly routing: RoutingTable
 }
@@ -39,10 +41,12 @@ export const ConfigSchema: s<Config> = s.object({
   root: s.string().default(process.cwd()),
   enabled: s.boolean().default(true),
   tickIntervalMs: s.number().step(1).min(500).default(2000),
+  agentBackend: s.union([s.const('noop'), s.const('dsh')]).default('noop'),
   budget: s.object({
     maxTaskAttempts: s.number().step(1).min(1).default(3),
     maxReviewCycles: s.number().step(1).min(1).default(2),
     taskTimeoutMinutes: s.number().step(1).min(1).default(45),
+    taskLifetimeMinutes: s.number().step(1).min(1).default(135),
     maxParallelWorkers: s.number().step(1).min(1).default(5),
     maxTokensPerTask: s.number().step(1).min(1).default(500_000),
     maxCostUsdPerSession: finiteCostCap(2),
@@ -53,6 +57,7 @@ export const ConfigSchema: s<Config> = s.object({
     maxTaskAttempts: 3,
     maxReviewCycles: 2,
     taskTimeoutMinutes: 45,
+    taskLifetimeMinutes: 135,
     maxParallelWorkers: 5,
     maxTokensPerTask: 500_000,
     maxCostUsdPerSession: 2,
@@ -87,7 +92,15 @@ export function resolveConfig(raw: unknown): Config {
   const config = ConfigSchema((raw ?? {}) as Config)
   assertFiniteCost(config.budget.maxCostUsdPerSession, 'budget.maxCostUsdPerSession')
   assertFiniteCost(config.budget.maxCostUsdPerDay, 'budget.maxCostUsdPerDay')
-  return config
+  const lifetime = Math.max(
+    config.budget.taskLifetimeMinutes,
+    config.budget.taskTimeoutMinutes * config.budget.maxTaskAttempts,
+  )
+  if (lifetime === config.budget.taskLifetimeMinutes) return config
+  return {
+    ...config,
+    budget: { ...config.budget, taskLifetimeMinutes: lifetime },
+  }
 }
 
 function finiteCostCap(fallback: number) {
