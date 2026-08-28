@@ -117,19 +117,11 @@ export default class DevloopService extends Service {
             }
           } catch (error) {
             this.ctx.logger.error('[dsh-devloop] merge failed', error)
-            return
           }
         }
         if (!result.skipped) {
           await saveState(this.config.root, result.state)
           this.ctx.logger.info(`[dsh-devloop] tick action=${result.action.type}`)
-          if (result.action.type === 'merge') {
-            try {
-              await deleteMergedTaskBranch(this.config.root, result.action.taskId)
-            } catch (error) {
-              this.ctx.logger.error('[dsh-devloop] task branch cleanup failed', error)
-            }
-          }
         }
         if (result.action.type === 'stop' || result.state.killSwitch) {
           this.stop()
@@ -139,6 +131,19 @@ export default class DevloopService extends Service {
       if (!outcome.ok) {
         this.ctx.logger.info('[dsh-devloop] tick skipped: lock held')
         return
+      }
+      const tick = outcome.value?.result
+      const mergeAction = tick?.action
+      const mergedTaskId = mergeAction?.type === 'merge'
+        && tick?.state.tasks.some(task => task.id === mergeAction.taskId && task.status === 'done')
+        ? mergeAction.taskId
+        : null
+      if (mergedTaskId) {
+        try {
+          await deleteMergedTaskBranch(this.config.root, mergedTaskId)
+        } catch (error) {
+          this.ctx.logger.error('[dsh-devloop] task branch cleanup failed', error)
+        }
       }
       if (this.disposed) return
       if (outcome.value && !outcome.value.result.skipped && isAgentAction(outcome.value.result.action)) {

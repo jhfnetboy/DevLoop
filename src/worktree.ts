@@ -159,6 +159,11 @@ export async function deleteMergedTaskBranch(root: string, taskId: string): Prom
   const resolvedRoot = await realpath(root)
   const branch = `${WORKTREE_BRANCH_PREFIX}${token}`
   try {
+    await git(resolvedRoot, ['worktree', 'prune'])
+  } catch {
+    // Best-effort; deleting the ref is the actual cleanup.
+  }
+  try {
     await git(resolvedRoot, ['branch', '-d', branch])
   } catch (error) {
     if (await gitOk(resolvedRoot, ['rev-parse', '--verify', `refs/heads/${branch}`])) {

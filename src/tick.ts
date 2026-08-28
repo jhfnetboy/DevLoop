@@ -15,7 +15,9 @@ export interface TickResult {
  *
  * Repeating plan/delegate/review/escalate is latched (no rewrite) until
  * budget treats the wait as idle and may halt for no-progress. Merge is
- * not latched: git happens after runTick, and a failed merge must retry.
+ * not latched: git happens after runTick. A failed merge still saves the
+ * tick so duplicate-action / no-progress can halt unbounded retries; the
+ * task stays merge_ready until git succeeds.
  */
 export function runTick(state: LoopState, limits: BudgetLimits, now: number): TickResult {
   if (state.killSwitch || state.lastAction.type === 'stop') {

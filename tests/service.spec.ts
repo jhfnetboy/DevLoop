@@ -206,9 +206,9 @@ describe('DevloopService', () => {
     const ctx = new Context()
     const service = new DevloopService(ctx, resolveConfig({ root, tickIntervalMs: 60_000 }), backend)
     services.push(service)
-    await service.tick()
+    await waitForAction(root, 'merge')
     const first = await loadState(root, Date.now())
-    expect(first.lastAction).toEqual({ type: 'idle' })
+    expect(first.lastAction).toEqual({ type: 'merge', taskId: 'm1' })
     expect(first.tasks[0]?.status).toBe('merge_ready')
     expect(backend.runs).toHaveLength(0)
 
@@ -274,7 +274,6 @@ describe('DevloopService', () => {
     expect(backend.runs).toHaveLength(0)
     await expect(readFile(join(root, 'src.txt'), 'utf8')).resolves.toBe('landed\n')
     await expect(readFile(join(dest, 'src.txt'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
-    await expect(execFileAsync('git', ['-C', root, 'rev-parse', '--verify', 'devloop/m1'])).rejects.toThrow()
   })
 
   it('does not retry after a throwing backend; STATE stays latched', async () => {

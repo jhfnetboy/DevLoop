@@ -281,6 +281,21 @@ describe('persist and tick', () => {
     expect(second.action).toEqual({ type: 'merge', taskId: 't-1' })
   })
 
+  it('halts repeated merge ticks via duplicate_action', () => {
+    const limits = resolveConfig({}).budget
+    let beat = runTick({
+      ...emptyState(0),
+      tasks: [{ ...sampleTask('merge_ready'), lastReviewVerdict: 'PASS' }],
+    }, limits, 10)
+    for (let i = 1; i < limits.maxSameAction; i += 1) {
+      beat = runTick(beat.state, limits, 10 + i)
+      expect(beat.action).toEqual({ type: 'merge', taskId: 't-1' })
+    }
+    const halted = runTick(beat.state, limits, 10 + limits.maxSameAction)
+    expect(halted.action).toEqual({ type: 'stop', reason: 'budget' })
+    expect(halted.state.supervisor?.reason).toBe('duplicate_action:merge:t-1')
+  })
+
   it('latches a repeated plan instead of rewriting state', () => {
     const limits = resolveConfig({}).budget
     const first = runTick(emptyState(0), limits, 10)
