@@ -18,12 +18,12 @@ Install: [`docs/Install.md`](./docs/Install.md). This cut: [`docs/Release.md`](.
 
 ## Product target (not all shipped)
 
-The expensive-vs-cheap split is from [`docs/Solution.md`](./docs/Solution.md). The Claude vs Codex CLI split is **operator preference recorded here** (both are T3; see [`docs/CONTEXT.md`](./docs/CONTEXT.md) and ADR-0005). Image / video models (Qwen image, Wan, etc.) are **out of this loop**.
+The expensive-vs-cheap split is from [`docs/Solution.md`](./docs/Solution.md). The T3 CLI split matches [`docs/CONTEXT.md`](./docs/CONTEXT.md) and ADR-0005: Codex leans Supervisor / scheduling; Claude leans architecture and key review. Image / video models (Qwen image, Wan, etc.) are **out of this loop**.
 
 | Role | Who | Job | When |
 |---|---|---|---|
-| T3 plan / design / acceptance | Claude Code CLI (`claude`) | Architecture, design, stage review, acceptance | 0.2.5 |
-| T3 challenge / docs / PR review | Codex CLI (`codex exec`) | Adversarial review, planning-doc review, PR review | 0.2.5 |
+| T3 Supervisor / plan / challenge review | Codex CLI (`codex exec`) | `/plan`, scheduling, adversarial and planning-doc review, PR review | 0.2.5 |
+| T3 architecture / key review / acceptance | Claude Code CLI (`claude`) | Architecture, design, key review, acceptance | 0.2.5 |
 | T1 / T2 implement | DSH + DeepSeek Flash / V4 Pro | Diffs, tools, bounded code changes **from** the T3 plan | spawn exists in 0.2.3; **no** `contract.tier` routing yet |
 | Optional T2 stand-ins | GLM / Kimi / other APIs already in DSH | Same worker tier, not a new runtime | config later |
 | Outer loop | This plugin | 24h tick, budget, self-iteration — not one unbounded chat | **0.3** |
