@@ -132,3 +132,9 @@ No scheduler behavior change. `package.json` version aligned to **0.2.3** (was s
 Possible impact: Git / GitHub installs report `0.2.3`. Plan 0.2.4 (mechanical merge) and 0.2.5 (T3 CLI) are still not done.
 
 Quote `github:…#v0.2.3` in install commands: zsh glob-expands `#` and prints `no matches found`.
+
+### Docs — 2026-08-28
+
+Docs only; **no package version bump** (still 0.2.3 — bumping to 0.2.4 would collide with Plan 0.2.4 mechanical merge).
+
+README records the product target (Claude CLI / Codex CLI / DSH Flash-Pro / 24h loop) versus shipped **v0.2.3**. **0.2.4 is not done.** Path: 0.2.4 → 0.2.5 → 0.3 (0.4 is UI, later).

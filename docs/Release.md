@@ -21,8 +21,10 @@ Host-side checks (`dsh plugin add`, `--dump-config`) are listed in [UserCaseTest
 
 ## Honest limits
 
-- `merge` writes STATE only. No mechanical git merge, no worktree cleanup (Plan 0.2.4).
-- No Codex / Claude CLI adapter (Plan 0.2.5).
+- `merge` writes STATE only. No mechanical git merge, no worktree cleanup (Plan **0.2.4 — not started**).
+- No Codex / Claude CLI adapter (Plan **0.2.5 — not started**).
 - Worker output does not write task status back into STATE. PASS / REWORK is operator-driven.
-- No unattended milestone loop (0.3) and no UI (0.4).
+- No unattended milestone loop (**0.3**) and no UI (**0.4**).
 - npm registry: not published in this cut (no npm login on the release machine). Install from GitHub or the Release tarball. See [Install.md](https://github.com/jhfnetboy/DevLoop/blob/v0.2.3/docs/Install.md).
+
+Progress and the path to 0.3: live [README on `main`](https://github.com/jhfnetboy/DevLoop/blob/main/README.md) (not pinned to this tag, so the table can move as slices land).

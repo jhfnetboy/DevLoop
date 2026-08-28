@@ -9,12 +9,54 @@ This repository is `dsh-devloop`. It is not another coding agent and it does not
 - Installs into a DSH profile as a bundle plugin
 - On each tick, if the workspace has `.devloop/GOAL.md`, reads `STATE.json` and records the next loop action (plan / delegate / review / merge / stop)
 - Enforces budget / circuit-breaker rules in-process
-- Does **not** spawn DeepSeek / Claude / Codex workers by default (`agentBackend: noop`)
+- Does **not** spawn workers by default (`agentBackend: noop`). `agentBackend: dsh` only runs `dsh --profile headless`. Claude Code / Codex CLIs are **not** wired yet (0.2.5).
 - After writing STATE, plan / delegate / review is handed to `AgentBackend.run` (NoopBackend in production, outside the lock)
 - `delegate` creates `.devloop/worktrees/<taskId>` and writes `.devloop/CONTRACT.json` inside it
 - Set `agentBackend: dsh` to spawn `dsh --profile headless "<task>"` in the worktree (or workspace)
 
 Install: [`docs/Install.md`](./docs/Install.md). This cut: [`docs/Release.md`](./docs/Release.md).
+
+## Product target (not all shipped)
+
+The expensive-vs-cheap split is from [`docs/Solution.md`](./docs/Solution.md). The Claude vs Codex CLI split is **operator preference recorded here** (both are T3; see [`docs/CONTEXT.md`](./docs/CONTEXT.md) and ADR-0005). Image / video models (Qwen image, Wan, etc.) are **out of this loop**.
+
+| Role | Who | Job | When |
+|---|---|---|---|
+| T3 plan / design / acceptance | Claude Code CLI (`claude`) | Architecture, design, stage review, acceptance | 0.2.5 |
+| T3 challenge / docs / PR review | Codex CLI (`codex exec`) | Adversarial review, planning-doc review, PR review | 0.2.5 |
+| T1 / T2 implement | DSH + DeepSeek Flash / V4 Pro | Diffs, tools, bounded code changes **from** the T3 plan | spawn exists in 0.2.3; **no** `contract.tier` routing yet |
+| Optional T2 stand-ins | GLM / Kimi / other APIs already in DSH | Same worker tier, not a new runtime | config later |
+| Outer loop | This plugin | 24h tick, budget, self-iteration — not one unbounded chat | **0.3** |
+
+`Config` has a routing table (including a T3 `codex` default) but **dispatch does not read it** yet.
+
+**Secondary development:** DSH tree-outside plugin (do not fork Harness). Ideas from community `dsh-devflow`; this repo is a rebuild, not a copy.
+
+## Progress vs that target
+
+**0.2.4 is not done.** Current tag is **v0.2.3**. Mechanical merge, Claude/Codex CLI, and the 24h unattended loop are still ahead.
+
+| Slice | Status | Meaning |
+|---|---|---|
+| 0.1.x | **Done** (on `main`) | Installable plugin, deterministic loop, budget, `.devloop/STATE.json` |
+| 0.2.1 | **Done** | `AgentBackend` after lock; production default `noop` |
+| 0.2.2 | **Done** | Worktree + frozen Task Contract |
+| 0.2.3 | **Done** (tag `v0.2.3`) | Opt-in `dsh --profile headless`; same command for plan/delegate/review; no tier split |
+| **0.2.4** | **Not started** | Mechanical merge only after Review PASS; then delete worktree |
+| **0.2.5** | **Not started** | Spawn `claude` / `codex` as T3; DSH Flash/Pro remain T1/T2 |
+| **0.3** | **Not started** | Unattended 24h loop, auto-pump, PROGRESS.md |
+| **0.4** | **Not started** | Operator UI / human queue / budget panel — **not** required for the autonomous loop |
+
+Path to the goal you described:
+
+```text
+v0.2.3 (now)
+  → 0.2.4 mechanical merge          # land code, delete worktree
+  → 0.2.5 Claude + Codex T3 CLIs    # plan/review vs implement split
+  → 0.3 unattended loop             # 24h self-iteration under budget
+```
+
+Each slice is its own stacked PR onto the latest `main`. Merge 0.2.4 when it is approved, then start 0.2.5 from that `main`, then 0.3. Do not skip 0.2.4/0.2.5 and jump to 0.3. **0.4 is a later operator surface**, after the loop can already run.
 
 ## How it fits
 
@@ -97,7 +139,7 @@ The goal is: expensive models plan and review, cheap models implement, a program
 | Expensive models actually review | Partial. Plan / delegate / review all use that same headless command; there is no higher-tier reviewer routing. PASS / REWORK is operator-driven. |
 | Unattended milestone completion | **No.** 0.3. |
 
-0.2.3 is the installable scheduler plus optional headless dispatch. It cannot yet turn a GOAL into merged code (Plan 0.2.4).
+0.2.3 is the installable scheduler plus optional headless dispatch. It cannot yet turn a GOAL into merged code (**0.2.4**), cannot spawn Claude/Codex (**0.2.5**), and cannot run unattended 24h (**0.3**).
 
 ## Requirements
 
