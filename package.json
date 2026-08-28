@@ -1,6 +1,6 @@
 {
   "name": "dsh-devloop",
-  "version": "0.1.0",
+  "version": "0.2.3",
   "description": "DeepSeek Harness plugin: expensive models plan and review, cheap models implement, a program loop keeps the factory inside budget.",
   "type": "module",
   "main": "lib/index.js",
