@@ -25,7 +25,7 @@ dsh plugin --profile web add github:jhfnetboy/DevLoop#v0.2.3
 
 Git installs fetch source, not `lib/`. This package’s `prepare` script runs `pnpm build`. pnpm ≥10 will not run that until you allow the package to run scripts.
 
-On pnpm 10.1–10.25, `strictDepBuilds` is often unset: **`pnpm add` can exit 0 and only print `Ignored build scripts: dsh-devloop`**. That is not a successful plugin install. DSH will then load a checkout with no `lib/` and fail on restart. Approve the build whenever pnpm reports an ignored (or blocked) build for this package, even after a successful `add`. Then rebuild or re-run `add`.
+On pnpm 10.1–10.25, `strictDepBuilds` is often unset: **`pnpm add` can exit 0 and only print `Ignored build scripts: dsh-devloop`**. That is not a successful plugin install. DSH will then load a checkout with no `lib/` and fail on restart. Approve the build whenever pnpm reports an ignored (or blocked) build for this package, even after a successful `add`. Then run a **fresh** `dsh plugin ... add` (same spec). Do not use `pnpm rebuild`: this package only has `prepare`, and `src/` is not in the installed tree, so rebuild cannot produce `lib/`.
 
 **Use the key and field name pnpm printed** — do not assume a single YAML shape.
 
@@ -51,7 +51,7 @@ You can also approve from the profile directory:
 pnpm --dir ~/.dsh/profiles/web approve-builds
 ```
 
-Allow `dsh-devloop` when prompted, then `pnpm --dir ~/.dsh/profiles/web rebuild dsh-devloop` or re-run `add`. Treat that allowance as permission to execute this package’s install-time scripts on your machine.
+Allow `dsh-devloop` when prompted, then re-run the same `dsh plugin --profile web add ...` so pnpm fetches the git package with `prepare` allowed. Do not use `pnpm rebuild`. Treat that allowance as permission to execute this package’s install-time scripts on your machine.
 
 Restart the profile (`dsh web`) and confirm the layer:
 
