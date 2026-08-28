@@ -120,8 +120,10 @@ Git installs run `prepare` → `pnpm build`, so the published entry is `lib/`.
 
 Pinned GitHub tag (needs git tag `v0.2.3`; until then `github:jhfnetboy/DevLoop`). Git install runs `prepare` → `pnpm build`. pnpm ≥10 may ignore that build and still exit 0 — if it prints `Ignored build scripts`, approve `dsh-devloop` (`onlyBuiltDependencies` on pnpm 10.1–10.25, `allowBuilds` on ≥10.26, or `pnpm approve-builds`) and re-run `add` (not `pnpm rebuild`), even when `add` succeeded:
 
+Quote the spec: zsh treats `#` as a glob (`no matches found`).
+
 ```bash
-dsh plugin --profile web add github:jhfnetboy/DevLoop#v0.2.3
+dsh plugin --profile web add 'github:jhfnetboy/DevLoop#v0.2.3'
 ```
 
 From this checkout (after `pnpm build`):

@@ -19,8 +19,10 @@ dsh plugin --profile web add github:jhfnetboy/DevLoop
 
 After `v0.2.3` exists, pin the tag:
 
+Quote the spec: zsh treats `#` as a glob (`no matches found`).
+
 ```bash
-dsh plugin --profile web add github:jhfnetboy/DevLoop#v0.2.3
+dsh plugin --profile web add 'github:jhfnetboy/DevLoop#v0.2.3'
 ```
 
 Git installs fetch source, not `lib/`. This package’s `prepare` script runs `pnpm build`. pnpm ≥10 will not run that until you allow the package to run scripts.

@@ -46,7 +46,7 @@ gh release create v0.2.3 \
   dsh-devloop-0.2.3.tgz
 ```
 
-Pin installs to `github:jhfnetboy/DevLoop#v0.2.3`. Attach the `.tgz` so operators can skip git `prepare` / build approval.
+Pin installs to `'github:jhfnetboy/DevLoop#v0.2.3'` (quotes required on zsh). Attach the `.tgz` so operators can skip git `prepare` / build approval.
 
 ## npm registry (when logged in)
 

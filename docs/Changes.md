@@ -130,3 +130,5 @@ DSH headless one-shot on plan / delegate / review. Default stays Noop so existin
 No scheduler behavior change. `package.json` version aligned to **0.2.3** (was still `0.1.0` after the stacked merges). Added `docs/Install.md`, `docs/Release.md`, `docs/Deploy.md`. GitHub tag `v0.2.3` is cut after this lands on `main`. npm registry is not part of this cut.
 
 Possible impact: Git / GitHub installs report `0.2.3`. Plan 0.2.4 (mechanical merge) and 0.2.5 (T3 CLI) are still not done.
+
+Quote `github:…#v0.2.3` in install commands: zsh glob-expands `#` and prints `no matches found`.
