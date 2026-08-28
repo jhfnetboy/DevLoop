@@ -119,6 +119,11 @@ export async function mergeTaskWorktree(root: string, taskId: string): Promise<v
     throw new Error('merge requires a registered task worktree')
   }
 
+  const trackedDirty = (await git(resolvedRoot, ['status', '--porcelain', '--untracked-files=no'])).trim()
+  if (trackedDirty.length > 0) {
+    throw new Error('workspace has tracked changes; commit or stash them before merge')
+  }
+
   try {
     await git(resolvedRoot, ['merge', '--no-edit', '-m', `devloop: merge ${token}`, branch])
   } catch (error) {
@@ -142,7 +147,24 @@ export async function mergeTaskWorktree(root: string, taskId: string): Promise<v
       if (await pathExists(dest)) throw error
     }
   }
-  await deleteTaskBranch(resolvedRoot, branch)
+}
+
+/**
+ * Delete `devloop/<taskId>` after STATE has recorded the merge. Missing ref
+ * is success; any other `branch -d` failure is thrown.
+ */
+export async function deleteMergedTaskBranch(root: string, taskId: string): Promise<void> {
+  const token = worktreeTaskToken(taskId)
+  if (!token) throw new Error(`unsafe task id for worktree: ${taskId}`)
+  const resolvedRoot = await realpath(root)
+  const branch = `${WORKTREE_BRANCH_PREFIX}${token}`
+  try {
+    await git(resolvedRoot, ['branch', '-d', branch])
+  } catch (error) {
+    if (await gitOk(resolvedRoot, ['rev-parse', '--verify', `refs/heads/${branch}`])) {
+      throw error
+    }
+  }
 }
 
 async function writeContractFile(worktreeRoot: string, contract: TaskContract): Promise<void> {
@@ -231,14 +253,6 @@ async function ensureWorktreeBranch(dest: string, branch: string): Promise<void>
 
 async function mergeHeadExists(root: string): Promise<boolean> {
   return gitOk(root, ['rev-parse', '-q', '--verify', 'MERGE_HEAD'])
-}
-
-async function deleteTaskBranch(root: string, branch: string): Promise<void> {
-  try {
-    await git(root, ['branch', '-d', branch])
-  } catch {
-    // Branch may already be gone after a previous partial success.
-  }
 }
 
 async function gitOk(root: string, args: readonly string[]): Promise<boolean> {

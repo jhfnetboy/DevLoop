@@ -7,6 +7,7 @@ import { resolveConfig } from '../src/config.ts'
 import { contractForTask } from '../src/router.ts'
 import {
   mergeTaskWorktree,
+  deleteMergedTaskBranch,
   prepareDelegateWorktree,
   worktreePath,
   worktreeTaskToken,
@@ -143,7 +144,7 @@ describe('prepareDelegateWorktree', () => {
 })
 
 describe('mergeTaskWorktree', () => {
-  it('merges the task branch, then removes the worktree and branch', async () => {
+  it('merges the task branch, then removes the worktree and keeps the branch until cleanup', async () => {
     const root = await gitWorkspace()
     const dest = await prepareDelegateWorktree(root, contractFor('d1'))
     await writeFile(join(dest, 'src.txt'), 'from-worker\n', 'utf8')
@@ -152,7 +153,21 @@ describe('mergeTaskWorktree', () => {
     await mergeTaskWorktree(root, 'd1')
     await expect(readFile(join(root, 'src.txt'), 'utf8')).resolves.toBe('from-worker\n')
     await expect(lstat(dest)).rejects.toMatchObject({ code: 'ENOENT' })
+    await execFileAsync('git', ['-C', root, 'rev-parse', '--verify', 'devloop/d1'])
+    await deleteMergedTaskBranch(root, 'd1')
     await expect(execFileAsync('git', ['-C', root, 'rev-parse', '--verify', 'devloop/d1'])).rejects.toThrow()
+  })
+
+  it('refuses merge when the workspace has tracked changes', async () => {
+    const root = await gitWorkspace()
+    const dest = await prepareDelegateWorktree(root, contractFor('d1'))
+    await writeFile(join(dest, 'src.txt'), 'from-worker\n', 'utf8')
+    await execFileAsync('git', ['-C', dest, 'add', 'src.txt'])
+    await execFileAsync('git', ['-C', dest, 'commit', '-m', 'worker'])
+    await writeFile(join(root, 'README.md'), '# dirty main\n', 'utf8')
+    await expect(mergeTaskWorktree(root, 'd1')).rejects.toThrow(/tracked changes/)
+    await expect(readFile(join(root, 'src.txt'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await pathExists(dest)).toBe(true)
   })
 
   it('refuses merge when the worktree is missing', async () => {

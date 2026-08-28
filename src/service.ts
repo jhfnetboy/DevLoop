@@ -13,7 +13,7 @@ import { DshHeadlessBackend } from './dsh.js'
 import { loadState, saveState, withStateLock, workspaceArmed } from './persist.js'
 import { runTick, type TickResult } from './tick.js'
 import type { LoopState } from './types.js'
-import { prepareDelegateWorktree, mergeTaskWorktree, worktreePath } from './worktree.js'
+import { prepareDelegateWorktree, mergeTaskWorktree, deleteMergedTaskBranch, worktreePath } from './worktree.js'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -123,6 +123,13 @@ export default class DevloopService extends Service {
         if (!result.skipped) {
           await saveState(this.config.root, result.state)
           this.ctx.logger.info(`[dsh-devloop] tick action=${result.action.type}`)
+          if (result.action.type === 'merge') {
+            try {
+              await deleteMergedTaskBranch(this.config.root, result.action.taskId)
+            } catch (error) {
+              this.ctx.logger.error('[dsh-devloop] task branch cleanup failed', error)
+            }
+          }
         }
         if (result.action.type === 'stop' || result.state.killSwitch) {
           this.stop()

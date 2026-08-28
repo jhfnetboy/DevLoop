@@ -274,6 +274,7 @@ describe('DevloopService', () => {
     expect(backend.runs).toHaveLength(0)
     await expect(readFile(join(root, 'src.txt'), 'utf8')).resolves.toBe('landed\n')
     await expect(readFile(join(dest, 'src.txt'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(execFileAsync('git', ['-C', root, 'rev-parse', '--verify', 'devloop/m1'])).rejects.toThrow()
   })
 
   it('does not retry after a throwing backend; STATE stays latched', async () => {

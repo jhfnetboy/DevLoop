@@ -146,7 +146,7 @@ Mechanical merge after Review PASS. No T3 CLI, no unattended 24h loop.
 ### 代码
 
 - `Task.lastReviewVerdict` 可选；`merge_ready` 且 `PASS` / `PASS_WITH_NOTES` 才 `merge`，否则 escalate `no_review_pass`
-- `mergeTaskWorktree`：把 `devloop/<taskId>` 合进工作区 HEAD（不 push）；合入前拒绝 detached HEAD、已有 MERGE_HEAD、脏 worktree、错误分支；冲突则只 abort **本次** merge
+- `mergeTaskWorktree`：把 `devloop/<taskId>` 合进工作区 HEAD（不 push）；合入前拒绝 detached HEAD、已有 MERGE_HEAD、主工作区已跟踪脏文件、脏 task worktree、错误分支；冲突则只 abort **本次** merge；任务分支留到 STATE 写完再删
 - 合入成功后删除 worktree 与任务分支，并把该任务标为 `done`；worktree 已删但任务分支还在时仍会合入该分支
 - merge 不进 `AgentBackend`；不 latch，git 失败下一拍可重试
 - 高风险 `merge_ready` 仍先 escalate `security_high_risk`
