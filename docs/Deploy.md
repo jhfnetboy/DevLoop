@@ -52,10 +52,11 @@ Pin installs to `github:jhfnetboy/DevLoop#v0.2.3`. Attach the `.tgz` so operator
 
 Only when `npm whoami` succeeds, `HEAD` **is** the release tag (`git rev-parse HEAD` equals `git rev-parse v0.2.3`), the tree is clean, and `pnpm test` is green.
 
-Publish the **inspected tarball** from that tagged commit, not a later working tree that still says `0.2.3`:
+Publish the **inspected tarball** from `main` while it still points at the tag commit (do not `git checkout v0.2.3`: detached HEAD makes pnpm 10.6.3 fail with `ERR_PNPM_GIT_UNKNOWN_BRANCH`):
 
 ```bash
-git checkout v0.2.3
+git checkout main
+git pull --ff-only origin main
 test "$(git rev-parse HEAD)" = "$(git rev-parse v0.2.3^{commit})"
 pnpm pack
 pnpm publish ./dsh-devloop-0.2.3.tgz --access public

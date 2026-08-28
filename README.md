@@ -93,8 +93,8 @@ The goal is: expensive models plan and review, cheap models implement, a program
 | Program loop, one transition per tick | Yes. Pure `decideNextAction` plus `runTick`. |
 | Hard budget / kill switch | Yes, in-process. No live token/cost feed yet. |
 | File-backed recoverability | Partial. `GOAL.md` + `STATE.json` + `LOCK` + worktree `CONTRACT.json`. No PLAN / PROGRESS yet. |
-| Cheap workers actually implement | Opt-in. `agentBackend: dsh` spawns headless; merge still does not land code. |
-| Expensive models actually review | Same spawn path. PASS / REWORK is still operator-driven. |
+| Cheap workers actually implement | Partial. Opt-in `agentBackend: dsh` spawns one-shot `dsh --profile headless`; it does not pick a cheap worker via `contract.tier`. Merge still does not land code. |
+| Expensive models actually review | Partial. Plan / delegate / review all use that same headless command; there is no higher-tier reviewer routing. PASS / REWORK is operator-driven. |
 | Unattended milestone completion | **No.** 0.3. |
 
 0.2.3 is the installable scheduler plus optional headless dispatch. It cannot yet turn a GOAL into merged code (Plan 0.2.4).
