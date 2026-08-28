@@ -23,9 +23,11 @@ After `v0.2.3` exists, pin the tag:
 dsh plugin --profile web add github:jhfnetboy/DevLoop#v0.2.3
 ```
 
-Git installs fetch source, not `lib/`. This package’s `prepare` script runs `pnpm build`. pnpm ≥10 blocks that until you allow the package to run scripts.
+Git installs fetch source, not `lib/`. This package’s `prepare` script runs `pnpm build`. pnpm ≥10 will not run that until you allow the package to run scripts.
 
-On the first failure, **use the key and field name `dsh` / pnpm printed** — do not assume a single YAML shape. Then re-run the same `add`.
+On pnpm 10.1–10.25, `strictDepBuilds` is often unset: **`pnpm add` can exit 0 and only print `Ignored build scripts: dsh-devloop`**. That is not a successful plugin install. DSH will then load a checkout with no `lib/` and fail on restart. Approve the build whenever pnpm reports an ignored (or blocked) build for this package, even after a successful `add`. Then rebuild or re-run `add`.
+
+**Use the key and field name pnpm printed** — do not assume a single YAML shape.
 
 Typical profile file: `~/.dsh/profiles/web/pnpm-workspace.yaml`.
 
@@ -49,7 +51,7 @@ You can also approve from the profile directory:
 pnpm --dir ~/.dsh/profiles/web approve-builds
 ```
 
-Allow `dsh-devloop` when prompted, then re-run `add`. Treat that allowance as permission to execute this package’s install-time scripts on your machine.
+Allow `dsh-devloop` when prompted, then `pnpm --dir ~/.dsh/profiles/web rebuild dsh-devloop` or re-run `add`. Treat that allowance as permission to execute this package’s install-time scripts on your machine.
 
 Restart the profile (`dsh web`) and confirm the layer:
 

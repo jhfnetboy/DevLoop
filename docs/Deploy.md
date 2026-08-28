@@ -50,16 +50,18 @@ Pin installs to `github:jhfnetboy/DevLoop#v0.2.3`. Attach the `.tgz` so operator
 
 ## npm registry (when logged in)
 
-Only when `npm whoami` succeeds, the git tag matches `package.json` version, the tree is clean, and `pnpm test` is green.
+Only when `npm whoami` succeeds, `HEAD` **is** the release tag (`git rev-parse HEAD` equals `git rev-parse v0.2.3`), the tree is clean, and `pnpm test` is green.
 
-This package is unscoped; `pnpm publish` defaults to public.
+Publish the **inspected tarball** from that tagged commit, not a later working tree that still says `0.2.3`:
 
 ```bash
-npm whoami
-pnpm publish --access public
+git checkout v0.2.3
+test "$(git rev-parse HEAD)" = "$(git rev-parse v0.2.3^{commit})"
+pnpm pack
+pnpm publish ./dsh-devloop-0.2.3.tgz --access public
 ```
 
-Then operators can `dsh plugin --profile web add dsh-devloop@0.2.3` with no git `prepare`.
+This package is unscoped; the tarball is public. Then operators can `dsh plugin --profile web add dsh-devloop@0.2.3` with no git `prepare`.
 
 If `npm whoami` fails, do not invent a token. GitHub Release + `github:` spec is the supported distribution until login exists.
 
