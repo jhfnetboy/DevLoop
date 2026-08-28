@@ -7,7 +7,9 @@ import { RecordingBackend } from '../src/backend.ts'
 import type { AgentBackend, AgentRunInput, AgentRunResult } from '../src/backend.ts'
 import { resolveConfig } from '../src/config.ts'
 import { emptyState, loadState, saveState, withStateLock, workspaceArmed } from '../src/persist.ts'
+import { contractForTask } from '../src/router.ts'
 import DevloopService from '../src/service.ts'
+import { prepareDelegateWorktree } from '../src/worktree.ts'
 import { initGitRepo, makeTask, mkdtempInRepo } from './helpers.ts'
 
 async function waitForAction(root: string, type: string, timeoutMs = 2000): Promise<void> {
@@ -175,7 +177,7 @@ describe('DevloopService', () => {
     expect(backend.runs[0]?.workspaceRoot).toBe(root)
   })
 
-  it('does not dispatch merge to AgentBackend', async () => {
+  it('does not dispatch merge to AgentBackend; without PASS it escalates', async () => {
     const root = await armWorkspace()
     await saveState(root, {
       ...emptyState(Date.now()),
@@ -185,9 +187,93 @@ describe('DevloopService', () => {
     const ctx = new Context()
     const service = new DevloopService(ctx, resolveConfig({ root, tickIntervalMs: 60_000 }), backend)
     services.push(service)
-    await waitForAction(root, 'merge')
-    await service.tick()
+    await waitForAction(root, 'escalate')
+    const loaded = await loadState(root, Date.now())
+    expect(loaded.lastAction).toEqual({ type: 'escalate', taskId: 'm1', reason: 'no_review_pass' })
     expect(backend.runs).toHaveLength(0)
+  })
+
+  it('does not latch a failed git merge; retries after the worktree exists', async () => {
+    const root = await mkdtempInRepo('devloop-svc-merge-fail-')
+    await mkdir(join(root, '.devloop'))
+    await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
+    await initGitRepo(root)
+    await saveState(root, {
+      ...emptyState(Date.now()),
+      tasks: [makeTask({ id: 'm1', status: 'merge_ready', lastReviewVerdict: 'PASS' })],
+    })
+    const backend = new RecordingBackend()
+    const ctx = new Context()
+    const service = new DevloopService(ctx, resolveConfig({ root, tickIntervalMs: 60_000 }), backend)
+    services.push(service)
+    await service.tick()
+    const first = await loadState(root, Date.now())
+    expect(first.lastAction).toEqual({ type: 'idle' })
+    expect(first.tasks[0]?.status).toBe('merge_ready')
+    expect(backend.runs).toHaveLength(0)
+
+    const limits = resolveConfig({}).budget
+    const dest = await prepareDelegateWorktree(root, contractForTask(
+      'm1',
+      'Add persist',
+      'T1',
+      ['src/**'],
+      ['tests pass'],
+      limits.taskTimeoutMinutes,
+      limits.maxTaskAttempts,
+    ))
+    await writeFile(join(dest, 'src.txt'), 'merged\n', 'utf8')
+    const { execFile } = await import('node:child_process')
+    const { promisify } = await import('node:util')
+    const execFileAsync = promisify(execFile)
+    await execFileAsync('git', ['-C', dest, 'add', 'src.txt'])
+    await execFileAsync('git', ['-C', dest, 'commit', '-m', 'worker'])
+
+    await service.tick()
+    await waitForAction(root, 'merge')
+    const loaded = await loadState(root, Date.now())
+    expect(loaded.lastAction).toEqual({ type: 'merge', taskId: 'm1' })
+    expect(loaded.tasks[0]?.status).toBe('done')
+    expect(backend.runs).toHaveLength(0)
+    await expect(readFile(join(root, 'src.txt'), 'utf8')).resolves.toBe('merged\n')
+  })
+
+  it('git-merges PASS work, deletes the worktree, and does not call AgentBackend', async () => {
+    const root = await mkdtempInRepo('devloop-svc-merge-')
+    await mkdir(join(root, '.devloop'))
+    await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
+    await initGitRepo(root)
+    const limits = resolveConfig({}).budget
+    const dest = await prepareDelegateWorktree(root, contractForTask(
+      'm1',
+      'Add persist',
+      'T1',
+      ['src/**'],
+      ['tests pass'],
+      limits.taskTimeoutMinutes,
+      limits.maxTaskAttempts,
+    ))
+    await writeFile(join(dest, 'src.txt'), 'landed\n', 'utf8')
+    const { execFile } = await import('node:child_process')
+    const { promisify } = await import('node:util')
+    const execFileAsync = promisify(execFile)
+    await execFileAsync('git', ['-C', dest, 'add', 'src.txt'])
+    await execFileAsync('git', ['-C', dest, 'commit', '-m', 'worker'])
+    await saveState(root, {
+      ...emptyState(Date.now()),
+      tasks: [makeTask({ id: 'm1', status: 'merge_ready', lastReviewVerdict: 'PASS_WITH_NOTES' })],
+    })
+    const backend = new RecordingBackend()
+    const ctx = new Context()
+    const service = new DevloopService(ctx, resolveConfig({ root, tickIntervalMs: 60_000 }), backend)
+    services.push(service)
+    await service.tick()
+    await waitForAction(root, 'merge', 8_000)
+    const loaded = await loadState(root, Date.now())
+    expect(loaded.tasks[0]?.status).toBe('done')
+    expect(backend.runs).toHaveLength(0)
+    await expect(readFile(join(root, 'src.txt'), 'utf8')).resolves.toBe('landed\n')
+    await expect(readFile(join(dest, 'src.txt'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   it('does not retry after a throwing backend; STATE stays latched', async () => {

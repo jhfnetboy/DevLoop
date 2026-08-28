@@ -50,7 +50,7 @@ describe('Plan 0.1.3 decideNextAction 1:1', () => {
     ['goal flag', baseState({ goalCompleted: true }), { type: 'stop', reason: 'goal_complete' }],
     ['supervisor', baseState({ supervisor: { taskId: 'a', reason: 'wait' } }), { type: 'escalate', taskId: 'a', reason: 'wait' }],
     ['review', baseState({ tasks: [makeTask({ id: 'r', status: 'review_pending' })] }), { type: 'review', taskId: 'r' }],
-    ['merge', baseState({ tasks: [makeTask({ id: 'm', status: 'merge_ready' })] }), { type: 'merge', taskId: 'm' }],
+    ['merge', baseState({ tasks: [makeTask({ id: 'm', status: 'merge_ready', lastReviewVerdict: 'PASS' })] }), { type: 'merge', taskId: 'm' }],
     ['delegate', baseState({ tasks: [makeTask({ id: 'd', status: 'ready' })] }), { type: 'delegate', taskId: 'd' }],
     ['plan', baseState(), { type: 'plan' }],
     ['blocked', baseState({ tasks: [makeTask({ id: 'b', status: 'blocked' })] }), { type: 'escalate', taskId: 'b', reason: 'blocked_task' }],
@@ -211,5 +211,22 @@ describe('Plan 0.2.3 DSH headless 1:1', () => {
       agentBackend: 'dsh',
     }))
     expect(service.backend).toBeInstanceOf(DshHeadlessBackend)
+  })
+})
+
+describe('Plan 0.2.4 mechanical merge 1:1', () => {
+  it('merge_ready without PASS escalates; PASS and PASS_WITH_NOTES merge', () => {
+    expect(decideNextAction(baseState({
+      tasks: [makeTask({ id: 'm', status: 'merge_ready' })],
+    }))).toEqual({ type: 'escalate', taskId: 'm', reason: 'no_review_pass' })
+    expect(decideNextAction(baseState({
+      tasks: [makeTask({ id: 'm', status: 'merge_ready', lastReviewVerdict: 'REWORK' })],
+    }))).toEqual({ type: 'escalate', taskId: 'm', reason: 'no_review_pass' })
+    expect(decideNextAction(baseState({
+      tasks: [makeTask({ id: 'm', status: 'merge_ready', lastReviewVerdict: 'PASS' })],
+    }))).toEqual({ type: 'merge', taskId: 'm' })
+    expect(decideNextAction(baseState({
+      tasks: [makeTask({ id: 'm', status: 'merge_ready', lastReviewVerdict: 'PASS_WITH_NOTES' })],
+    }))).toEqual({ type: 'merge', taskId: 'm' })
   })
 })

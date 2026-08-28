@@ -60,9 +60,9 @@ T0 / T1 / T2 / T3 是产品角色。界面和配置谈角色，不谈「今天 D
 
 `.devloop/STATE.json` 为状态机权威；GOAL.md / PLAN.md / PROGRESS.md 给人。见 [ADR-0009](./adr/0009-file-backed-project-state.md)。
 
-### T4 Backend 接口预留
+### T4 Backend 接口与机械 merge
 
-0.2.1 把 `AgentBackend` 形状落地为 `run` / `cancel` / `health`，生产默认 `NoopBackend` 空跑。0.2.3 用 `agentBackend: 'dsh'` 把 `createBackend()` 接到 `DshHeadlessBackend`（`dsh --profile headless` 一次性）。Codex exec、Claude CLI、OpenCode 仍不改 Loop。
+0.2.1 把 `AgentBackend` 形状落地为 `run` / `cancel` / `health`，生产默认 `NoopBackend` 空跑。0.2.3 用 `agentBackend: 'dsh'` 把 `createBackend()` 接到 `DshHeadlessBackend`（`dsh --profile headless` 一次性）。0.2.4 在 LOCK 内对 `merge_ready` + Review `PASS` / `PASS_WITH_NOTES` 做机械 `git merge`，然后删除 worktree；无 PASS 则 escalate，不调用 backend。Codex exec、Claude CLI、OpenCode 仍不改 Loop。
 
 ### T5 参考而不耦合 winner
 

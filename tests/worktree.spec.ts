@@ -1,11 +1,12 @@
 import { execFile } from 'node:child_process'
-import { mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, describe, expect, it } from 'vitest'
 import { resolveConfig } from '../src/config.ts'
 import { contractForTask } from '../src/router.ts'
 import {
+  mergeTaskWorktree,
   prepareDelegateWorktree,
   worktreePath,
   worktreeTaskToken,
@@ -140,3 +141,120 @@ describe('prepareDelegateWorktree', () => {
     await expect(prepareDelegateWorktree(root, contractFor('../x'))).rejects.toThrow(/unsafe task id/)
   })
 })
+
+describe('mergeTaskWorktree', () => {
+  it('merges the task branch, then removes the worktree and branch', async () => {
+    const root = await gitWorkspace()
+    const dest = await prepareDelegateWorktree(root, contractFor('d1'))
+    await writeFile(join(dest, 'src.txt'), 'from-worker\n', 'utf8')
+    await execFileAsync('git', ['-C', dest, 'add', 'src.txt'])
+    await execFileAsync('git', ['-C', dest, 'commit', '-m', 'worker'])
+    await mergeTaskWorktree(root, 'd1')
+    await expect(readFile(join(root, 'src.txt'), 'utf8')).resolves.toBe('from-worker\n')
+    await expect(lstat(dest)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(execFileAsync('git', ['-C', root, 'rev-parse', '--verify', 'devloop/d1'])).rejects.toThrow()
+  })
+
+  it('refuses merge when the worktree is missing', async () => {
+    const root = await gitWorkspace()
+    await expect(mergeTaskWorktree(root, 'd1')).rejects.toThrow(/registered task worktree/)
+  })
+
+  it('aborts a conflicted merge and leaves HEAD clean', async () => {
+    const root = await gitWorkspace()
+    await writeFile(join(root, 'src.txt'), 'main\n', 'utf8')
+    await execFileAsync('git', ['-C', root, 'add', 'src.txt'])
+    await execFileAsync('git', ['-C', root, 'commit', '-m', 'main-file'])
+    const dest = await prepareDelegateWorktree(root, contractFor('d1'))
+    await writeFile(join(dest, 'src.txt'), 'worker\n', 'utf8')
+    await execFileAsync('git', ['-C', dest, 'add', 'src.txt'])
+    await execFileAsync('git', ['-C', dest, 'commit', '-m', 'worker-file'])
+    await writeFile(join(root, 'src.txt'), 'other\n', 'utf8')
+    await execFileAsync('git', ['-C', root, 'add', 'src.txt'])
+    await execFileAsync('git', ['-C', root, 'commit', '-m', 'main-other'])
+    await expect(mergeTaskWorktree(root, 'd1')).rejects.toThrow()
+    const { stdout } = await execFileAsync('git', ['-C', root, 'status', '--porcelain', '--untracked-files=no'], { encoding: 'utf8' })
+    expect(stdout).toBe('')
+    await expect(execFileAsync('git', ['-C', root, 'rev-parse', '-q', '--verify', 'MERGE_HEAD'])).rejects.toThrow()
+    await expect(readFile(join(root, 'src.txt'), 'utf8')).resolves.toBe('other\n')
+    expect(await pathExists(dest)).toBe(true)
+  })
+
+  it('does not abort a merge that was already in progress', async () => {
+    const root = await gitWorkspace()
+    const dest = await prepareDelegateWorktree(root, contractFor('d1'))
+    await writeFile(join(dest, 'src.txt'), 'from-worker\n', 'utf8')
+    await execFileAsync('git', ['-C', dest, 'add', 'src.txt'])
+    await execFileAsync('git', ['-C', dest, 'commit', '-m', 'worker'])
+    await execFileAsync('git', ['-C', root, 'switch', '-c', 'human'])
+    await writeFile(join(root, 'README.md'), '# human\n', 'utf8')
+    await execFileAsync('git', ['-C', root, 'add', 'README.md'])
+    await execFileAsync('git', ['-C', root, 'commit', '-m', 'human'])
+    await execFileAsync('git', ['-C', root, 'switch', 'main'])
+    await writeFile(join(root, 'README.md'), '# other\n', 'utf8')
+    await execFileAsync('git', ['-C', root, 'add', 'README.md'])
+    await execFileAsync('git', ['-C', root, 'commit', '-m', 'other'])
+    await expect(execFileAsync('git', ['-C', root, 'merge', '--no-edit', 'human'])).rejects.toThrow()
+    await writeFile(join(root, 'README.md'), '# resolved-but-uncommitted\n', 'utf8')
+    await expect(mergeTaskWorktree(root, 'd1')).rejects.toThrow(/already in progress/)
+    await expect(readFile(join(root, 'README.md'), 'utf8')).resolves.toBe('# resolved-but-uncommitted\n')
+    await execFileAsync('git', ['-C', root, 'rev-parse', '-q', '--verify', 'MERGE_HEAD'])
+    expect(await pathExists(dest)).toBe(true)
+  })
+
+  it('refuses a dirty task worktree before merging', async () => {
+    const root = await gitWorkspace()
+    const dest = await prepareDelegateWorktree(root, contractFor('d1'))
+    await writeFile(join(dest, 'src.txt'), 'from-worker\n', 'utf8')
+    await execFileAsync('git', ['-C', dest, 'add', 'src.txt'])
+    await execFileAsync('git', ['-C', dest, 'commit', '-m', 'worker'])
+    await writeFile(join(dest, 'dirty.txt'), 'uncommitted\n', 'utf8')
+    await expect(mergeTaskWorktree(root, 'd1')).rejects.toThrow(/dirty/)
+    await expect(readFile(join(root, 'src.txt'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await pathExists(dest)).toBe(true)
+  })
+
+  it('refuses to merge onto a detached HEAD', async () => {
+    const root = await gitWorkspace()
+    const dest = await prepareDelegateWorktree(root, contractFor('d1'))
+    await writeFile(join(dest, 'src.txt'), 'from-worker\n', 'utf8')
+    await execFileAsync('git', ['-C', dest, 'add', 'src.txt'])
+    await execFileAsync('git', ['-C', dest, 'commit', '-m', 'worker'])
+    await execFileAsync('git', ['-C', root, 'checkout', '--detach'])
+    await expect(mergeTaskWorktree(root, 'd1')).rejects.toThrow(/detached HEAD/)
+    expect(await pathExists(dest)).toBe(true)
+  })
+
+  it('refuses merge when the worktree is not on the task branch', async () => {
+    const root = await gitWorkspace()
+    const dest = worktreePath(root, 'd1')
+    await execFileAsync('git', ['-C', root, 'worktree', 'add', '-b', 'sneaky', dest])
+    await expect(mergeTaskWorktree(root, 'd1')).rejects.toThrow(/worktree branch must be/)
+  })
+
+  it('refuses to merge a task branch into itself', async () => {
+    const root = await gitWorkspace()
+    await execFileAsync('git', ['-C', root, 'switch', '-c', 'devloop/d1'])
+    await expect(mergeTaskWorktree(root, 'd1')).rejects.toThrow(/into itself/)
+  })
+
+  it('merges a task branch even after the worktree is gone', async () => {
+    const root = await gitWorkspace()
+    const dest = await prepareDelegateWorktree(root, contractFor('d1'))
+    await writeFile(join(dest, 'src.txt'), 'from-worker\n', 'utf8')
+    await execFileAsync('git', ['-C', dest, 'add', 'src.txt'])
+    await execFileAsync('git', ['-C', dest, 'commit', '-m', 'worker'])
+    await execFileAsync('git', ['-C', root, 'worktree', 'remove', dest])
+    await mergeTaskWorktree(root, 'd1')
+    await expect(readFile(join(root, 'src.txt'), 'utf8')).resolves.toBe('from-worker\n')
+  })
+})
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await lstat(path)
+    return true
+  } catch {
+    return false
+  }
+}

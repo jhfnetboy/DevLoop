@@ -1,12 +1,12 @@
-# Release 0.2.3
+# Release 0.2.4
 
-First public cut of `dsh-devloop`. Plan slices through 0.2.3 are already on `main`. Tag `v0.2.3` and the GitHub Release are created **after** this packaging commit is merged; steps: [Deploy.md](https://github.com/jhfnetboy/DevLoop/blob/v0.2.3/docs/Deploy.md).
+Mechanical merge after Review PASS. Tag `v0.2.4` and the GitHub Release are created **after** this commit is on `main`; steps: [Deploy.md](./Deploy.md).
 
-Package version: **0.2.3**. This document is the release note, not a second semver.
+Package version: **0.2.4**. This document is the release note, not a second semver.
 
 ## What is in this version
 
-Stacked merges already on `main` before the tag:
+Stacked merges already on `main`, plus this slice:
 
 | Slice | PR | Ships |
 |---|---|---|
@@ -16,15 +16,16 @@ Stacked merges already on `main` before the tag:
 | 0.2.1 AgentBackend | #5 | `run` / `cancel` / `health`; production default `NoopBackend` |
 | 0.2.2 worktree | #6 | `.devloop/worktrees/<taskId>`, `CONTRACT.json`, LOCK heartbeat |
 | 0.2.3 headless | #7 | `agentBackend: dsh` → `dsh --profile headless`; default stays `noop` |
+| 0.2.4 merge | this | Review PASS → `git merge` task branch, delete worktree, mark `done` |
 
-Host-side checks (`dsh plugin add`, `--dump-config`) are listed in [UserCaseTest.md](https://github.com/jhfnetboy/DevLoop/blob/v0.2.3/docs/UserCaseTest.md) and are not claimed as already run on the release machine.
+Host-side checks (`dsh plugin add`, `--dump-config`) are listed in [UserCaseTest.md](./UserCaseTest.md).
 
 ## Honest limits
 
-- `merge` writes STATE only. No mechanical git merge, no worktree cleanup (Plan **0.2.4 — not started**).
 - No Codex / Claude CLI adapter (Plan **0.2.5 — not started**).
-- Worker output does not write task status back into STATE. PASS / REWORK is operator-driven.
+- Worker output does not write task status back into STATE. PASS / REWORK is operator-driven (`lastReviewVerdict` on the task). The verdict is not bound to a commit SHA; later commits on the task branch can land under a stale PASS.
+- Merge does not push. Conflicted merges abort and retry next tick.
 - No unattended milestone loop (**0.3**) and no UI (**0.4**).
-- npm registry: not published in this cut (no npm login on the release machine). Install from GitHub or the Release tarball. See [Install.md](https://github.com/jhfnetboy/DevLoop/blob/v0.2.3/docs/Install.md).
+- npm registry: not published in this cut unless `npm whoami` works. Install from GitHub or the Release tarball. See [Install.md](./Install.md).
 
-Progress and the path to 0.3: live [README on `main`](https://github.com/jhfnetboy/DevLoop/blob/main/README.md) (not pinned to this tag, so the table can move as slices land).
+Progress and the path to 0.3: live [README on `main`](https://github.com/jhfnetboy/DevLoop/blob/main/README.md).

@@ -48,7 +48,7 @@ describe('0.1 full pipeline flow', () => {
     expect(beat.state.usage.reviewCycles['AUTH-001']).toBe(1)
     await saveState(root, beat.state)
 
-    beat = runTick(setStatus(beat.state, 'AUTH-001', 'merge_ready'), limits, 60)
+    beat = runTick(setStatus(beat.state, 'AUTH-001', 'merge_ready', { lastReviewVerdict: 'PASS' }), limits, 60)
     expect(beat.action).toEqual({ type: 'merge', taskId: 'AUTH-001' })
     await saveState(root, beat.state)
 
@@ -100,7 +100,7 @@ describe('0.1 full pipeline flow', () => {
       ...emptyState(0),
       tasks: [
         makeTask({ id: 'p', status: 'ready' }),
-        makeTask({ id: 'm', status: 'merge_ready' }),
+        makeTask({ id: 'm', status: 'merge_ready', lastReviewVerdict: 'PASS' }),
         makeTask({ id: 'r', status: 'review_pending' }),
       ],
     }

@@ -74,6 +74,77 @@ export async function prepareDelegateWorktree(root: string, contract: TaskContra
   return dest
 }
 
+/**
+ * Merge `devloop/<taskId>` into the workspace HEAD, then remove the worktree
+ * and delete the task branch. Caller must already have enforced Review PASS.
+ * Does not push. Throws without mutating STATE; the next tick may retry.
+ * Idempotent if a previous attempt already merged and removed the worktree.
+ */
+export async function mergeTaskWorktree(root: string, taskId: string): Promise<void> {
+  const token = worktreeTaskToken(taskId)
+  if (!token) throw new Error(`unsafe task id for worktree: ${taskId}`)
+
+  const resolvedRoot = await realpath(root)
+  const toplevel = (await git(resolvedRoot, ['rev-parse', '--show-toplevel'])).trim()
+  if (await realpath(toplevel) !== resolvedRoot) {
+    throw new Error('workspace root must be the git toplevel')
+  }
+
+  if (await mergeHeadExists(resolvedRoot)) {
+    throw new Error('refusing to merge while a merge is already in progress')
+  }
+
+  const headRef = await symbolicHead(resolvedRoot)
+  if (!headRef) {
+    throw new Error('refusing to merge onto a detached HEAD')
+  }
+
+  const branch = `${WORKTREE_BRANCH_PREFIX}${token}`
+  if (headRef === `refs/heads/${branch}`) {
+    throw new Error('refusing to merge a task branch into itself')
+  }
+
+  const dest = worktreePath(resolvedRoot, token)
+  const listed = await listedWorktreePaths(resolvedRoot)
+  const present = await pathExists(dest) && await isRegisteredWorktree(listed, dest)
+  if (present) {
+    if (await symbolicHead(dest) !== `refs/heads/${branch}`) {
+      throw new Error(`worktree branch must be ${branch}`)
+    }
+    const dirty = (await git(dest, ['status', '--porcelain', '--untracked-files=all'])).trim()
+    if (dirty.length > 0) {
+      throw new Error('task worktree is dirty; commit or clean it before merge')
+    }
+  } else if (!await gitOk(resolvedRoot, ['rev-parse', '--verify', `refs/heads/${branch}`])) {
+    throw new Error('merge requires a registered task worktree')
+  }
+
+  try {
+    await git(resolvedRoot, ['merge', '--no-edit', '-m', `devloop: merge ${token}`, branch])
+  } catch (error) {
+    if (await mergeHeadExists(resolvedRoot)) {
+      try {
+        await git(resolvedRoot, ['merge', '--abort'])
+      } catch {
+        // Report the original merge failure even if abort itself fails.
+      }
+    }
+    const stderr = error instanceof Error && 'stderr' in error
+      ? String((error as { stderr?: string }).stderr).trim()
+      : ''
+    throw new Error(stderr.length > 0 ? `git merge failed: ${stderr}` : 'git merge failed', { cause: error })
+  }
+
+  if (present) {
+    try {
+      await git(resolvedRoot, ['worktree', 'remove', dest])
+    } catch (error) {
+      if (await pathExists(dest)) throw error
+    }
+  }
+  await deleteTaskBranch(resolvedRoot, branch)
+}
+
 async function writeContractFile(worktreeRoot: string, contract: TaskContract): Promise<void> {
   const dir = await ensureRealDir(join(worktreeRoot, DEVLOOP_DIR), worktreeRoot)
   const file = join(dir, CONTRACT_FILE)
@@ -155,6 +226,27 @@ async function ensureWorktreeBranch(dest: string, branch: string): Promise<void>
   }
   if (await symbolicHead(dest) !== expected) {
     throw new Error(`worktree branch must be ${branch}`)
+  }
+}
+
+async function mergeHeadExists(root: string): Promise<boolean> {
+  return gitOk(root, ['rev-parse', '-q', '--verify', 'MERGE_HEAD'])
+}
+
+async function deleteTaskBranch(root: string, branch: string): Promise<void> {
+  try {
+    await git(root, ['branch', '-d', branch])
+  } catch {
+    // Branch may already be gone after a previous partial success.
+  }
+}
+
+async function gitOk(root: string, args: readonly string[]): Promise<boolean> {
+  try {
+    await git(root, args)
+    return true
+  } catch {
+    return false
   }
 }
 

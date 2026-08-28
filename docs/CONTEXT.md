@@ -37,7 +37,7 @@
 ### Tick / 节拍
 **定义**：Loop 的一次执行：读状态 → 决定动作 → 写回 STATE →（0.2.1 对 plan/delegate/review 在 LOCK 外调用 AgentBackend）→ 结束。
 **区别于**：一次完整的 plan→merge 流水线。
-**代码中的体现**：`DevloopService.tick` 写完 STATE 后，对 plan / delegate / review 调用 `AgentBackend.run`（默认 NoopBackend；`agentBackend: 'dsh'` 时为 `dsh --profile headless`）
+**代码中的体现**：`DevloopService.tick` 写完 STATE 后，对 plan / delegate / review 调用 `AgentBackend.run`（默认 NoopBackend；`agentBackend: 'dsh'` 时为 `dsh --profile headless`）。`merge` 在 LOCK 内做机械 git merge，不经过 backend。
 
 ### Worker / 工人
 **定义**：执行 Task Contract 的廉价 Agent（默认 DSH + DeepSeek）。
@@ -62,7 +62,7 @@
 
 ### Worktree / 工作树
 **定义**：一个 Task 的隔离 git checkout。Worker 只在这里写。
-**区别于**：主工作区。0.2.2 在 `.devloop/worktrees/<taskId>` 创建隔离 checkout，并写入 `.devloop/CONTRACT.json`。
+**区别于**：主工作区。0.2.2 在 `.devloop/worktrees/<taskId>` 创建隔离 checkout，并写入 `.devloop/CONTRACT.json`。0.2.4 在 Review PASS 之后把 `devloop/<taskId>` 合进工作区 HEAD，然后删除该 worktree。
 
 ### Winner / 参考实现
 **定义**：社区插件 `dsh-devflow`，作为「已经跑通 DSH 插件层流水线」的参考。

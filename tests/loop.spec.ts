@@ -70,7 +70,7 @@ describe('decideNextAction', () => {
     expect(decideNextAction(state({
       tasks: [
         task({ id: 'ready-1', status: 'ready' }),
-        task({ id: 'm-1', status: 'merge_ready' }),
+        task({ id: 'm-1', status: 'merge_ready', lastReviewVerdict: 'PASS' }),
       ],
     }))).toEqual({ type: 'merge', taskId: 'm-1' })
   })
@@ -160,9 +160,35 @@ describe('decideNextAction', () => {
     })
   })
 
+  it('escalates merge_ready without Review PASS', () => {
+    expect(decideNextAction(state({
+      tasks: [task({ id: 'm-1', status: 'merge_ready' })],
+    }))).toEqual({
+      type: 'escalate',
+      taskId: 'm-1',
+      reason: 'no_review_pass',
+    })
+  })
+
+  it('escalates merge_ready with REWORK', () => {
+    expect(decideNextAction(state({
+      tasks: [task({ id: 'm-1', status: 'merge_ready', lastReviewVerdict: 'REWORK' })],
+    }))).toEqual({
+      type: 'escalate',
+      taskId: 'm-1',
+      reason: 'no_review_pass',
+    })
+  })
+
+  it('merges PASS_WITH_NOTES', () => {
+    expect(decideNextAction(state({
+      tasks: [task({ id: 'm-1', status: 'merge_ready', lastReviewVerdict: 'PASS_WITH_NOTES' })],
+    }))).toEqual({ type: 'merge', taskId: 'm-1' })
+  })
+
   it('escalates high-risk merge_ready before merge', () => {
     expect(decideNextAction(state({
-      tasks: [task({ id: 't-h', status: 'merge_ready', risk: 'high' })],
+      tasks: [task({ id: 't-h', status: 'merge_ready', risk: 'high', lastReviewVerdict: 'PASS' })],
     }))).toEqual({
       type: 'escalate',
       taskId: 't-h',

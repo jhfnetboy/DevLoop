@@ -13,8 +13,9 @@ export interface TickResult {
  * One deterministic beat: decide, apply budget, persist-ready next state.
  * 0.1 records the action only; it does not spawn workers.
  *
- * Repeating the same work action is latched (no rewrite) until budget
- * treats the wait as idle and may halt for no-progress.
+ * Repeating plan/delegate/review/escalate is latched (no rewrite) until
+ * budget treats the wait as idle and may halt for no-progress. Merge is
+ * not latched: git happens after runTick, and a failed merge must retry.
  */
 export function runTick(state: LoopState, limits: BudgetLimits, now: number): TickResult {
   if (state.killSwitch || state.lastAction.type === 'stop') {
@@ -79,7 +80,7 @@ function persistAction(
 }
 
 function isWorkAction(action: LoopAction): boolean {
-  return action.type !== 'idle' && action.type !== 'stop'
+  return action.type !== 'idle' && action.type !== 'stop' && action.type !== 'merge'
 }
 
 function dispatchStatus(state: LoopState, action: LoopAction): string | null {

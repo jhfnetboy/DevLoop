@@ -12,7 +12,12 @@ const first = (tasks: readonly Task[], status: Task['status']): Task | undefined
 
 /**
  * Pure outer-loop policy. Must never call an LLM.
+ * Merge requires merge_ready plus Review PASS / PASS_WITH_NOTES (NO PASS = NO MERGE).
  */
+export function reviewAllowsMerge(task: Task): boolean {
+  return task.lastReviewVerdict === 'PASS' || task.lastReviewVerdict === 'PASS_WITH_NOTES'
+}
+
 export function decideNextAction(state: LoopState): LoopAction {
   if (state.killSwitch) {
     return { type: 'stop', reason: 'kill_switch' }
@@ -52,6 +57,9 @@ export function decideNextAction(state: LoopState): LoopAction {
 
   const mergeReady = first(state.tasks, 'merge_ready')
   if (mergeReady) {
+    if (!reviewAllowsMerge(mergeReady)) {
+      return { type: 'escalate', taskId: mergeReady.id, reason: 'no_review_pass' }
+    }
     return { type: 'merge', taskId: mergeReady.id }
   }
 

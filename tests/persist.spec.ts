@@ -236,14 +236,30 @@ describe('persist and tick', () => {
     expect(loaded.supervisor?.reason).toBe('invalid_state')
   })
 
-  it('round-trips STATE.json', async () => {
+  it('round-trips STATE.json including lastReviewVerdict', async () => {
     const root = await mkdtemp(join(tmpdir(), 'devloop-'))
     await mkdir(join(root, '.devloop'))
-    const state = emptyState(1)
+    const state = {
+      ...emptyState(1),
+      tasks: [{ ...sampleTask('merge_ready'), lastReviewVerdict: 'PASS' as const }],
+    }
     await saveState(root, state)
     const loaded = await loadState(root, 2)
     expect(loaded.version).toBe(1)
     expect(loaded.lastAction).toEqual({ type: 'idle' })
+    expect(loaded.tasks[0]?.lastReviewVerdict).toBe('PASS')
+  })
+
+  it('halts when lastReviewVerdict is not a known verdict', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'devloop-'))
+    await mkdir(join(root, '.devloop'))
+    await writeFile(join(root, '.devloop', 'STATE.json'), JSON.stringify({
+      ...emptyState(0),
+      tasks: [{ ...sampleTask('merge_ready'), lastReviewVerdict: 'SHIP_IT' }],
+    }), 'utf8')
+    const loaded = await loadState(root, 1)
+    expect(loaded.killSwitch).toBe(true)
+    expect(loaded.supervisor?.reason).toBe('invalid_state')
   })
 
   it('records plan when the armed workspace has no tasks', () => {
@@ -251,6 +267,18 @@ describe('persist and tick', () => {
     expect(result.action).toEqual({ type: 'plan' })
     expect(result.state.lastAction).toEqual({ type: 'plan' })
     expect(result.skipped).toBe(false)
+  })
+
+  it('does not latch merge so a failed git merge can retry', () => {
+    const limits = resolveConfig({}).budget
+    const first = runTick({
+      ...emptyState(0),
+      tasks: [{ ...sampleTask('merge_ready'), lastReviewVerdict: 'PASS' }],
+    }, limits, 10)
+    expect(first.action).toEqual({ type: 'merge', taskId: 't-1' })
+    const second = runTick(first.state, limits, 20)
+    expect(second.skipped).toBe(false)
+    expect(second.action).toEqual({ type: 'merge', taskId: 't-1' })
   })
 
   it('latches a repeated plan instead of rewriting state', () => {

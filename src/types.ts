@@ -29,6 +29,7 @@ export interface Task {
   readonly reviewCycles: number
   readonly allowedPaths: readonly string[]
   readonly acceptance: readonly string[]
+  readonly lastReviewVerdict?: ReviewVerdict
 }
 
 export interface SupervisorHold {

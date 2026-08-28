@@ -70,4 +70,4 @@ If `npm whoami` fails, do not invent a token. GitHub Release + `github:` spec is
 
 - Force-push tags
 - Publish from a dirty working tree
-- Treat Plan 0.2.4 / 0.2.5 as shipped because this tag exists
+- Treat Plan 0.2.5 / 0.3 as shipped because this tag exists

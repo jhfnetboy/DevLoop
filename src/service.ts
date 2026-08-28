@@ -4,6 +4,7 @@ import { Service, type Context } from '@deepseek-ai/cordis'
 import {
   NoopBackend,
   dispatchTick,
+  isAgentAction,
   runInputFor,
   type AgentBackend,
 } from './backend.js'
@@ -11,7 +12,8 @@ import { ConfigSchema, resolveConfig, type Config } from './config.js'
 import { DshHeadlessBackend } from './dsh.js'
 import { loadState, saveState, withStateLock, workspaceArmed } from './persist.js'
 import { runTick, type TickResult } from './tick.js'
-import { prepareDelegateWorktree, worktreePath } from './worktree.js'
+import type { LoopState } from './types.js'
+import { prepareDelegateWorktree, mergeTaskWorktree, worktreePath } from './worktree.js'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -23,7 +25,9 @@ declare module '@deepseek-ai/cordis' {
  * Host service: a process-local timer drives one deterministic tick against
  * `<root>/.devloop/`. After STATE is written, plan/delegate/review is handed to
  * `AgentBackend` outside the lock. Delegate also creates a git worktree and
- * writes CONTRACT.json. Set `agentBackend: 'dsh'` to spawn one-shot headless.
+ * writes CONTRACT.json. Merge (0.2.4) git-merges the task branch after
+ * Review PASS, then deletes the worktree. Set `agentBackend: 'dsh'` to spawn
+ * one-shot headless.
  */
 export default class DevloopService extends Service {
   static inject = []
@@ -89,7 +93,7 @@ export default class DevloopService extends Service {
           this.stop()
           return
         }
-        const result = runTick(current, this.config.budget, now)
+        let result = runTick(current, this.config.budget, now)
         if (this.disposed) return
         let worktreeRoot: string | null = null
         if (!result.skipped && result.action.type === 'delegate') {
@@ -104,6 +108,17 @@ export default class DevloopService extends Service {
           }
         } else if (!result.skipped && result.action.type === 'review') {
           worktreeRoot = await existingWorktreeRoot(this.config.root, result.action.taskId)
+        } else if (!result.skipped && result.action.type === 'merge') {
+          try {
+            await mergeTaskWorktree(this.config.root, result.action.taskId)
+            result = {
+              ...result,
+              state: markTaskDone(result.state, result.action.taskId),
+            }
+          } catch (error) {
+            this.ctx.logger.error('[dsh-devloop] merge failed', error)
+            return
+          }
         }
         if (!result.skipped) {
           await saveState(this.config.root, result.state)
@@ -119,7 +134,7 @@ export default class DevloopService extends Service {
         return
       }
       if (this.disposed) return
-      if (outcome.value && !outcome.value.result.skipped) {
+      if (outcome.value && !outcome.value.result.skipped && isAgentAction(outcome.value.result.action)) {
         const abort = new AbortController()
         this.dispatchAbort = abort
         const timeoutMs = this.config.budget.taskTimeoutMinutes * 60_000
@@ -181,6 +196,13 @@ function raceAbort<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
       },
     )
   })
+}
+
+function markTaskDone(state: LoopState, taskId: string): LoopState {
+  return {
+    ...state,
+    tasks: state.tasks.map(task => task.id === taskId ? { ...task, status: 'done' } : task),
+  }
 }
 
 async function existingWorktreeRoot(root: string, taskId: string): Promise<string | null> {

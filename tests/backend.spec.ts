@@ -96,7 +96,7 @@ describe('dispatchTick', () => {
       backend,
       '/repo',
       { type: 'merge', taskId: 'm1' },
-      baseState({ tasks: [makeTask({ id: 'm1', status: 'merge_ready' })] }),
+      baseState({ tasks: [makeTask({ id: 'm1', status: 'merge_ready', lastReviewVerdict: 'PASS' })] }),
       limits,
       log,
     )
