@@ -9,10 +9,9 @@ const PLAN_TIMEOUT_MS = 45 * 60_000
 
 /**
  * Prefix match (https://code.claude.com/docs/en/headless): a space before *
- * matches that command plus args. `Bash(git status *)` would miss bare
- * `git status`; `Bash(git *)` matches `git status` and `git commit -m`.
+ * matches that command plus args. Git stays with the host commit path.
  */
-export const CLAUDE_DELEGATE_TOOLS = ['Bash(git *)', 'Bash(pnpm *)'].join(',')
+export const CLAUDE_DELEGATE_TOOLS = 'Bash(pnpm *)'
 
 function runTimeoutMs(input: AgentRunInput): number {
   return input.contract ? input.contract.budget.maxMinutes * 60_000 : PLAN_TIMEOUT_MS
@@ -23,7 +22,7 @@ function claudeArgv(input: AgentRunInput): string[] {
   if (input.action.type !== 'delegate') {
     return ['-p', '--permission-mode', mode, cliPrompt(input)]
   }
-  return ['-p', '--permission-mode', mode, '--allowedTools', CLAUDE_DELEGATE_TOOLS, cliPrompt(input)]
+  return ['-p', '--permission-mode', mode, '--allowedTools', CLAUDE_DELEGATE_TOOLS, '--', cliPrompt(input)]
 }
 
 async function resolveLinkedGitDir(input: AgentRunInput): Promise<string | null> {
@@ -56,7 +55,7 @@ async function codexArgv(input: AgentRunInput): Promise<string[]> {
 function cliPrompt(input: AgentRunInput): string {
   const base = headlessPrompt(input)
   if (input.action.type === 'delegate') {
-    return `${base}\nCommit validated changes on this task branch before exiting. Do not leave a dirty worktree.`
+    return `${base}\nEdit files in this worktree only. Do not run git. The host commits the task branch.`
   }
   if (input.action.type === 'review') {
     return `${base}\nDo not edit files. Verdict only.`

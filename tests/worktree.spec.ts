@@ -146,7 +146,7 @@ describe('prepareDelegateWorktree', () => {
     const root = await gitWorkspace()
     const dest = await prepareDelegateWorktree(root, contractFor('d1'))
     await writeFile(join(dest, 'src.txt'), 'worker\n', 'utf8')
-    await commitDirtyTaskWorktree(dest)
+    await commitDirtyTaskWorktree(dest, 'd1')
     const { stdout } = await execFileAsync('git', ['-C', dest, 'show', '--name-only', '--pretty=format:', 'HEAD'], { encoding: 'utf8' })
     expect(stdout).toContain('src.txt')
     expect(stdout).not.toContain('CONTRACT.json')
@@ -164,9 +164,17 @@ describe('prepareDelegateWorktree', () => {
     await chmod(hook, 0o755)
     await execFileAsync('git', ['-C', dest, 'config', 'core.hooksPath', '.delegate-hooks'])
     await writeFile(join(dest, 'src.txt'), 'worker\n', 'utf8')
-    await commitDirtyTaskWorktree(dest)
+    await commitDirtyTaskWorktree(dest, 'd1')
     const { stdout: log } = await execFileAsync('git', ['-C', dest, 'log', '-1', '--pretty=%s'], { encoding: 'utf8' })
     expect(log.trim()).toBe('devloop: delegate')
+  })
+
+  it('refuses a host commit when HEAD is not the task branch', async () => {
+    const root = await gitWorkspace()
+    const dest = await prepareDelegateWorktree(root, contractFor('d1'))
+    await execFileAsync('git', ['-C', dest, 'symbolic-ref', 'HEAD', 'refs/heads/main'])
+    await writeFile(join(dest, 'src.txt'), 'worker\n', 'utf8')
+    await expect(commitDirtyTaskWorktree(dest, 'd1')).rejects.toThrow(/HEAD is not refs\/heads\/devloop\/d1/)
   })
 
   it('reattaches a detached worktree HEAD onto the task branch', async () => {

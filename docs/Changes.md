@@ -192,7 +192,7 @@ Unattended loop: continuous tick, one-shot auto-pump, PROGRESS.md, optional cost
 - 一拍最多一个 dispatch（`busy`）；下一拍等上一拍结束。每个 dispatch 仍是新的 one-shot AbortController
 - `AgentRunResult.tokens` / `costUsd` 可选；有有限正数才折进 usage。进程启动清零 `costUsdSession`（成功写入 STATE 之后才记一次，unreadable STATE 不烧掉这次机会）；UTC 日期变了清零 `costUsdDay`
 - 折费用时若 STATE 已 killSwitch / supervisor，不覆盖任务列表
-- T3 follow-up after Codex RC on #12 / #13: Claude `--allowedTools Bash(git *)` / `Bash(pnpm *)`; Codex `--add-dir` from the worktree `.git` gitdir file; host commit uses `core.hooksPath` disabled; empty plan/review stdout unlinks stale notes; cost signals retry then defer if LOCK is held; skipped ticks persist UTC daily cost rollover
+- T3 follow-up after Codex RC on #12 / #13: Claude `--allowedTools Bash(pnpm *)` with `--` before the prompt (no git in the sandbox); Codex `--add-dir` from the worktree `.git` gitdir file; host commit verifies `devloop/<taskId>` and registered worktree, hooks disabled; empty plan/review stdout unlinks stale notes; cost signals retry/defer and stay pending until STATE write succeeds; skipped ticks persist UTC daily cost rollover
 - Loop 纯函数未改
 
 ### 可能影响

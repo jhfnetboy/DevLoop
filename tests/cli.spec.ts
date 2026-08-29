@@ -81,10 +81,11 @@ describe('ClaudeCliBackend', () => {
       'acceptEdits',
       '--allowedTools',
       CLAUDE_DELEGATE_TOOLS,
+      '--',
       expect.stringContaining('Execute task d1'),
     ])
-    expect(calls[0]?.argv.at(-1)).toContain('Commit validated changes')
-    expect(CLAUDE_DELEGATE_TOOLS).toBe('Bash(git *),Bash(pnpm *)')
+    expect(calls[0]?.argv.at(-1)).toContain('Do not run git')
+    expect(CLAUDE_DELEGATE_TOOLS).toBe('Bash(pnpm *)')
   })
 
   it('uses permission-mode plan for plan ticks', async () => {
@@ -243,7 +244,7 @@ describe('CodexCliBackend', () => {
       '/repo/.git/worktrees/d1',
       expect.stringContaining('Execute task d1'),
     ])
-    expect(calls[0]?.argv.at(-1)).toContain('Commit validated changes')
+    expect(calls[0]?.argv.at(-1)).toContain('Do not run git')
   })
 
   it('adds the gitdir from a linked worktree .git file', async () => {

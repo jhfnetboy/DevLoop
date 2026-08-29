@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { copyFile, lstat, mkdir, readFile, realpath, unlink, writeFile } from 'node:fs/promises'
-import { basename, join, sep } from 'node:path'
+import { basename, dirname, join, sep } from 'node:path'
 import { promisify } from 'node:util'
 import { DEVLOOP_DIR, devloopDir } from './persist.js'
 import type { TaskContract } from './types.js'
@@ -273,7 +273,19 @@ async function stampBaseSha(worktreeRoot: string, contract: TaskContract): Promi
  * Host-side commit after a T3 delegate. The sandbox must not write hooks,
  * objects, or `refs/heads/main`; git metadata updates stay in this process.
  */
-export async function commitDirtyTaskWorktree(worktreeRoot: string): Promise<void> {
+export async function commitDirtyTaskWorktree(worktreeRoot: string, taskId: string): Promise<void> {
+  const token = worktreeTaskToken(taskId)
+  if (!token) throw new Error(`unsafe task id for worktree: ${taskId}`)
+  const expected = `refs/heads/${WORKTREE_BRANCH_PREFIX}${token}`
+  if (await symbolicHead(worktreeRoot) !== expected) {
+    throw new Error(`refusing parent commit: worktree HEAD is not ${expected}`)
+  }
+  const dest = await realpath(worktreeRoot)
+  const common = (await git(worktreeRoot, ['rev-parse', '--path-format=absolute', '--git-common-dir'])).trim().replace(/\/+$/, '')
+  const listed = await listedWorktreePaths(dirname(common))
+  if (!await isRegisteredWorktree(listed, dest)) {
+    throw new Error('refusing parent commit: worktree is not registered')
+  }
   const status = (await git(worktreeRoot, ['status', '--porcelain'])).trim()
   if (status.length === 0) return
   await git(worktreeRoot, ['add', '-A'])

@@ -98,7 +98,6 @@ export default class DevloopService extends Service {
             ...current,
             usage: applyRunSignals(current.usage, this.pendingSignals.taskId, now, this.pendingSignals),
           }
-          this.pendingSignals = null
           pendingApplied = true
         }
         if (!this.sessionCostReset && !current.killSwitch && current.usage.costUsdSession !== 0) {
@@ -174,6 +173,7 @@ export default class DevloopService extends Service {
         if (!result.skipped) {
           try {
             await saveState(this.config.root, result.state)
+            if (pendingApplied) this.pendingSignals = null
             this.sessionCostReset = true
             this.ctx.logger.info(`[dsh-devloop] tick action=${result.action.type}`)
           } catch (error) {
@@ -189,6 +189,7 @@ export default class DevloopService extends Service {
           }
         } else if (sessionRolled) {
           await saveState(this.config.root, result.state)
+          if (pendingApplied) this.pendingSignals = null
           this.sessionCostReset = true
         } else {
           const rolled = rollCostWindows(result.state.usage, now)
@@ -199,6 +200,7 @@ export default class DevloopService extends Service {
               state: { ...result.state, usage: pendingApplied ? rollCostWindows(result.state.usage, now) : rolled },
             }
             await saveState(this.config.root, result.state)
+            if (pendingApplied) this.pendingSignals = null
           }
           this.sessionCostReset = true
         }
@@ -256,7 +258,7 @@ export default class DevloopService extends Service {
               && outcome.value.worktreeRoot
             ) {
               try {
-                await commitDirtyTaskWorktree(outcome.value.worktreeRoot)
+                await commitDirtyTaskWorktree(outcome.value.worktreeRoot, action.taskId)
               } catch (error) {
                 this.ctx.logger.error('[dsh-devloop] parent commit failed', error)
               }
