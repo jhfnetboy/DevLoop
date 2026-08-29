@@ -151,10 +151,7 @@ function killProcessTree(child: ChildProcess, signal: NodeJS.Signals): void {
   const pid = child.pid
   if (pid === undefined) return
   if (process.platform === 'win32') {
-    spawn('taskkill', ['/pid', String(pid), '/T', '/F'], {
-      windowsHide: true,
-      stdio: 'ignore',
-    })
+    spawnFireAndForget('taskkill', ['/pid', String(pid), '/T', '/F'])
     return
   }
   try {
@@ -166,4 +163,12 @@ function killProcessTree(child: ChildProcess, signal: NodeJS.Signals): void {
       // already gone
     }
   }
+}
+
+/**
+ * Windows tree-kill must not take down the host if `taskkill` is missing.
+ * `spawn` ENOENT is async; try/catch does not catch it.
+ */
+export function spawnFireAndForget(command: string, argv: readonly string[]): void {
+  spawn(command, [...argv], { stdio: 'ignore', windowsHide: true }).on('error', () => {})
 }

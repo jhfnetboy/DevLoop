@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { defaultRunner, quoteForWinCmd } from '../src/spawn.ts'
+import { defaultRunner, quoteForWinCmd, spawnFireAndForget } from '../src/spawn.ts'
 
 describe('quoteForWinCmd', () => {
   it('doubles quotes and always wraps so cmd metacharacters stay inside one token', () => {
@@ -11,6 +11,23 @@ describe('quoteForWinCmd', () => {
     expect(quoteForWinCmd('a"b&calc')).toBe('"a""b&calc"')
     expect(quoteForWinCmd('100%')).toBe('"100%%"')
     expect(quoteForWinCmd('a"b&calc')).not.toContain('\\"')
+  })
+})
+
+describe('spawnFireAndForget', () => {
+  it('does not raise uncaughtException when the binary is missing', async () => {
+    const uncaught: unknown[] = []
+    const onUncaught = (error: unknown) => {
+      uncaught.push(error)
+    }
+    process.on('uncaughtException', onUncaught)
+    try {
+      spawnFireAndForget('devloop-no-such-taskkill-bin', ['/pid', '1'])
+      await new Promise(resolve => setTimeout(resolve, 80))
+      expect(uncaught).toEqual([])
+    } finally {
+      process.off('uncaughtException', onUncaught)
+    }
   })
 })
 
