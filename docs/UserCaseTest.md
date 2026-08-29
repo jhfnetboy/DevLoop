@@ -1,4 +1,4 @@
-# User-case tests (0.1–0.2.4)
+# User-case tests (0.1–0.2.5)
 
 Default `agentBackend: noop` does not spawn workers. These cases map product flows to automated specs. Manual checks after install are listed at the end.
 
@@ -16,11 +16,12 @@ Default `agentBackend: noop` does not spawn workers. These cases map product flo
 | UC-10 | Install | Package is a DSH bundle plugin | Plan 0.1.2 in `tests/one-to-one.spec.ts` |
 | UC-11 | Operator | Opt-in `agentBackend: dsh` spawns one-shot headless; default stays Noop | Plan 0.2.3 in `tests/dsh.spec.ts`, `tests/one-to-one.spec.ts` |
 | UC-12 | Loop | `merge_ready` without PASS escalates; git conflict aborts and retries | Plan 0.2.4 in `tests/loop.spec.ts`, `tests/worktree.spec.ts` |
+| UC-13 | Operator | Opt-in `agentBackend: claude` / `codex` spawn that CLI; default stays Noop, never RecordingBackend | Plan 0.2.5 in `tests/cli.spec.ts`, `tests/one-to-one.spec.ts` |
 
 ## Manual after GitHub publish
 
 1. `pnpm install && pnpm test && pnpm build`
-2. After GitHub Release `v0.2.3` exists, install as in [`Install.md`](./Install.md) (`'github:jhfnetboy/DevLoop#v0.2.3'` — quote it on zsh — or the Release tarball). Until then, `github:jhfnetboy/DevLoop` tracks `main`.
+2. After GitHub Release `v0.2.5` exists, install as in [`Install.md`](./Install.md) (`'github:jhfnetboy/DevLoop#v0.2.5'` — quote it on zsh — or the Release tarball). Until then, `github:jhfnetboy/DevLoop` tracks `main` (or this PR branch). `v0.2.3` does not accept `agentBackend: claude` / `codex`.
 3. Confirm an unarmed repo stays idle
 4. Copy the bundled `templates/GOAL.md` (from `node_modules/dsh-devloop` after install, or this checkout) to `<repo>/.devloop/GOAL.md` and confirm the host logs a `plan` tick
-5. Default `agentBackend` must not spawn `dsh`; `agentBackend: dsh` may spawn one-shot headless
+5. Default `agentBackend` must not spawn `dsh` / `claude` / `codex`; opt-in values may spawn that CLI

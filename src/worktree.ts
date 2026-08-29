@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
-import { lstat, mkdir, readFile, realpath, writeFile } from 'node:fs/promises'
-import { join, sep } from 'node:path'
+import { copyFile, lstat, mkdir, readFile, realpath, unlink, writeFile } from 'node:fs/promises'
+import { basename, join, sep } from 'node:path'
 import { promisify } from 'node:util'
 import { DEVLOOP_DIR, devloopDir } from './persist.js'
 import type { TaskContract } from './types.js'
@@ -10,19 +10,31 @@ const execFileAsync = promisify(execFile)
 export const WORKTREES_DIR = 'worktrees'
 export const CONTRACT_FILE = 'CONTRACT.json'
 export const WORKTREE_BRANCH_PREFIX = 'devloop/'
+/** Reserved worktree id for T3 `plan`. Leading `_` is outside TASK_TOKEN. */
+export const PLAN_WORKTREE_ID = '_loop-plan'
 
 const TASK_TOKEN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
 
 export function worktreeTaskToken(taskId: string): string | null {
   if (!TASK_TOKEN.test(taskId)) return null
   if (taskId.includes('..') || taskId.endsWith('.') || taskId.endsWith('.lock')) return null
+  if (taskId === PLAN_WORKTREE_ID) return null
   return taskId
+}
+
+function worktreeDir(root: string, token: string): string {
+  return join(devloopDir(root), WORKTREES_DIR, token)
 }
 
 export function worktreePath(root: string, taskId: string): string {
   const token = worktreeTaskToken(taskId)
   if (!token) throw new Error(`unsafe task id for worktree: ${taskId}`)
-  return join(devloopDir(root), WORKTREES_DIR, token)
+  return worktreeDir(root, token)
+}
+
+/** Path of the reserved T3 plan worktree. Not a valid user task id. */
+export function planWorktreePath(root: string): string {
+  return worktreeDir(root, PLAN_WORKTREE_ID)
 }
 
 export function contractPath(root: string, taskId: string): string {
@@ -36,7 +48,10 @@ export function contractPath(root: string, taskId: string): string {
 export async function prepareDelegateWorktree(root: string, contract: TaskContract): Promise<string> {
   const token = worktreeTaskToken(contract.taskId)
   if (!token) throw new Error(`unsafe task id for worktree: ${contract.taskId}`)
+  return checkoutWorktree(root, token, contract)
+}
 
+async function ensureWorktreePool(root: string): Promise<{ resolvedRoot: string, pool: string }> {
   const resolvedRoot = await realpath(root)
   const toplevel = (await git(resolvedRoot, ['rev-parse', '--show-toplevel'])).trim()
   if (await realpath(toplevel) !== resolvedRoot) {
@@ -53,9 +68,13 @@ export async function prepareDelegateWorktree(root: string, contract: TaskContra
   }
 
   const pool = await ensureRealDir(join(loopDir, WORKTREES_DIR), loopDir)
-  const dest = join(pool, token)
   await ignoreWorktrees(pool)
+  return { resolvedRoot, pool }
+}
 
+async function checkoutWorktree(root: string, token: string, contract: TaskContract): Promise<string> {
+  const { resolvedRoot, pool } = await ensureWorktreePool(root)
+  const dest = join(pool, token)
   const listed = await listedWorktreePaths(resolvedRoot)
   const branch = `${WORKTREE_BRANCH_PREFIX}${token}`
   if (await pathExists(dest)) {
@@ -72,6 +91,64 @@ export async function prepareDelegateWorktree(root: string, contract: TaskContra
   await assertInside(pool, dest)
   await writeContractFile(dest, await stampBaseSha(dest, contract))
   return dest
+}
+
+/**
+ * Isolated detached worktree so T3 plan does not run in the operator workspace
+ * and does not create or reset `devloop/_loop-plan`. Always reset to workspace
+ * HEAD. Copies GOAL.md because `.devloop/` is typically untracked.
+ * Caller should `removePlanWorktree` after the one-shot run.
+ */
+export async function preparePlanWorktree(root: string): Promise<string> {
+  try {
+    const { resolvedRoot, pool } = await ensureWorktreePool(root)
+    const dest = join(pool, PLAN_WORKTREE_ID)
+    const listed = await listedWorktreePaths(resolvedRoot)
+    if (await pathExists(dest)) {
+      await assertReusablePlanWorktree(listed, dest, pool)
+    } else {
+      await git(resolvedRoot, ['worktree', 'add', '--detach', dest])
+      await assertInside(pool, dest)
+    }
+    await git(dest, ['checkout', '--detach', '-f'])
+    const head = (await git(resolvedRoot, ['rev-parse', 'HEAD'])).trim()
+    await git(dest, ['reset', '--hard', head])
+    const srcGoal = join(resolvedRoot, DEVLOOP_DIR, 'GOAL.md')
+    const destLoop = await ensureRealDir(join(dest, DEVLOOP_DIR), dest)
+    await copyWorkspaceGoal(srcGoal, destLoop)
+    return dest
+  } catch (error) {
+    try {
+      await removePlanWorktree(root)
+    } catch {
+      // surface the original failure
+    }
+    throw error
+  }
+}
+
+/** Force-remove the reserved plan worktree. Does not delete any branch. Missing is success. */
+export async function removePlanWorktree(root: string): Promise<void> {
+  const resolvedRoot = await realpath(root)
+  const dest = planWorktreePath(resolvedRoot)
+  try {
+    const meta = await lstat(dest)
+    if (meta.isSymbolicLink()) {
+      await unlink(dest)
+      await git(resolvedRoot, ['worktree', 'prune'])
+      return
+    }
+  } catch (error) {
+    if (!isNotFound(error)) throw error
+  }
+  try {
+    await git(resolvedRoot, ['worktree', 'remove', '--force', dest])
+  } catch {
+    if (await pathExists(dest)) {
+      throw new Error(`failed to remove plan worktree: ${dest}`)
+    }
+    await git(resolvedRoot, ['worktree', 'prune'])
+  }
 }
 
 /**
@@ -209,6 +286,23 @@ function normalizeSha(value: string | null | undefined): string | null {
   return /^[0-9a-f]{40}$/i.test(value) ? value.toLowerCase() : null
 }
 
+async function copyWorkspaceGoal(srcGoal: string, destLoop: string): Promise<void> {
+  const destGoal = join(destLoop, 'GOAL.md')
+  const srcMeta = await lstat(srcGoal)
+  if (srcMeta.isSymbolicLink()) throw new Error('refusing symlink GOAL.md')
+  try {
+    const destMeta = await lstat(destGoal)
+    if (destMeta.isSymbolicLink()) {
+      await unlink(destGoal)
+    }
+  } catch (error) {
+    if (!isNotFound(error)) throw error
+  }
+  await copyFile(srcGoal, destGoal)
+  const written = await lstat(destGoal)
+  if (written.isSymbolicLink()) throw new Error('refusing symlink GOAL.md')
+}
+
 async function writeContractFile(worktreeRoot: string, contract: TaskContract): Promise<void> {
   const dir = await ensureRealDir(join(worktreeRoot, DEVLOOP_DIR), worktreeRoot)
   const file = join(dir, CONTRACT_FILE)
@@ -239,6 +333,29 @@ async function assertInside(parent: string, child: string): Promise<void> {
   if (resolvedChild !== resolvedParent && !resolvedChild.startsWith(resolvedParent + sep)) {
     throw new Error(`path escapes worktree pool: ${child}`)
   }
+}
+
+/** Reuse only a real directory registered as `_loop-plan`, not a symlink alias. */
+async function assertReusablePlanWorktree(listed: Set<string>, dest: string, pool: string): Promise<void> {
+  const meta = await lstat(dest)
+  if (meta.isSymbolicLink()) {
+    throw new Error('refusing symlink plan worktree')
+  }
+  if (!meta.isDirectory()) {
+    throw new Error('worktree destination exists but is not a git worktree')
+  }
+  await assertInside(pool, dest)
+  const resolvedDest = await realpath(dest)
+  for (const entry of listed) {
+    try {
+      if (await realpath(entry) !== resolvedDest) continue
+      if (basename(entry) !== PLAN_WORKTREE_ID) continue
+      return
+    } catch {
+      continue
+    }
+  }
+  throw new Error('worktree destination exists but is not a git worktree')
 }
 
 async function isRegisteredWorktree(listed: Set<string>, dest: string): Promise<boolean> {

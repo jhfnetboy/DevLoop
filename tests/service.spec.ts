@@ -5,14 +5,16 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { RecordingBackend } from '../src/backend.ts'
 import type { AgentBackend, AgentRunInput, AgentRunResult } from '../src/backend.ts'
+import { ClaudeCliBackend } from '../src/cli.ts'
+import type { HeadlessRun } from '../src/dsh.ts'
 import { resolveConfig } from '../src/config.ts'
 import { emptyState, loadState, saveState, withStateLock, workspaceArmed } from '../src/persist.ts'
 import { contractForTask } from '../src/router.ts'
 import DevloopService from '../src/service.ts'
-import { prepareDelegateWorktree, readContractBaseSha } from '../src/worktree.ts'
+import { planWorktreePath, prepareDelegateWorktree, readContractBaseSha, worktreePath } from '../src/worktree.ts'
 import { initGitRepo, makeTask, mkdtempInRepo } from './helpers.ts'
 
-async function waitForAction(root: string, type: string, timeoutMs = 2000): Promise<void> {
+async function waitForAction(root: string, type: string, timeoutMs = 10_000): Promise<void> {
   const start = Date.now()
   while (Date.now() - start < timeoutMs) {
     const state = await loadState(root, Date.now())
@@ -23,7 +25,7 @@ async function waitForAction(root: string, type: string, timeoutMs = 2000): Prom
   throw new Error(`timed out waiting for action ${type}, last=${last.lastAction.type}`)
 }
 
-async function waitForRuns(backend: RecordingBackend, n: number, timeoutMs = 2000): Promise<void> {
+async function waitForRuns(backend: RecordingBackend, n: number, timeoutMs = 10_000): Promise<void> {
   const start = Date.now()
   while (Date.now() - start < timeoutMs) {
     if (backend.runs.length >= n) return
@@ -251,7 +253,7 @@ describe('DevloopService', () => {
     expect(backend.runs).toHaveLength(0)
     await expect(readFile(join(root, 'src.txt'), 'utf8')).resolves.toBe('merged\n')
     await expect(execFileAsync('git', ['-C', root, 'rev-parse', '--verify', 'refs/heads/devloop/m1'])).rejects.toThrow()
-  })
+  }, 30_000)
 
   it('git-merges PASS work, deletes the worktree, and does not call AgentBackend', async () => {
     const root = await mkdtempInRepo('devloop-svc-merge-')
@@ -420,7 +422,7 @@ describe('DevloopService', () => {
     const { promisify } = await import('node:util')
     const execFileAsync = promisify(execFile)
     await execFileAsync('git', ['-C', root, 'rev-parse', '--verify', 'refs/heads/devloop/m1'])
-  })
+  }, 30_000)
 
   it('does not retry after a throwing backend; STATE stays latched', async () => {
     const root = await armWorkspace()
@@ -505,7 +507,8 @@ describe('DevloopService', () => {
         await new Promise(resolve => setImmediate(resolve))
       }
       expect(seen).toBeDefined()
-      vi.advanceTimersByTime(60_000)
+      await vi.advanceTimersByTimeAsync(60_000)
+      await vi.advanceTimersByTimeAsync(4_250)
       await first
       expect(seen?.aborted).toBe(true)
       expect(calls).toBe(1)
@@ -518,5 +521,36 @@ describe('DevloopService', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('runs T3 plan inside a reserved worktree, not the workspace root', async () => {
+    const root = await mkdtempInRepo('devloop-svc-plan-')
+    await mkdir(join(root, '.devloop'))
+    await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
+    await initGitRepo(root)
+    const calls: HeadlessRun[] = []
+    const backend = new ClaudeCliBackend(async request => {
+      calls.push(request)
+      await expect(readFile(join(request.cwd, '.devloop', 'GOAL.md'), 'utf8')).resolves.toBe('# Goal\n')
+      return { stdout: '', stderr: '' }
+    })
+    const ctx = new Context()
+    const service = new DevloopService(ctx, resolveConfig({
+      root,
+      tickIntervalMs: 60_000,
+      enabled: false,
+      agentBackend: 'claude',
+    }), backend)
+    services.push(service)
+    await service.tick()
+    expect(calls).toHaveLength(1)
+    expect(calls[0]?.cwd).toBe(planWorktreePath(root))
+    expect(calls[0]?.argv).toEqual([
+      '-p',
+      '--permission-mode',
+      'plan',
+      expect.stringContaining('GOAL.md'),
+    ])
+    await expect(lstat(planWorktreePath(root))).rejects.toMatchObject({ code: 'ENOENT' })
   })
 })

@@ -155,6 +155,29 @@ Mechanical merge after Review PASS. No T3 CLI, no unattended 24h loop.
 
 - 工作区必须是 git toplevel，且存在已登记的 task worktree，否则 merge 失败、不 latch
 - 无 Review PASS 的 `merge_ready` 会停给主管，不会合入
-- Worker PASS/REWORK 仍需写进 `STATE.json`（0.2.5 才接 Claude/Codex CLI）
+- Worker PASS/REWORK 仍需写进 `STATE.json`（CLI adapter 不解析 verdict 回写 STATE）
 
 Possible impact: operators who previously marked `merge_ready` without `lastReviewVerdict` will see `no_review_pass` instead of a STATE-only merge. GitHub installs of this slice report `0.2.4`.
+
+## 0.2.5 — 2026-08-29
+
+Optional Claude CLI / Codex CLI T3 adapters. Default stays `noop`. No unattended 24h loop.
+
+### 代码
+
+- `Config.agentBackend`：`'noop' | 'dsh' | 'claude' | 'codex'`，默认仍 `'noop'`
+- `ClaudeCliBackend`：`claude -p --permission-mode …`；**delegate** 才 `acceptEdits`，plan/review 用 `plan`；cwd 必须是 worktree；delegate prompt 要求提交，避免脏 worktree 合不进去
+- `CodexCliBackend`：`codex exec --sandbox …`；**delegate** 才 `workspace-write`，plan/review 用 `read-only`；stdin ignore，避免挂满 timeout
+- 共享 `defaultRunner`：Unix 进程组 SIGTERM/SIGKILL，abort 先等 SIGKILL 且等 `close` 再 settle（`close` 仍不来才再等一段宽限期）；`awaitDispatch` 的上限覆盖这两段宽限期；buffer 按 UTF-8 字节计；Windows 经 `cmd.exe /d /v:off /s /c` 跑 `.cmd` shim（关掉 delayed expansion，整段命令再包一层引号，token 用 `""` 转义，`%` 用 `^%` 以免 `cmd /c` 展开或把 `%%` 传给原生 exe），并用 `System32\\taskkill.exe /T` 加 `child.kill` 杀进程树（`spawn` 挂 `error` 监听，避免 ENOENT 打崩宿主）；超 `maxBuffer` 后停写并 destroy stdout/stderr
+- T3 `plan` 在保留 worktree `_loop-plan` 里以 **detached HEAD** 跑（不创建、不 reset、不删除 `devloop/_loop-plan` 分支），并拷入 `GOAL.md`（目标若是 symlink 先 unlink，避免 copyFile 跟出去）；复用前拒绝 symlink/junction 别名，且 git 注册路径必须就是 `_loop-plan`；CLI plan stdout 写入 `.devloop/PLAN.md`，review stdout 写入 `.devloop/REVIEW.md`
+- 无论 dispatch 是否开始，本次 tick 建出的 plan worktree 都会在 `finally` 里删掉
+- `createBackend()` 按配置选择；生产路径不经过 `RecordingBackend`
+
+### 可能影响
+
+- 默认仍不 spawn；要 T3 CLI 需设 `agentBackend: claude` 或 `codex`，且本机有对应命令
+- T3 没有 worktree 会记 `failed`（拒绝在工作区根目录跑）；`plan` 会先建 `_loop-plan` worktree；用户任务不能占用该 id
+- CLI 退出码非 0 记 `failed`，与 0.2.3 dsh 一样不重试；不把 stdout 解析成 PASS/REWORK
+- Loop 纯函数未改
+
+Possible impact: hosts without `claude` / `codex` on PATH stay on `noop` or `dsh`. GitHub installs of this slice report `0.2.5`.

@@ -9,6 +9,11 @@ import {
   mergeTaskWorktree,
   deleteMergedTaskBranch,
   prepareDelegateWorktree,
+  preparePlanWorktree,
+  removePlanWorktree,
+  PLAN_WORKTREE_ID,
+  WORKTREE_BRANCH_PREFIX,
+  planWorktreePath,
   readContractBaseSha,
   worktreePath,
   worktreeTaskToken,
@@ -57,6 +62,9 @@ describe('worktreeTaskToken', () => {
     expect(worktreeTaskToken('.hidden')).toBeNull()
     expect(worktreeTaskToken('a..b')).toBeNull()
     expect(worktreeTaskToken('x.lock')).toBeNull()
+    expect(worktreeTaskToken(PLAN_WORKTREE_ID)).toBeNull()
+    expect(worktreeTaskToken('LOOP-PLAN')).toBe('LOOP-PLAN')
+    expect(worktreeTaskToken('_loop-plan')).toBeNull()
   })
 })
 
@@ -146,6 +154,96 @@ describe('prepareDelegateWorktree', () => {
     const root = await gitWorkspace()
     await expect(prepareDelegateWorktree(root, contractFor('../x'))).rejects.toThrow(/unsafe task id/)
   })
+
+  it('refuses the reserved plan worktree id', async () => {
+    const root = await gitWorkspace()
+    await expect(prepareDelegateWorktree(root, contractFor(PLAN_WORKTREE_ID))).rejects.toThrow(/unsafe task id/)
+    await expect(mergeTaskWorktree(root, PLAN_WORKTREE_ID, '0'.repeat(40))).rejects.toThrow(/unsafe task id/)
+  })
+})
+
+describe('preparePlanWorktree', () => {
+  it('copies GOAL.md into a reserved plan worktree', async () => {
+    const root = await gitWorkspace()
+    const dest = await preparePlanWorktree(root)
+    expect(dest).toBe(planWorktreePath(root))
+    await expect(readFile(join(dest, '.devloop', 'GOAL.md'), 'utf8')).resolves.toBe('# Goal\n')
+  })
+
+  it('does not share a path or branch with a LOOP-PLAN user task', async () => {
+    const root = await gitWorkspace()
+    const taskDest = await prepareDelegateWorktree(root, contractFor('LOOP-PLAN'))
+    const planDest = await preparePlanWorktree(root)
+    expect(planDest).not.toBe(taskDest)
+    expect(planDest.toLowerCase()).not.toBe(taskDest.toLowerCase())
+  }, 30_000)
+
+  it('resets a reused plan worktree to the current workspace HEAD and can drop it', async () => {
+    const root = await gitWorkspace()
+    const first = await preparePlanWorktree(root)
+    await writeFile(join(root, 'file.txt'), 'v2\n', 'utf8')
+    await execFileAsync('git', ['-C', root, 'add', 'file.txt'])
+    await execFileAsync('git', ['-C', root, 'commit', '-m', 'v2'])
+    const second = await preparePlanWorktree(root)
+    expect(second).toBe(first)
+    await expect(readFile(join(second, 'file.txt'), 'utf8')).resolves.toBe('v2\n')
+    await removePlanWorktree(root)
+    await expect(lstat(first)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('removes a partial plan worktree if GOAL.md is missing', async () => {
+    const root = await gitWorkspace()
+    await rm(join(root, '.devloop', 'GOAL.md'))
+    await expect(preparePlanWorktree(root)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(lstat(planWorktreePath(root))).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('does not reset or delete an existing devloop/_loop-plan branch', async () => {
+    const root = await gitWorkspace()
+    await writeFile(join(root, 'keep.txt'), 'keep\n', 'utf8')
+    await execFileAsync('git', ['-C', root, 'add', 'keep.txt'])
+    await execFileAsync('git', ['-C', root, 'commit', '-m', 'keep'])
+    await execFileAsync('git', ['-C', root, 'branch', `${WORKTREE_BRANCH_PREFIX}${PLAN_WORKTREE_ID}`])
+    const { stdout: before } = await execFileAsync('git', ['-C', root, 'rev-parse', `${WORKTREE_BRANCH_PREFIX}${PLAN_WORKTREE_ID}`], { encoding: 'utf8' })
+    await preparePlanWorktree(root)
+    await removePlanWorktree(root)
+    const { stdout: after } = await execFileAsync('git', ['-C', root, 'rev-parse', `${WORKTREE_BRANCH_PREFIX}${PLAN_WORKTREE_ID}`], { encoding: 'utf8' })
+    expect(after.trim()).toBe(before.trim())
+  })
+
+  it('refuses a symlink _loop-plan that aliases another task worktree', async () => {
+    const root = await gitWorkspace()
+    const taskDest = await prepareDelegateWorktree(root, contractFor('d1'))
+    await writeFile(join(taskDest, 'keep.txt'), 'uncommitted\n', 'utf8')
+    await symlink(taskDest, planWorktreePath(root))
+    await expect(preparePlanWorktree(root)).rejects.toThrow(/symlink plan worktree/)
+    await expect(readFile(join(taskDest, 'keep.txt'), 'utf8')).resolves.toBe('uncommitted\n')
+    expect((await lstat(taskDest)).isDirectory()).toBe(true)
+  }, 30_000)
+
+  it('does not follow a destination GOAL.md symlink when reusing the plan worktree', async () => {
+    const root = await gitWorkspace()
+    const dest = await preparePlanWorktree(root)
+    const outside = join(root, 'outside.txt')
+    await writeFile(outside, 'keep\n', 'utf8')
+    const destGoal = join(dest, '.devloop', 'GOAL.md')
+    await rm(destGoal)
+    await symlink(outside, destGoal)
+    await preparePlanWorktree(root)
+    await expect(readFile(outside, 'utf8')).resolves.toBe('keep\n')
+    await expect(readFile(destGoal, 'utf8')).resolves.toBe('# Goal\n')
+    expect((await lstat(destGoal)).isSymbolicLink()).toBe(false)
+  }, 30_000)
+
+  it('prunes a stale git worktree registration when the directory is already gone', async () => {
+    const root = await gitWorkspace()
+    const dest = await preparePlanWorktree(root)
+    await rm(dest, { recursive: true, force: true })
+    await removePlanWorktree(root)
+    const again = await preparePlanWorktree(root)
+    expect(again).toBe(planWorktreePath(root))
+    await removePlanWorktree(root)
+  }, 30_000)
 })
 
 describe('mergeTaskWorktree', () => {
@@ -206,7 +304,7 @@ describe('mergeTaskWorktree', () => {
     await expect(execFileAsync('git', ['-C', root, 'rev-parse', '-q', '--verify', 'MERGE_HEAD'])).rejects.toThrow()
     await expect(readFile(join(root, 'src.txt'), 'utf8')).resolves.toBe('other\n')
     expect(await pathExists(dest)).toBe(true)
-  })
+  }, 30_000)
 
   it('does not abort a merge that was already in progress', async () => {
     const root = await gitWorkspace()

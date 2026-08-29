@@ -4,15 +4,15 @@ DeepSeek Harness plugin: **expensive models plan and review, cheap models implem
 
 This repository is `dsh-devloop`. It is not another coding agent and it does not fork DSH core. Design and decisions: [docs/](https://github.com/jhfnetboy/DevLoop/tree/main/docs).
 
-## What 0.2.4 does
+## What 0.2.5 does
 
 - Installs into a DSH profile as a bundle plugin
 - On each tick, if the workspace has `.devloop/GOAL.md`, reads `STATE.json` and records the next loop action (plan / delegate / review / merge / stop)
 - Enforces budget / circuit-breaker rules in-process
-- Does **not** spawn workers by default (`agentBackend: noop`). `agentBackend: dsh` only runs `dsh --profile headless`. Claude Code / Codex CLIs are **not** wired yet (0.2.5).
+- Does **not** spawn workers by default (`agentBackend: noop`). Opt-in: `dsh` (`dsh --profile headless`), `claude` (`claude -p`), `codex` (`codex exec`).
 - After writing STATE, plan / delegate / review is handed to `AgentBackend.run` (NoopBackend in production, outside the lock)
 - `delegate` creates `.devloop/worktrees/<taskId>` and writes `.devloop/CONTRACT.json` inside it
-- Set `agentBackend: dsh` to spawn `dsh --profile headless "<task>"` in the worktree (or workspace)
+- Set `agentBackend: dsh` / `claude` / `codex` to spawn that CLI in the worktree (or workspace)
 - `merge` is mechanical git: `merge_ready` plus Review `PASS` / `PASS_WITH_NOTES` merges `devloop/<taskId>` into workspace HEAD, deletes the worktree, marks the task `done`. No PASS → escalate. Does not push. Does not call AgentBackend.
 
 Install: [`docs/Install.md`](./docs/Install.md). This cut: [`docs/Release.md`](./docs/Release.md).
@@ -23,8 +23,8 @@ The expensive-vs-cheap split is from [`docs/Solution.md`](./docs/Solution.md). T
 
 | Role | Who | Job | When |
 |---|---|---|---|
-| T3 Supervisor / plan / challenge review | Codex CLI (`codex exec`) | `/plan`, scheduling, adversarial and planning-doc review, PR review | 0.2.5 |
-| T3 architecture / key review / acceptance | Claude Code CLI (`claude`) | Architecture, design, key review, acceptance | 0.2.5 |
+| T3 Supervisor / plan / challenge review | Codex CLI (`codex exec`) | `/plan`, scheduling, adversarial and planning-doc review, PR review | **0.2.5** (opt-in `agentBackend: codex`; **one `agentBackend` per host**) |
+| T3 architecture / key review / acceptance | Claude Code CLI (`claude -p`) | Architecture, design, key review, acceptance | **0.2.5** (opt-in `agentBackend: claude`; **one `agentBackend` per host**) |
 | T1 / T2 implement | DSH + DeepSeek Flash / V4 Pro | Diffs, tools, bounded code changes **from** the T3 plan | spawn exists in 0.2.3; **no** `contract.tier` routing yet |
 | Optional T2 stand-ins | GLM / Kimi / other APIs already in DSH | Same worker tier, not a new runtime | config later |
 | Outer loop | This plugin | 24h tick, budget, self-iteration — not one unbounded chat | **0.3** |
@@ -71,7 +71,7 @@ flowchart LR
     Plugin -->|escalate| You
 ```
 
-Harness is the agent runtime. This plugin is the engineering scheduler. Default `noop` only writes the next action. `agentBackend: dsh` also spawns one-shot headless. Merge is mechanical git after Review PASS.
+Harness is the agent runtime. This plugin is the engineering scheduler. Default `noop` only writes the next action. Opt-in `dsh` / `claude` / `codex` spawn one-shot CLIs. Merge is mechanical git after Review PASS.
 
 ## Tick (what ships now)
 
@@ -136,7 +136,7 @@ The goal is: expensive models plan and review, cheap models implement, a program
 | Program loop, one transition per tick | Yes. Pure `decideNextAction` plus `runTick`. |
 | Hard budget / kill switch | Yes, in-process. No live token/cost feed yet. |
 | File-backed recoverability | Partial. `GOAL.md` + `STATE.json` + `LOCK` + worktree `CONTRACT.json`. No PLAN / PROGRESS yet. |
-| Cheap workers actually implement | Partial. Opt-in `agentBackend: dsh` spawns one-shot `dsh --profile headless`; it does not pick a cheap worker via `contract.tier`. Merge lands local git after Review PASS; it does not push. |
+| Cheap workers actually implement | Partial. Opt-in `dsh` / `claude` / `codex` spawn that CLI; it does not pick a worker via `contract.tier`. Merge lands local git after Review PASS; it does not push. |
 | Expensive models actually review | Partial. Plan / delegate / review all use that same headless command; there is no higher-tier reviewer routing. PASS / REWORK is still operator-driven (or a later T3 CLI). |
 | Unattended milestone completion | **No.** 0.3. |
 
@@ -199,13 +199,15 @@ Optional overrides in `~/.dsh/profiles/web/cordis.patch.yml`:
     root: /path/to/your/project
     tickIntervalMs: 2000
     agentBackend: dsh
+    # agentBackend: claude   # claude -p
+    # agentBackend: codex    # codex exec
     budget:
       maxCostUsdPerDay: 20
       taskTimeoutMinutes: 45
       taskLifetimeMinutes: 135
 ```
 
-`agentBackend` defaults to `noop` (no spawn). Set `dsh` only when the host can run `dsh --profile headless`.
+`agentBackend` defaults to `noop` (no spawn). Set `dsh`, `claude`, or `codex` only when that CLI is on PATH.
 
 ## Arm a project
 
@@ -220,7 +222,7 @@ cp ~/.dsh/profiles/web/node_modules/dsh-devloop/templates/GOAL.md \
 # edit GOAL.md, then start dsh from that project (or set config.root)
 ```
 
-Each tick writes `.devloop/STATE.json` with `lastAction`. With `agentBackend: noop` (default) it still does not edit your source tree. `dsh` mode runs one-shot headless in the worktree.
+Each tick writes `.devloop/STATE.json` with `lastAction`. With `agentBackend: noop` (default) it still does not edit your source tree. `dsh` / `claude` / `codex` run that CLI in the worktree.
 
 ## Uninstall
 

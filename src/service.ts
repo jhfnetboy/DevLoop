@@ -9,11 +9,13 @@ import {
   type AgentBackend,
 } from './backend.js'
 import { ConfigSchema, resolveConfig, type Config } from './config.js'
+import { ClaudeCliBackend, CodexCliBackend } from './cli.js'
 import { DshHeadlessBackend } from './dsh.js'
 import { loadState, saveState, withStateLock, workspaceArmed } from './persist.js'
 import { runTick, type TickResult } from './tick.js'
 import type { LoopState } from './types.js'
-import { prepareDelegateWorktree, mergeTaskWorktree, deleteMergedTaskBranch, worktreePath, readContractBaseSha } from './worktree.js'
+import { RUNNER_REAP_MS } from './spawn.js'
+import { prepareDelegateWorktree, preparePlanWorktree, removePlanWorktree, mergeTaskWorktree, deleteMergedTaskBranch, worktreePath, readContractBaseSha } from './worktree.js'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -27,7 +29,7 @@ declare module '@deepseek-ai/cordis' {
  * `AgentBackend` outside the lock. Delegate also creates a git worktree and
  * writes CONTRACT.json. Merge (0.2.4) git-merges the task branch after
  * Review PASS, then deletes the worktree. Set `agentBackend: 'dsh'` to spawn
- * one-shot headless.
+ * one-shot headless, or `claude` / `codex` for T3 CLIs. Default stays noop.
  */
 export default class DevloopService extends Service {
   static inject = []
@@ -113,6 +115,13 @@ export default class DevloopService extends Service {
               return
             }
           }
+        } else if (!result.skipped && result.action.type === 'plan' && isolatedPlan(this.config.agentBackend)) {
+          try {
+            worktreeRoot = await preparePlanWorktree(this.config.root)
+          } catch (error) {
+            this.ctx.logger.error('[dsh-devloop] plan worktree failed', error)
+            return
+          }
         } else if (!result.skipped && result.action.type === 'review') {
           worktreeRoot = await existingWorktreeRoot(this.config.root, result.action.taskId)
         } else if (!result.skipped && result.action.type === 'merge') {
@@ -140,8 +149,20 @@ export default class DevloopService extends Service {
           }
         }
         if (!result.skipped) {
-          await saveState(this.config.root, result.state)
-          this.ctx.logger.info(`[dsh-devloop] tick action=${result.action.type}`)
+          try {
+            await saveState(this.config.root, result.state)
+            this.ctx.logger.info(`[dsh-devloop] tick action=${result.action.type}`)
+          } catch (error) {
+            if (worktreeRoot && result.action.type === 'plan' && isolatedPlan(this.config.agentBackend)) {
+              try {
+                await removePlanWorktree(this.config.root)
+              } catch (cleanupError) {
+                this.ctx.logger.error('[dsh-devloop] plan worktree cleanup failed', cleanupError)
+              }
+              worktreeRoot = null
+            }
+            throw error
+          }
         }
         if (result.action.type === 'stop' || result.state.killSwitch) {
           this.stop()
@@ -165,33 +186,48 @@ export default class DevloopService extends Service {
           this.ctx.logger.error('[dsh-devloop] task branch cleanup failed', error)
         }
       }
-      if (this.disposed) return
-      if (outcome.value && !outcome.value.result.skipped && isAgentAction(outcome.value.result.action)) {
-        const abort = new AbortController()
-        this.dispatchAbort = abort
-        const timeoutMs = this.config.budget.taskTimeoutMinutes * 60_000
-        const timer = setTimeout(() => abort.abort(), timeoutMs)
-        try {
-          await raceAbort(
-            dispatchTick(
-              this.backend,
-              this.config.root,
-              outcome.value.result.action,
-              outcome.value.result.state,
-              this.config.budget,
-              this.ctx.logger,
-              outcome.value.worktreeRoot,
+      const preparedPlan = isolatedPlan(this.config.agentBackend)
+        && outcome.value?.result.action.type === 'plan'
+        && outcome.value.worktreeRoot !== null
+      try {
+        if (this.disposed) return
+        if (outcome.value && !outcome.value.result.skipped && isAgentAction(outcome.value.result.action)) {
+          const abort = new AbortController()
+          this.dispatchAbort = abort
+          const timeoutMs = this.config.budget.taskTimeoutMinutes * 60_000
+          const timer = setTimeout(() => abort.abort(), timeoutMs)
+          const action = outcome.value.result.action
+          try {
+            await awaitDispatch(
+              dispatchTick(
+                this.backend,
+                this.config.root,
+                action,
+                outcome.value.result.state,
+                this.config.budget,
+                this.ctx.logger,
+                outcome.value.worktreeRoot,
+                abort.signal,
+              ),
               abort.signal,
-            ),
-            abort.signal,
-          )
-        } catch (error) {
-          if (!this.disposed) {
-            this.ctx.logger.error('[dsh-devloop] backend timed out', error)
+            )
+          } catch (error) {
+            if (!this.disposed) {
+              const timeout = error instanceof Error && error.message === 'backend timeout'
+              this.ctx.logger.error(timeout ? '[dsh-devloop] backend timed out' : '[dsh-devloop] backend failed', error)
+            }
+          } finally {
+            clearTimeout(timer)
+            if (this.dispatchAbort === abort) this.dispatchAbort = null
           }
-        } finally {
-          clearTimeout(timer)
-          if (this.dispatchAbort === abort) this.dispatchAbort = null
+        }
+      } finally {
+        if (preparedPlan) {
+          try {
+            await removePlanWorktree(this.config.root)
+          } catch (error) {
+            this.ctx.logger.error('[dsh-devloop] plan worktree cleanup failed', error)
+          }
         }
       }
     } catch (error) {
@@ -202,32 +238,57 @@ export default class DevloopService extends Service {
   }
 
   /**
-   * Cordis constructs `(ctx, config)` only. `agentBackend: 'dsh'` returns
-   * DshHeadlessBackend; the default stays NoopBackend so tests without the
-   * third constructor arg do not spawn.
+   * Cordis constructs `(ctx, config)` only. Opt-in CLIs: `dsh`, `claude`,
+   * `codex`. The default stays NoopBackend so tests without the third
+   * constructor arg do not spawn. RecordingBackend is tests-only.
    */
   protected createBackend(): AgentBackend {
     if (this.config.agentBackend === 'dsh') return new DshHeadlessBackend()
+    if (this.config.agentBackend === 'claude') return new ClaudeCliBackend()
+    if (this.config.agentBackend === 'codex') return new CodexCliBackend()
     return new NoopBackend()
   }
 }
 
-function raceAbort<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
-  if (signal.aborted) return Promise.reject(new Error('backend timeout'))
-  return new Promise<T>((resolve, reject) => {
-    const onAbort = () => reject(new Error('backend timeout'))
-    signal.addEventListener('abort', onAbort, { once: true })
-    work.then(
-      value => {
-        signal.removeEventListener('abort', onAbort)
-        resolve(value)
-      },
-      error => {
-        signal.removeEventListener('abort', onAbort)
-        reject(error)
-      },
-    )
-  })
+function isolatedPlan(agentBackend: Config['agentBackend']): boolean {
+  return agentBackend === 'claude' || agentBackend === 'codex'
+}
+
+const DISPATCH_REAP_GRACE_MS = RUNNER_REAP_MS + 250
+
+/**
+ * Prefer waiting until the backend promise settles (child reaped). If the
+ * abort signal fires and the backend ignores it, cap the wait so `busy`
+ * cannot stick forever.
+ */
+async function awaitDispatch(work: Promise<unknown>, signal: AbortSignal): Promise<void> {
+  let failure: unknown
+  const settled = work.then(
+    () => undefined,
+    error => {
+      failure = error
+    },
+  )
+  if (!signal.aborted) {
+    await Promise.race([
+      settled,
+      new Promise<void>(resolve => {
+        signal.addEventListener('abort', () => resolve(), { once: true })
+      }),
+    ])
+  }
+  let grace: ReturnType<typeof setTimeout> | undefined
+  const raced = await Promise.race([
+    settled.then(() => 'settled' as const),
+    new Promise<'grace'>(resolve => {
+      grace = setTimeout(() => resolve('grace'), DISPATCH_REAP_GRACE_MS)
+    }),
+  ])
+  if (grace) clearTimeout(grace)
+  if (raced === 'grace') throw new Error('backend timeout')
+  if (failure !== undefined) {
+    throw failure instanceof Error ? failure : new Error(String(failure))
+  }
 }
 
 function mergeHoldReason(error: unknown): 'empty_task' | 'merge_wedged' | 'unknown_base' | null {

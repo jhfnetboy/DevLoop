@@ -1,8 +1,8 @@
-# Release 0.2.4
+# Release 0.2.5
 
-Mechanical merge after Review PASS. Tag `v0.2.4` and the GitHub Release are created **after** this commit is on `main`; steps: [Deploy.md](./Deploy.md).
+Optional Claude CLI / Codex CLI T3 adapters. Tag `v0.2.5` and the GitHub Release are created **after** this commit is on `main`; steps: [Deploy.md](./Deploy.md).
 
-Package version: **0.2.4**. This document is the release note, not a second semver.
+Package version: **0.2.5**. This document is the release note, not a second semver.
 
 ## What is in this version
 
@@ -16,15 +16,17 @@ Stacked merges already on `main`, plus this slice:
 | 0.2.1 AgentBackend | #5 | `run` / `cancel` / `health`; production default `NoopBackend` |
 | 0.2.2 worktree | #6 | `.devloop/worktrees/<taskId>`, `CONTRACT.json`, LOCK heartbeat |
 | 0.2.3 headless | #7 | `agentBackend: dsh` → `dsh --profile headless`; default stays `noop` |
-| 0.2.4 merge | this | Review PASS → `git merge` task branch, delete worktree, mark `done` |
+| 0.2.4 merge | #11 | Review PASS → `git merge` task branch, delete worktree, mark `done` |
+| 0.2.5 T3 CLI | this | Optional `agentBackend: claude` / `codex`; default stays `noop` |
 
 Host-side checks (`dsh plugin add`, `--dump-config`) are listed in [UserCaseTest.md](./UserCaseTest.md).
 
 ## Honest limits
 
-- No Codex / Claude CLI adapter (Plan **0.2.5 — not started**).
-- Worker output does not write task status back into STATE. PASS / REWORK is operator-driven (`lastReviewVerdict` on the task). The verdict is not bound to a commit SHA; later commits on the task branch can land under a stale PASS.
+- CLI adapters do not parse PASS / REWORK from stdout. `lastReviewVerdict` is still operator-driven (or whatever writes STATE).
 - Merge does not push. Conflicted merges abort and retry next tick.
+- One `agentBackend` per host; this slice does not route `contract.tier` to different CLIs.
+- T3 CLIs refuse to run at the workspace root (null cwd **or** cwd equal to the workspace). `plan` and `review` use read-only / plan permission flags; only `delegate` gets write access. `plan` uses a reserved detached `_loop-plan` worktree (does not create or delete `devloop/_loop-plan`). Plan stdout is copied to `.devloop/PLAN.md`; review stdout to `.devloop/REVIEW.md`. Adapters still do not parse PASS/REWORK into STATE.
 - No unattended milestone loop (**0.3**) and no UI (**0.4**).
 - npm registry: not published in this cut unless `npm whoami` works. Install from GitHub or the Release tarball. See [Install.md](./Install.md).
 
