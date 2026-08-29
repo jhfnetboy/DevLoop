@@ -26,7 +26,7 @@ export function evaluateBudget(
   now: number,
   next: LoopAction,
 ): CircuitVerdict {
-  const usage = state.usage
+  const usage = rollCostWindows(state.usage, now)
 
   if (usage.costUsdDay >= limits.maxCostUsdPerDay) {
     return fail('daily_cost_cap')
@@ -102,14 +102,58 @@ export function recordAction(usage: BudgetUsage, action: LoopAction, now: number
     reviewCycles[action.taskId] = ownCount(reviewCycles, action.taskId) + 1
   }
   const progressed = action.type !== 'idle' && action.type !== 'stop'
+  const rolled = rollCostWindows(usage, now)
   return {
-    ...usage,
+    ...rolled,
     lastActions,
     taskAttempts,
     taskStartedAt,
     reviewCycles,
-    lastProgressAt: progressed ? now : usage.lastProgressAt,
+    lastProgressAt: progressed ? now : rolled.lastProgressAt,
   }
+}
+
+/** Reset daily cost at UTC midnight; optionally zero the session counter. */
+export function rollCostWindows(
+  usage: BudgetUsage,
+  now: number,
+  resetSession = false,
+): BudgetUsage {
+  const sameDay = utcDay(usage.lastProgressAt) === utcDay(now)
+  return {
+    ...usage,
+    costUsdSession: resetSession ? 0 : usage.costUsdSession,
+    costUsdDay: sameDay ? usage.costUsdDay : 0,
+  }
+}
+
+function utcDay(ms: number): string {
+  return new Date(ms).toISOString().slice(0, 10)
+}
+
+/** Fold optional backend token/cost signals into usage. Missing signals are a no-op. */
+export function applyRunSignals(
+  usage: BudgetUsage,
+  taskId: string | null,
+  now: number,
+  signals: { readonly tokens?: number; readonly costUsd?: number },
+): BudgetUsage {
+  const rolled = rollCostWindows(usage, now)
+  const tokens = counts(rolled.tokens)
+  if (taskId && finitePositive(signals.tokens)) {
+    tokens[taskId] = ownCount(tokens, taskId) + signals.tokens
+  }
+  let costUsdSession = rolled.costUsdSession
+  let costUsdDay = rolled.costUsdDay
+  if (finitePositive(signals.costUsd)) {
+    costUsdSession += signals.costUsd
+    costUsdDay += signals.costUsd
+  }
+  return { ...rolled, tokens, costUsdSession, costUsdDay, lastProgressAt: now }
+}
+
+function finitePositive(value: number | undefined): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
 }
 
 const TERMINAL_STATUS = new Set(['done', 'failed'])

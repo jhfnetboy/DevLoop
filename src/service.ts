@@ -11,7 +11,9 @@ import {
 import { ConfigSchema, resolveConfig, type Config } from './config.js'
 import { ClaudeCliBackend, CodexCliBackend } from './cli.js'
 import { DshHeadlessBackend } from './dsh.js'
-import { loadState, saveState, withStateLock, workspaceArmed } from './persist.js'
+import { loadState, saveState, withStateLock, workspaceArmed, type LockResult } from './persist.js'
+import { writeProgress } from './progress.js'
+import { applyRunSignals, rollCostWindows } from './budget.js'
 import { runTick, type TickResult } from './tick.js'
 import type { LoopState } from './types.js'
 import { RUNNER_REAP_MS } from './spawn.js'
@@ -40,8 +42,10 @@ export default class DevloopService extends Service {
   readonly backend: AgentBackend
   private timer: ReturnType<typeof setInterval> | null = null
   private busy = false
+  private sessionCostReset = false
   private disposed = false
   private dispatchAbort: AbortController | null = null
+  private pendingSignals: { taskId: string | null; tokens?: number; costUsd?: number } | null = null
 
   constructor(ctx: Context, rawConfig: Config, backend?: AgentBackend) {
     super(ctx, 'devloop')
@@ -86,12 +90,30 @@ export default class DevloopService extends Service {
         worktreeRoot: string | null
       } | undefined> => {
         if (this.disposed) return
-        const current = await loadState(this.config.root, now)
+        let current = await loadState(this.config.root, now)
+        let sessionRolled = false
+        let pendingApplied = false
+        if (this.pendingSignals && !current.killSwitch && !current.supervisor) {
+          current = {
+            ...current,
+            usage: applyRunSignals(current.usage, this.pendingSignals.taskId, now, this.pendingSignals),
+          }
+          pendingApplied = true
+        }
+        if (!this.sessionCostReset && !current.killSwitch && current.usage.costUsdSession !== 0) {
+          current = {
+            ...current,
+            usage: rollCostWindows(current.usage, now, true),
+          }
+          sessionRolled = true
+        }
         if (current.supervisor?.reason === 'unreadable_state') {
           this.ctx.logger.error('[dsh-devloop] tick skipped: unreadable STATE.json')
+          await snapshotProgress(this.config.root, current, now, this.ctx.logger)
           return
         }
         if (current.killSwitch || current.lastAction.type === 'stop') {
+          await snapshotProgress(this.config.root, current, now, this.ctx.logger)
           this.stop()
           return
         }
@@ -151,6 +173,8 @@ export default class DevloopService extends Service {
         if (!result.skipped) {
           try {
             await saveState(this.config.root, result.state)
+            if (pendingApplied) this.pendingSignals = null
+            this.sessionCostReset = true
             this.ctx.logger.info(`[dsh-devloop] tick action=${result.action.type}`)
           } catch (error) {
             if (worktreeRoot && result.action.type === 'plan' && isolatedPlan(this.config.agentBackend)) {
@@ -163,7 +187,24 @@ export default class DevloopService extends Service {
             }
             throw error
           }
+        } else if (sessionRolled) {
+          await saveState(this.config.root, result.state)
+          if (pendingApplied) this.pendingSignals = null
+          this.sessionCostReset = true
+        } else {
+          const rolled = rollCostWindows(result.state.usage, now)
+          const dayRolled = rolled.costUsdDay !== result.state.usage.costUsdDay
+          if (dayRolled || pendingApplied) {
+            result = {
+              ...result,
+              state: { ...result.state, usage: pendingApplied ? rollCostWindows(result.state.usage, now) : rolled },
+            }
+            await saveState(this.config.root, result.state)
+            if (pendingApplied) this.pendingSignals = null
+          }
+          this.sessionCostReset = true
         }
+        await snapshotProgress(this.config.root, result.state, now, this.ctx.logger)
         if (result.action.type === 'stop' || result.state.killSwitch) {
           this.stop()
         }
@@ -231,6 +272,26 @@ export default class DevloopService extends Service {
                 }
               }
             }
+            const hasSignals = dispatched
+              && (finitePositive(dispatched.tokens) || finitePositive(dispatched.costUsd))
+            if (hasSignals && dispatched && !this.disposed) {
+              const taskId = action.type === 'delegate' || action.type === 'review' ? action.taskId : null
+              try {
+                const folded = await persistCostSignals(this.config.root, taskId, dispatched, this.ctx.logger)
+                if (folded.ok) {
+                  this.pendingSignals = null
+                } else {
+                  this.pendingSignals = {
+                    taskId,
+                    tokens: dispatched.tokens,
+                    costUsd: dispatched.costUsd,
+                  }
+                  this.ctx.logger.info('[dsh-devloop] cost signals deferred: lock held')
+                }
+              } catch (error) {
+                this.ctx.logger.error('[dsh-devloop] cost signal persist failed', error)
+              }
+            }
           } catch (error) {
             if (!this.disposed) {
               const timeout = error instanceof Error && error.message === 'backend timeout'
@@ -274,6 +335,42 @@ function isolatedPlan(agentBackend: Config['agentBackend']): boolean {
   return agentBackend === 'claude' || agentBackend === 'codex'
 }
 
+async function snapshotProgress(
+  root: string,
+  state: LoopState,
+  now: number,
+  log: { error(message: string, ...rest: unknown[]): void },
+): Promise<void> {
+  try {
+    await writeProgress(root, state, now)
+  } catch (error) {
+    log.error('[dsh-devloop] PROGRESS.md write failed', error)
+  }
+}
+
+async function persistCostSignals(
+  root: string,
+  taskId: string | null,
+  dispatched: { tokens?: number; costUsd?: number },
+  log: { error(message: string, ...rest: unknown[]): void; info(message: string, ...rest: unknown[]): void },
+): Promise<LockResult<void>> {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const folded = await withStateLock(root, async () => {
+      const current = await loadState(root, Date.now())
+      if (current.killSwitch || current.supervisor) return
+      const next = {
+        ...current,
+        usage: applyRunSignals(current.usage, taskId, Date.now(), dispatched),
+      }
+      await saveState(root, next)
+      await snapshotProgress(root, next, Date.now(), log)
+    })
+    if (folded.ok) return folded
+    if (attempt === 0) await new Promise(resolve => setTimeout(resolve, 50))
+  }
+  return { ok: false }
+}
+
 const DISPATCH_REAP_GRACE_MS = RUNNER_REAP_MS + 250
 
 /**
@@ -313,6 +410,10 @@ async function awaitDispatch<T>(work: Promise<T>, signal: AbortSignal): Promise<
     throw failure instanceof Error ? failure : new Error(String(failure))
   }
   return value
+}
+
+function finitePositive(value: number | undefined): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
 }
 
 function mergeHoldReason(error: unknown): 'empty_task' | 'merge_wedged' | 'unknown_base' | null {

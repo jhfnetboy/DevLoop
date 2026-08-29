@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { emptyUsage, evaluateBudget, recordAction } from '../src/budget.ts'
+import { applyRunSignals, emptyUsage, evaluateBudget, recordAction, rollCostWindows } from '../src/budget.ts'
 import { ConfigSchema, resolveConfig } from '../src/config.ts'
 import type { LoopState } from '../src/types.ts'
 
@@ -290,3 +290,36 @@ describe('evaluateBudget', () => {
     expect(verdict).toEqual({ ok: false, reason: 'task_timeout:', taskId: '' })
   })
 })
+
+describe('applyRunSignals', () => {
+  it('adds finite positive tokens and cost; ignores missing or junk', () => {
+    const usage = emptyUsage(0)
+    const withSignals = applyRunSignals(usage, 't-1', 10, { tokens: 12, costUsd: 0.5 })
+    expect(withSignals.tokens['t-1']).toBe(12)
+    expect(withSignals.costUsdSession).toBe(0.5)
+    expect(withSignals.costUsdDay).toBe(0.5)
+    expect(withSignals.lastProgressAt).toBe(10)
+    const ignored = applyRunSignals(withSignals, 't-1', 11, { tokens: 0, costUsd: Number.NaN })
+    expect(ignored.tokens['t-1']).toBe(12)
+    expect(ignored.costUsdSession).toBe(0.5)
+  })
+
+  it('does not attribute tokens when there is no task id', () => {
+    const next = applyRunSignals(emptyUsage(0), null, 1, { tokens: 9, costUsd: 1 })
+    expect(Object.hasOwn(next.tokens, 't-1')).toBe(false)
+    expect(next.costUsdSession).toBe(1)
+  })
+})
+
+describe('rollCostWindows', () => {
+  it('zeros the day counter after UTC midnight and can zero the session', () => {
+    const yesterday = Date.parse('2026-08-28T23:00:00.000Z')
+    const today = Date.parse('2026-08-29T01:00:00.000Z')
+    const usage = { ...emptyUsage(yesterday), costUsdDay: 9, costUsdSession: 3, lastProgressAt: yesterday }
+    expect(rollCostWindows(usage, today).costUsdDay).toBe(0)
+    expect(rollCostWindows(usage, today).costUsdSession).toBe(3)
+    expect(rollCostWindows(usage, today, true).costUsdSession).toBe(0)
+    expect(rollCostWindows(usage, yesterday).costUsdDay).toBe(9)
+  })
+})
+

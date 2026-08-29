@@ -15,11 +15,13 @@ export interface AgentRunInput {
 export interface AgentRunResult {
   readonly status: 'recorded' | 'started' | 'failed'
   readonly detail?: string
+  readonly tokens?: number
+  readonly costUsd?: number
 }
 
 /**
  * Adapter boundary for DSH / Codex / Claude workers.
- * `cancel` / `health` are reserved; 0.2.5 production calls `run` on noop / dsh / claude / codex.
+ * `cancel` / `health` are reserved; 0.3 production calls `run` on noop / dsh / claude / codex.
  */
 export interface AgentBackend {
   run(input: AgentRunInput): Promise<AgentRunResult>
