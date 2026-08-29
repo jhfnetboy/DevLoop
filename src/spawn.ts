@@ -85,7 +85,7 @@ export function defaultRunner(request: HeadlessRun): Promise<{ stdout: string, s
         killTimer = setTimeout(() => {
           killTimer = undefined
           killTree('SIGKILL')
-          if (closed && !settled) settleClose()
+          if (!settled) settleClose()
         }, SIGKILL_GRACE_MS)
       }
     }
@@ -140,10 +140,6 @@ function spawnCli(command: string, argv: readonly string[], options: SpawnOption
 }
 
 /**
- * Quote one argv token for `cmd.exe /s /c`. cmd does not treat `\` as a quote
- * escape; internal quotes are doubled. Always wrap so `&` `|` cannot inject.
- */
-/**
  * Quote one argv token for `cmd /s /c` with `windowsVerbatimArguments`.
  * cmd.exe uses `""` for an embedded quote. CommandLineToArgvW treats `\`
  * immediately before `"` as escaping it, so those backslashes (and trailing
@@ -170,6 +166,11 @@ function killProcessTree(child: ChildProcess, signal: NodeJS.Signals): void {
   if (pid === undefined) return
   if (process.platform === 'win32') {
     spawnFireAndForget('taskkill', ['/pid', String(pid), '/T', '/F'])
+    try {
+      child.kill('SIGKILL')
+    } catch {
+      // taskkill missing or child already gone
+    }
     return
   }
   try {

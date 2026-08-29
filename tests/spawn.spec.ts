@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { defaultRunner, quoteForWinCmd, spawnFireAndForget, winCmdCArgument } from '../src/spawn.ts'
+import { defaultRunner, quoteForWinCmd, spawnFireAndForget, winCmdCArgument, SIGKILL_GRACE_MS } from '../src/spawn.ts'
 
 describe('quoteForWinCmd', () => {
   it('doubles quotes and always wraps so cmd metacharacters stay inside one token', () => {
@@ -62,5 +62,22 @@ describe('defaultRunner', () => {
       expect(captured).toBeGreaterThan(cap)
       expect(captured).toBeLessThan(1024 * 1024)
     }
+  }, 8_000)
+
+  it('rejects after SIGKILL grace when the child ignores SIGTERM', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'devloop-hang-'))
+    const script = fileURLToPath(new URL('./fixtures/hang.mjs', import.meta.url))
+    const abort = new AbortController()
+    const started = Date.now()
+    const run = defaultRunner({
+      command: process.execPath,
+      argv: [script],
+      cwd,
+      timeoutMs: 30_000,
+      signal: abort.signal,
+    })
+    abort.abort()
+    await expect(run).rejects.toThrow(/backend timeout/)
+    expect(Date.now() - started).toBeLessThan(SIGKILL_GRACE_MS + 1_500)
   }, 8_000)
 })
