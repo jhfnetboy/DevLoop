@@ -189,6 +189,13 @@ describe('preparePlanWorktree', () => {
     await removePlanWorktree(root)
     await expect(lstat(first)).rejects.toMatchObject({ code: 'ENOENT' })
   })
+
+  it('removes a partial plan worktree if GOAL.md is missing', async () => {
+    const root = await gitWorkspace()
+    await rm(join(root, '.devloop', 'GOAL.md'))
+    await expect(preparePlanWorktree(root)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(lstat(planWorktreePath(root))).rejects.toMatchObject({ code: 'ENOENT' })
+  })
 })
 
 describe('mergeTaskWorktree', () => {

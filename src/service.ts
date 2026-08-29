@@ -149,8 +149,20 @@ export default class DevloopService extends Service {
           }
         }
         if (!result.skipped) {
-          await saveState(this.config.root, result.state)
-          this.ctx.logger.info(`[dsh-devloop] tick action=${result.action.type}`)
+          try {
+            await saveState(this.config.root, result.state)
+            this.ctx.logger.info(`[dsh-devloop] tick action=${result.action.type}`)
+          } catch (error) {
+            if (worktreeRoot && result.action.type === 'plan' && isolatedPlan(this.config.agentBackend)) {
+              try {
+                await removePlanWorktree(this.config.root)
+              } catch (cleanupError) {
+                this.ctx.logger.error('[dsh-devloop] plan worktree cleanup failed', cleanupError)
+              }
+              worktreeRoot = null
+            }
+            throw error
+          }
         }
         if (result.action.type === 'stop' || result.state.killSwitch) {
           this.stop()
@@ -265,12 +277,14 @@ async function awaitDispatch(work: Promise<unknown>, signal: AbortSignal): Promi
       }),
     ])
   }
+  let grace: ReturnType<typeof setTimeout> | undefined
   const raced = await Promise.race([
     settled.then(() => 'settled' as const),
     new Promise<'grace'>(resolve => {
-      setTimeout(() => resolve('grace'), DISPATCH_REAP_GRACE_MS)
+      grace = setTimeout(() => resolve('grace'), DISPATCH_REAP_GRACE_MS)
     }),
   ])
+  if (grace) clearTimeout(grace)
   if (raced === 'grace') throw new Error('backend timeout')
   if (failure !== undefined) {
     throw failure instanceof Error ? failure : new Error(String(failure))

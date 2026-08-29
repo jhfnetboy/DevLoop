@@ -105,15 +105,24 @@ export async function preparePlanWorktree(root: string): Promise<string> {
     acceptance: ['bounded task list'],
     budget: { maxMinutes: 45, maxAttempts: 1 },
   })
-  const resolvedRoot = await realpath(root)
-  const head = (await git(resolvedRoot, ['rev-parse', 'HEAD'])).trim()
-  await git(dest, ['reset', '--hard', head])
-  const srcGoal = join(resolvedRoot, DEVLOOP_DIR, 'GOAL.md')
-  const destGoal = join(dest, DEVLOOP_DIR, 'GOAL.md')
-  const meta = await lstat(srcGoal)
-  if (meta.isSymbolicLink()) throw new Error('refusing symlink GOAL.md')
-  await copyFile(srcGoal, destGoal)
-  return dest
+  try {
+    const resolvedRoot = await realpath(root)
+    const head = (await git(resolvedRoot, ['rev-parse', 'HEAD'])).trim()
+    await git(dest, ['reset', '--hard', head])
+    const srcGoal = join(resolvedRoot, DEVLOOP_DIR, 'GOAL.md')
+    const destGoal = join(dest, DEVLOOP_DIR, 'GOAL.md')
+    const meta = await lstat(srcGoal)
+    if (meta.isSymbolicLink()) throw new Error('refusing symlink GOAL.md')
+    await copyFile(srcGoal, destGoal)
+    return dest
+  } catch (error) {
+    try {
+      await removePlanWorktree(root)
+    } catch {
+      // surface the original failure
+    }
+    throw error
+  }
 }
 
 /** Force-remove the reserved plan worktree and its branch. Missing is success. */

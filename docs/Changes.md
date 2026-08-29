@@ -168,7 +168,7 @@ Optional Claude CLI / Codex CLI T3 adapters. Default stays `noop`. No unattended
 - `Config.agentBackend`：`'noop' | 'dsh' | 'claude' | 'codex'`，默认仍 `'noop'`
 - `ClaudeCliBackend`：`claude -p --permission-mode acceptEdits "<prompt>"`（plan 用 `plan`）；cwd 必须是 worktree
 - `CodexCliBackend`：`codex exec --sandbox workspace-write "<prompt>"`（plan 用 `read-only`）；stdin ignore，避免挂满 timeout
-- 共享 `defaultRunner`：`spawn` + 进程组 SIGTERM/SIGKILL；优先等子进程回收，backend 若无视 AbortSignal 则在 grace 后抛 timeout（不再静默）；超 `maxBuffer` 后停写并 destroy stdout/stderr
+- 共享 `defaultRunner`：Unix 进程组 SIGTERM/SIGKILL，且 abort 等到 SIGKILL 后再 settle；Windows 经 `cmd.exe` 跑 `.cmd` shim，并用 `taskkill /T` 杀进程树；超 `maxBuffer` 后停写并 destroy stdout/stderr
 - T3 `plan` 在保留 worktree `_loop-plan` 里跑，并拷入 `GOAL.md`，不在操作者工作区根目录 spawn；该 id 以 `_` 开头，用户 task token 无法生成（大小写不敏感的文件系统也不会撞 `LOOP-PLAN`）；CLI stdout 写入工作区 `.devloop/PLAN.md`，避免删 worktree 后计划丢失
 - 无论 dispatch 是否开始，本次 tick 建出的 plan worktree 都会在 `finally` 里删掉
 - `createBackend()` 按配置选择；生产路径不经过 `RecordingBackend`

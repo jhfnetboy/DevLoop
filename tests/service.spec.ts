@@ -14,7 +14,7 @@ import DevloopService from '../src/service.ts'
 import { planWorktreePath, prepareDelegateWorktree, readContractBaseSha, worktreePath } from '../src/worktree.ts'
 import { initGitRepo, makeTask, mkdtempInRepo } from './helpers.ts'
 
-async function waitForAction(root: string, type: string, timeoutMs = 2000): Promise<void> {
+async function waitForAction(root: string, type: string, timeoutMs = 10_000): Promise<void> {
   const start = Date.now()
   while (Date.now() - start < timeoutMs) {
     const state = await loadState(root, Date.now())
@@ -25,7 +25,7 @@ async function waitForAction(root: string, type: string, timeoutMs = 2000): Prom
   throw new Error(`timed out waiting for action ${type}, last=${last.lastAction.type}`)
 }
 
-async function waitForRuns(backend: RecordingBackend, n: number, timeoutMs = 2000): Promise<void> {
+async function waitForRuns(backend: RecordingBackend, n: number, timeoutMs = 10_000): Promise<void> {
   const start = Date.now()
   while (Date.now() - start < timeoutMs) {
     if (backend.runs.length >= n) return

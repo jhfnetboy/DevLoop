@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from 'node:child_process'
+import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
 
 export const SIGKILL_GRACE_MS = 2_000
 export const MAX_SPAWN_BUFFER = 10 * 1024 * 1024
@@ -16,21 +16,19 @@ export interface HeadlessRun {
 export type HeadlessRunner = (request: HeadlessRun) => Promise<{ stdout: string, stderr: string }>
 
 /**
- * Spawn without a shell. stdin is ignored so CLIs that drain stdin (codex exec)
- * return instead of hanging until timeout. The child is its own process group
- * so abort/timeout can SIGTERM then SIGKILL the whole tree. The promise settles
- * only after the child is reaped.
+ * Spawn without a Unix shell. On Windows, npm `.cmd` shims are launched via
+ * `cmd.exe /d /s /c` so `claude` / `codex` resolve. stdin is ignored. The child
+ * is its own process group on Unix; abort waits for SIGKILL before settling.
  */
 export function defaultRunner(request: HeadlessRun): Promise<{ stdout: string, stderr: string }> {
   if (request.signal?.aborted) {
     return Promise.reject(new Error('backend timeout'))
   }
   return new Promise((resolve, reject) => {
-    const child = spawn(request.command, [...request.argv], {
+    const child = spawnCli(request.command, request.argv, {
       cwd: request.cwd,
       env: process.env,
       stdio: ['ignore', 'pipe', 'pipe'],
-      detached: process.platform !== 'win32',
     })
 
     let stdout = ''
@@ -41,6 +39,9 @@ export function defaultRunner(request: HeadlessRun): Promise<{ stdout: string, s
     let timeoutTimer: ReturnType<typeof setTimeout> | undefined
     let overflowed = false
     let killing = false
+    let closed = false
+    let closeCode: number | null = null
+    let closeSignal: NodeJS.Signals | null = null
     const maxBuffer = request.maxBuffer ?? MAX_SPAWN_BUFFER
 
     const finish = (error: Error | null) => {
@@ -53,6 +54,26 @@ export function defaultRunner(request: HeadlessRun): Promise<{ stdout: string, s
       else resolve({ stdout, stderr })
     }
 
+    const settleClose = () => {
+      if (request.signal?.aborted || timedOut) {
+        finish(new Error('backend timeout'))
+        return
+      }
+      if (overflowed) {
+        finish(new Error(`spawn output exceeded maxBuffer (${stdout.length + stderr.length})`))
+        return
+      }
+      if (closeCode === 0) {
+        finish(null)
+        return
+      }
+      if (closeSignal) {
+        finish(new Error(`killed ${closeSignal}`))
+        return
+      }
+      finish(new Error(closeCode == null ? 'spawn exited' : `exit ${closeCode}`))
+    }
+
     const killTree = (signal: NodeJS.Signals) => {
       killProcessTree(child, signal)
     }
@@ -61,7 +82,11 @@ export function defaultRunner(request: HeadlessRun): Promise<{ stdout: string, s
       killing = true
       killTree('SIGTERM')
       if (!killTimer) {
-        killTimer = setTimeout(() => killTree('SIGKILL'), SIGKILL_GRACE_MS)
+        killTimer = setTimeout(() => {
+          killTimer = undefined
+          killTree('SIGKILL')
+          if (closed && !settled) settleClose()
+        }, SIGKILL_GRACE_MS)
       }
     }
 
@@ -92,36 +117,42 @@ export function defaultRunner(request: HeadlessRun): Promise<{ stdout: string, s
 
     child.on('error', error => finish(error instanceof Error ? error : new Error(String(error))))
     child.on('close', (code, signalName) => {
-      if (request.signal?.aborted || timedOut) {
-        finish(new Error('backend timeout'))
-        return
-      }
-      if (overflowed) {
-        finish(new Error(`spawn output exceeded maxBuffer (${stdout.length + stderr.length})`))
-        return
-      }
-      if (code === 0) {
-        finish(null)
-        return
-      }
-      if (signalName) {
-        finish(new Error(`killed ${signalName}`))
-        return
-      }
-      finish(new Error(code == null ? 'spawn exited' : `exit ${code}`))
+      closed = true
+      closeCode = code
+      closeSignal = signalName
+      if (killing && killTimer) return
+      settleClose()
     })
   })
+}
+
+function spawnCli(command: string, argv: readonly string[], options: SpawnOptions): ChildProcess {
+  if (process.platform !== 'win32') {
+    return spawn(command, [...argv], { ...options, detached: true })
+  }
+  const line = [command, ...argv].map(winCmdQuote).join(' ')
+  return spawn(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', line], {
+    ...options,
+    detached: false,
+    windowsVerbatimArguments: true,
+    windowsHide: true,
+  })
+}
+
+function winCmdQuote(value: string): string {
+  if (value.length === 0) return '""'
+  if (!/[\s"]/.test(value)) return value
+  return `"${value.replace(/"/g, '\\"')}"`
 }
 
 function killProcessTree(child: ChildProcess, signal: NodeJS.Signals): void {
   const pid = child.pid
   if (pid === undefined) return
   if (process.platform === 'win32') {
-    try {
-      child.kill(signal)
-    } catch {
-      // already gone
-    }
+    spawn('taskkill', ['/pid', String(pid), '/T', '/F'], {
+      windowsHide: true,
+      stdio: 'ignore',
+    })
     return
   }
   try {
