@@ -9,7 +9,7 @@ describe('quoteForWinCmd', () => {
   it('doubles quotes and always wraps so cmd metacharacters stay inside one token', () => {
     expect(quoteForWinCmd('simple')).toBe('"simple"')
     expect(quoteForWinCmd('a"b&calc')).toBe('"a""b&calc"')
-    expect(quoteForWinCmd('100%')).toBe('"100%%"')
+    expect(quoteForWinCmd('100%')).toBe('"100^%"')
     expect(quoteForWinCmd('a"b&calc')).not.toContain('\\"')
     expect(quoteForWinCmd('hello\\')).toBe('"hello\\\\"')
     expect(quoteForWinCmd('a\\"b')).toBe('"a\\\\""b"')

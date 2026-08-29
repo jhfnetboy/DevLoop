@@ -508,7 +508,7 @@ describe('DevloopService', () => {
       }
       expect(seen).toBeDefined()
       await vi.advanceTimersByTimeAsync(60_000)
-      await vi.advanceTimersByTimeAsync(2_250)
+      await vi.advanceTimersByTimeAsync(4_250)
       await first
       expect(seen?.aborted).toBe(true)
       expect(calls).toBe(1)

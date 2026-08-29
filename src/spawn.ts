@@ -2,6 +2,8 @@ import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
 import { join } from 'node:path'
 
 export const SIGKILL_GRACE_MS = 2_000
+/** SIGTERM grace + SIGKILL last-resort; service awaitDispatch must cover this. */
+export const RUNNER_REAP_MS = SIGKILL_GRACE_MS * 2
 export const MAX_SPAWN_BUFFER = 10 * 1024 * 1024
 
 export interface HeadlessRun {
@@ -154,12 +156,13 @@ function spawnCli(command: string, argv: readonly string[], options: SpawnOption
 
 /**
  * Quote one argv token for `cmd /s /c` with `windowsVerbatimArguments`.
- * cmd.exe uses `""` for an embedded quote. CommandLineToArgvW treats `\`
- * immediately before `"` as escaping it, so those backslashes (and trailing
- * backslashes before the closer) are doubled.
+ * cmd.exe uses `""` for an embedded quote. `%` is caret-escaped so `cmd /c`
+ * does not expand env vars and a native `.exe` still receives a single `%`.
+ * CommandLineToArgvW treats `\` immediately before `"` as escaping it, so
+ * those backslashes (and trailing backslashes before the closer) are doubled.
  */
 export function quoteForWinCmd(value: string): string {
-  const withPct = value.replace(/%/g, '%%')
+  const withPct = value.replace(/%/g, '^%')
   const withBs = withPct.replace(/(\\*)"/g, (_all, bs: string) => `${bs}${bs}"`)
   const trailed = withBs.replace(/(\\+)$/, m => m + m)
   return `"${trailed.replace(/"/g, '""')}"`

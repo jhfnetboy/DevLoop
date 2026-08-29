@@ -14,7 +14,7 @@ import { DshHeadlessBackend } from './dsh.js'
 import { loadState, saveState, withStateLock, workspaceArmed } from './persist.js'
 import { runTick, type TickResult } from './tick.js'
 import type { LoopState } from './types.js'
-import { SIGKILL_GRACE_MS } from './spawn.js'
+import { RUNNER_REAP_MS } from './spawn.js'
 import { prepareDelegateWorktree, preparePlanWorktree, removePlanWorktree, mergeTaskWorktree, deleteMergedTaskBranch, worktreePath, readContractBaseSha } from './worktree.js'
 
 declare module '@deepseek-ai/cordis' {
@@ -254,7 +254,7 @@ function isolatedPlan(agentBackend: Config['agentBackend']): boolean {
   return agentBackend === 'claude' || agentBackend === 'codex'
 }
 
-const DISPATCH_REAP_GRACE_MS = SIGKILL_GRACE_MS + 250
+const DISPATCH_REAP_GRACE_MS = RUNNER_REAP_MS + 250
 
 /**
  * Prefer waiting until the backend promise settles (child reaped). If the
