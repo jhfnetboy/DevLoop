@@ -166,13 +166,16 @@ Optional Claude CLI / Codex CLI T3 adapters. Default stays `noop`. No unattended
 ### 代码
 
 - `Config.agentBackend`：`'noop' | 'dsh' | 'claude' | 'codex'`，默认仍 `'noop'`
-- `ClaudeCliBackend`：`claude -p "<prompt>"`，cwd 为 worktree（无则 workspace）
-- `CodexCliBackend`：`codex exec "<prompt>"`，同样走 `execFile`、转发 AbortSignal
+- `ClaudeCliBackend`：`claude -p --permission-mode acceptEdits "<prompt>"`（plan 用 `plan`）；cwd 必须是 worktree
+- `CodexCliBackend`：`codex exec --sandbox workspace-write "<prompt>"`（plan 用 `read-only`）；stdin ignore，避免挂满 timeout
+- 共享 `defaultRunner`：`spawn` + 进程组 SIGTERM/SIGKILL；优先等子进程回收，backend 若无视 AbortSignal 则在 grace 后放开 `busy`
+- T3 `plan` 在保留 worktree `loop-plan` 里跑，并拷入 `GOAL.md`，不在操作者工作区根目录 spawn
 - `createBackend()` 按配置选择；生产路径不经过 `RecordingBackend`
 
 ### 可能影响
 
 - 默认仍不 spawn；要 T3 CLI 需设 `agentBackend: claude` 或 `codex`，且本机有对应命令
+- T3 没有 worktree 会记 `failed`（拒绝在工作区根目录跑）；`plan` 会先建 `loop-plan` worktree
 - CLI 退出码非 0 记 `failed`，与 0.2.3 dsh 一样不重试；不把 stdout 解析成 PASS/REWORK
 - Loop 纯函数未改
 

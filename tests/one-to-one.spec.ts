@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import DevloopService from '../src/service.ts'
 import { evaluateBudget, emptyUsage, recordAction } from '../src/budget.ts'
-import { NoopBackend, RecordingBackend, runInputFor } from '../src/backend.ts'
+import { NoopBackend, runInputFor } from '../src/backend.ts'
 import { ClaudeCliBackend, CodexCliBackend } from '../src/cli.ts'
 import { DshHeadlessBackend } from '../src/dsh.ts'
 import { resolveConfig } from '../src/config.ts'
@@ -233,7 +233,7 @@ describe('Plan 0.2.4 mechanical merge 1:1', () => {
 })
 
 describe('Plan 0.2.5 T3 CLI adapters 1:1', () => {
-  it('createBackend maps claude and codex; default is never RecordingBackend', () => {
+  it('createBackend maps claude and codex; default is NoopBackend', () => {
     const dir = '/tmp'
     const claude = new DevloopService(new Context(), resolveConfig({
       root: dir,
@@ -249,8 +249,5 @@ describe('Plan 0.2.5 T3 CLI adapters 1:1', () => {
     expect(claude.backend).toBeInstanceOf(ClaudeCliBackend)
     expect(codex.backend).toBeInstanceOf(CodexCliBackend)
     expect(def.backend).toBeInstanceOf(NoopBackend)
-    expect(def.backend).not.toBeInstanceOf(RecordingBackend)
-    expect(claude.backend).not.toBeInstanceOf(RecordingBackend)
-    expect(codex.backend).not.toBeInstanceOf(RecordingBackend)
   })
 })

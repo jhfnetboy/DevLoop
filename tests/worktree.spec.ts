@@ -9,6 +9,9 @@ import {
   mergeTaskWorktree,
   deleteMergedTaskBranch,
   prepareDelegateWorktree,
+  preparePlanWorktree,
+  removePlanWorktree,
+  PLAN_WORKTREE_ID,
   readContractBaseSha,
   worktreePath,
   worktreeTaskToken,
@@ -145,6 +148,28 @@ describe('prepareDelegateWorktree', () => {
   it('throws on an unsafe task id', async () => {
     const root = await gitWorkspace()
     await expect(prepareDelegateWorktree(root, contractFor('../x'))).rejects.toThrow(/unsafe task id/)
+  })
+})
+
+describe('preparePlanWorktree', () => {
+  it('copies GOAL.md into a reserved plan worktree', async () => {
+    const root = await gitWorkspace()
+    const dest = await preparePlanWorktree(root)
+    expect(dest).toBe(worktreePath(root, PLAN_WORKTREE_ID))
+    await expect(readFile(join(dest, '.devloop', 'GOAL.md'), 'utf8')).resolves.toBe('# Goal\n')
+  })
+
+  it('resets a reused plan worktree to the current workspace HEAD and can drop it', async () => {
+    const root = await gitWorkspace()
+    const first = await preparePlanWorktree(root)
+    await writeFile(join(root, 'file.txt'), 'v2\n', 'utf8')
+    await execFileAsync('git', ['-C', root, 'add', 'file.txt'])
+    await execFileAsync('git', ['-C', root, 'commit', '-m', 'v2'])
+    const second = await preparePlanWorktree(root)
+    expect(second).toBe(first)
+    await expect(readFile(join(second, 'file.txt'), 'utf8')).resolves.toBe('v2\n')
+    await removePlanWorktree(root)
+    await expect(lstat(first)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 })
 

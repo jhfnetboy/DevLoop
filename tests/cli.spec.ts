@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import { NoopBackend, RecordingBackend, runInputFor } from '../src/backend.ts'
+import { NoopBackend, runInputFor } from '../src/backend.ts'
 import type { HeadlessRun } from '../src/dsh.ts'
 import { DshHeadlessBackend, headlessPrompt } from '../src/dsh.ts'
 import { ClaudeCliBackend, CodexCliBackend } from '../src/cli.ts'
@@ -21,46 +21,82 @@ function fakeRunner(calls: HeadlessRun[]) {
   }
 }
 
+function reviewInput(worktreeRoot: string) {
+  return {
+    ...runInputFor(
+      '/repo',
+      { type: 'review', taskId: 'd1' },
+      baseState({ tasks: [makeTask({ id: 'd1', status: 'review_pending', title: 'Add persist' })] }),
+      limits,
+    ),
+    worktreeRoot,
+  }
+}
+
+function planInput(worktreeRoot: string | null) {
+  return {
+    ...runInputFor('/repo', { type: 'plan' }, baseState(), limits),
+    workspaceRoot: '/repo',
+    worktreeRoot,
+  }
+}
+
 describe('ClaudeCliBackend', () => {
-  it('runs claude -p in the worktree without a shell', async () => {
+  it('runs claude -p --permission-mode acceptEdits in the worktree without a shell', async () => {
     const calls: HeadlessRun[] = []
     const backend = new ClaudeCliBackend(fakeRunner(calls))
-    const input = {
-      ...runInputFor(
-        '/repo',
-        { type: 'review', taskId: 'd1' },
-        baseState({ tasks: [makeTask({ id: 'd1', status: 'review_pending', title: 'Add persist' })] }),
-        limits,
-      ),
-      worktreeRoot: '/repo/.devloop/worktrees/d1',
-    }
+    const input = reviewInput('/repo/.devloop/worktrees/d1')
     await expect(backend.run(input)).resolves.toEqual({ status: 'started' })
     expect(calls[0]?.command).toBe('claude')
-    expect(calls[0]?.argv).toEqual(['-p', expect.stringContaining('Review task d1')])
+    expect(calls[0]?.argv).toEqual([
+      '-p',
+      '--permission-mode',
+      'acceptEdits',
+      expect.stringContaining('Review task d1'),
+    ])
     expect(calls[0]?.cwd).toBe('/repo/.devloop/worktrees/d1')
+    expect(calls[0]?.timeoutMs).toBe(limits.taskTimeoutMinutes * 60_000)
   })
 
-  it('passes -p and the prompt as two execFile argv entries', async () => {
+  it('uses permission-mode plan for plan ticks', async () => {
+    const calls: HeadlessRun[] = []
+    const backend = new ClaudeCliBackend(fakeRunner(calls))
+    await backend.run(planInput('/repo/.devloop/worktrees/loop-plan'))
+    expect(calls[0]?.argv).toEqual([
+      '-p',
+      '--permission-mode',
+      'plan',
+      expect.stringContaining('GOAL.md'),
+    ])
+    expect(calls[0]?.timeoutMs).toBe(45 * 60_000)
+  })
+
+  it('refuses to run at the workspace root', async () => {
+    const calls: HeadlessRun[] = []
+    const backend = new ClaudeCliBackend(fakeRunner(calls))
+    await expect(backend.run(planInput(null))).resolves.toEqual({
+      status: 'failed',
+      detail: 'refusing to run T3 CLI at workspace root',
+    })
+    expect(calls).toHaveLength(0)
+  })
+
+  it('passes permission-mode and the prompt as separate argv entries', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'devloop-claude-argv-'))
     const command = fileURLToPath(new URL('./fixtures/echo-argv.mjs', import.meta.url))
     await chmod(command, 0o755)
     const backend = new ClaudeCliBackend(undefined, command)
-    const input = {
-      ...runInputFor('/repo', { type: 'plan' }, baseState(), limits),
-      workspaceRoot: cwd,
-      worktreeRoot: null,
-    }
+    const input = planInput(cwd)
     await expect(backend.run(input)).resolves.toEqual({ status: 'started' })
     const argv = JSON.parse(await readFile(join(cwd, 'argv.json'), 'utf8')) as string[]
-    expect(argv).toEqual(['-p', headlessPrompt(input)])
+    expect(argv).toEqual(['-p', '--permission-mode', 'plan', headlessPrompt(input)])
   })
 
   it('returns failed when the runner throws', async () => {
     const backend = new ClaudeCliBackend(async () => {
       throw new Error('spawn ENOENT')
     })
-    const input = runInputFor('/repo', { type: 'plan' }, baseState(), limits)
-    await expect(backend.run(input)).resolves.toEqual({
+    await expect(backend.run(planInput('/repo/.devloop/worktrees/loop-plan'))).resolves.toEqual({
       status: 'failed',
       detail: 'spawn ENOENT',
     })
@@ -74,15 +110,18 @@ describe('ClaudeCliBackend', () => {
       return { stdout: '', stderr: '' }
     })
     await backend.run({
-      ...runInputFor('/repo', { type: 'plan' }, baseState(), limits),
+      ...planInput('/repo/.devloop/worktrees/loop-plan'),
       signal: abort.signal,
     })
     expect(seen).toBe(abort.signal)
   })
 
-  it('reports health from a help probe', async () => {
-    const ok = new ClaudeCliBackend(fakeRunner([]))
+  it('probes --help for health', async () => {
+    const calls: HeadlessRun[] = []
+    const ok = new ClaudeCliBackend(fakeRunner(calls))
     await expect(ok.health()).resolves.toBe('ok')
+    expect(calls[0]?.command).toBe('claude')
+    expect(calls[0]?.argv).toEqual(['--help'])
     const down = new ClaudeCliBackend(async () => {
       throw new Error('missing')
     })
@@ -91,48 +130,116 @@ describe('ClaudeCliBackend', () => {
 })
 
 describe('CodexCliBackend', () => {
-  it('runs codex exec in the worktree without a shell', async () => {
+  it('runs codex exec --sandbox workspace-write in the worktree without a shell', async () => {
     const calls: HeadlessRun[] = []
     const backend = new CodexCliBackend(fakeRunner(calls))
-    const input = {
-      ...runInputFor(
-        '/repo',
-        { type: 'plan' },
-        baseState(),
-        limits,
-      ),
-      worktreeRoot: null,
-    }
+    const input = reviewInput('/repo/.devloop/worktrees/d1')
     await expect(backend.run(input)).resolves.toEqual({ status: 'started' })
     expect(calls[0]?.command).toBe('codex')
-    expect(calls[0]?.argv).toEqual(['exec', expect.stringContaining('GOAL.md')])
-    expect(calls[0]?.cwd).toBe('/repo')
+    expect(calls[0]?.argv).toEqual([
+      'exec',
+      '--sandbox',
+      'workspace-write',
+      expect.stringContaining('Review task d1'),
+    ])
+    expect(calls[0]?.cwd).toBe('/repo/.devloop/worktrees/d1')
+    expect(calls[0]?.timeoutMs).toBe(limits.taskTimeoutMinutes * 60_000)
   })
 
-  it('passes exec and the prompt as two execFile argv entries', async () => {
+  it('uses read-only sandbox for plan ticks', async () => {
+    const calls: HeadlessRun[] = []
+    const backend = new CodexCliBackend(fakeRunner(calls))
+    await backend.run(planInput('/repo/.devloop/worktrees/loop-plan'))
+    expect(calls[0]?.argv).toEqual([
+      'exec',
+      '--sandbox',
+      'read-only',
+      expect.stringContaining('GOAL.md'),
+    ])
+    expect(calls[0]?.timeoutMs).toBe(45 * 60_000)
+  })
+
+  it('refuses to run at the workspace root', async () => {
+    const calls: HeadlessRun[] = []
+    const backend = new CodexCliBackend(fakeRunner(calls))
+    await expect(backend.run(planInput(null))).resolves.toEqual({
+      status: 'failed',
+      detail: 'refusing to run T3 CLI at workspace root',
+    })
+    expect(calls).toHaveLength(0)
+  })
+
+  it('passes sandbox and the prompt as separate argv entries', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'devloop-codex-argv-'))
     const command = fileURLToPath(new URL('./fixtures/echo-argv.mjs', import.meta.url))
     await chmod(command, 0o755)
     const backend = new CodexCliBackend(undefined, command)
-    const input = {
-      ...runInputFor('/repo', { type: 'plan' }, baseState(), limits),
-      workspaceRoot: cwd,
-      worktreeRoot: null,
-    }
+    const input = planInput(cwd)
     await expect(backend.run(input)).resolves.toEqual({ status: 'started' })
     const argv = JSON.parse(await readFile(join(cwd, 'argv.json'), 'utf8')) as string[]
-    expect(argv).toEqual(['exec', headlessPrompt(input)])
+    expect(argv).toEqual(['exec', '--sandbox', 'read-only', headlessPrompt(input)])
   })
+
+  it('does not hang when the child reads stdin to EOF', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'devloop-codex-stdin-'))
+    const command = fileURLToPath(new URL('./fixtures/read-stdin-then-argv.mjs', import.meta.url))
+    await chmod(command, 0o755)
+    const backend = new CodexCliBackend(undefined, command)
+    await expect(backend.run(planInput(cwd))).resolves.toEqual({ status: 'started' })
+    await expect(readFile(join(cwd, 'stdin-eof.txt'), 'utf8')).resolves.toBe('ok')
+  }, 5_000)
+
+  it('reaps a hung child before run() returns after abort', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'devloop-codex-hang-'))
+    const command = fileURLToPath(new URL('./fixtures/hang.mjs', import.meta.url))
+    await chmod(command, 0o755)
+    const abort = new AbortController()
+    const backend = new CodexCliBackend(undefined, command)
+    const running = backend.run({
+      ...planInput(cwd),
+      signal: abort.signal,
+    })
+    await new Promise(resolve => setTimeout(resolve, 80))
+    abort.abort()
+    const started = Date.now()
+    await expect(running).resolves.toEqual({ status: 'failed', detail: 'backend timeout' })
+    expect(Date.now() - started).toBeLessThan(4_000)
+  }, 8_000)
 
   it('returns failed when the runner throws', async () => {
     const backend = new CodexCliBackend(async () => {
       throw new Error('spawn ENOENT')
     })
-    const input = runInputFor('/repo', { type: 'plan' }, baseState(), limits)
-    await expect(backend.run(input)).resolves.toEqual({
+    await expect(backend.run(planInput('/repo/.devloop/worktrees/loop-plan'))).resolves.toEqual({
       status: 'failed',
       detail: 'spawn ENOENT',
     })
+  })
+
+  it('forwards AbortSignal to the runner', async () => {
+    const abort = new AbortController()
+    let seen: AbortSignal | undefined
+    const backend = new CodexCliBackend(async request => {
+      seen = request.signal
+      return { stdout: '', stderr: '' }
+    })
+    await backend.run({
+      ...planInput('/repo/.devloop/worktrees/loop-plan'),
+      signal: abort.signal,
+    })
+    expect(seen).toBe(abort.signal)
+  })
+
+  it('probes --help for health', async () => {
+    const calls: HeadlessRun[] = []
+    const ok = new CodexCliBackend(fakeRunner(calls))
+    await expect(ok.health()).resolves.toBe('ok')
+    expect(calls[0]?.command).toBe('codex')
+    expect(calls[0]?.argv).toEqual(['--help'])
+    const down = new CodexCliBackend(async () => {
+      throw new Error('missing')
+    })
+    await expect(down.health()).resolves.toBe('down')
   })
 })
 
@@ -141,7 +248,6 @@ describe('createBackend T3 CLIs', () => {
     const ctx = new Context()
     const service = new DevloopService(ctx, resolveConfig({ root: '/tmp', enabled: false }))
     expect(service.backend).toBeInstanceOf(NoopBackend)
-    expect(service.backend).not.toBeInstanceOf(RecordingBackend)
   })
 
   it('returns ClaudeCliBackend when cordis passes agentBackend=claude', () => {
@@ -152,7 +258,6 @@ describe('createBackend T3 CLIs', () => {
       agentBackend: 'claude',
     }))
     expect(service.backend).toBeInstanceOf(ClaudeCliBackend)
-    expect(service.backend).not.toBeInstanceOf(RecordingBackend)
   })
 
   it('returns CodexCliBackend when cordis passes agentBackend=codex', () => {
@@ -163,7 +268,6 @@ describe('createBackend T3 CLIs', () => {
       agentBackend: 'codex',
     }))
     expect(service.backend).toBeInstanceOf(CodexCliBackend)
-    expect(service.backend).not.toBeInstanceOf(RecordingBackend)
   })
 
   it('still returns DshHeadlessBackend when agentBackend=dsh', () => {

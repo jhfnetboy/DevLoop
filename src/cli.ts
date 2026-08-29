@@ -1,19 +1,21 @@
-import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
 import type { AgentBackend, AgentRunInput, AgentRunResult } from './backend.js'
-import { headlessPrompt, type HeadlessRun, type HeadlessRunner } from './dsh.js'
+import { headlessPrompt, type HeadlessRunner } from './dsh.js'
+import { defaultRunner } from './spawn.js'
 
-const execFileAsync = promisify(execFile)
+const PLAN_TIMEOUT_MS = 45 * 60_000
 
-async function defaultRunner(request: HeadlessRun): Promise<{ stdout: string, stderr: string }> {
-  const { stdout, stderr } = await execFileAsync(request.command, [...request.argv], {
-    cwd: request.cwd,
-    timeout: request.timeoutMs,
-    encoding: 'utf8',
-    signal: request.signal,
-    maxBuffer: 10 * 1024 * 1024,
-  })
-  return { stdout, stderr }
+function runTimeoutMs(input: AgentRunInput): number {
+  return input.contract ? input.contract.budget.maxMinutes * 60_000 : PLAN_TIMEOUT_MS
+}
+
+function claudeArgv(input: AgentRunInput): string[] {
+  const mode = input.action.type === 'plan' ? 'plan' : 'acceptEdits'
+  return ['-p', '--permission-mode', mode, headlessPrompt(input)]
+}
+
+function codexArgv(input: AgentRunInput): string[] {
+  const sandbox = input.action.type === 'plan' ? 'read-only' : 'workspace-write'
+  return ['exec', '--sandbox', sandbox, headlessPrompt(input)]
 }
 
 async function runCli(
@@ -23,12 +25,12 @@ async function runCli(
   input: AgentRunInput,
   failLabel: string,
 ): Promise<AgentRunResult> {
-  const cwd = input.worktreeRoot ?? input.workspaceRoot
-  const timeoutMs = input.contract
-    ? input.contract.budget.maxMinutes * 60_000
-    : 45 * 60_000
+  const cwd = input.worktreeRoot
+  if (!cwd) {
+    return { status: 'failed', detail: 'refusing to run T3 CLI at workspace root' }
+  }
   try {
-    await runner({ command, argv, cwd, timeoutMs, signal: input.signal })
+    await runner({ command, argv, cwd, timeoutMs: runTimeoutMs(input), signal: input.signal })
     return { status: 'started' }
   } catch (error) {
     const detail = error instanceof Error ? error.message : failLabel
@@ -51,7 +53,8 @@ async function probeHelp(runner: HeadlessRunner, command: string): Promise<'ok' 
 }
 
 /**
- * One-shot `claude -p "<task>"` in the worktree (or workspace).
+ * One-shot `claude -p --permission-mode … "<task>"` in a worktree.
+ * Plan uses `plan` (read-only). Delegate/review use `acceptEdits`.
  */
 export class ClaudeCliBackend implements AgentBackend {
   constructor(
@@ -60,13 +63,7 @@ export class ClaudeCliBackend implements AgentBackend {
   ) {}
 
   async run(input: AgentRunInput): Promise<AgentRunResult> {
-    return runCli(
-      this.runner,
-      this.command,
-      ['-p', headlessPrompt(input)],
-      input,
-      'claude cli failed',
-    )
+    return runCli(this.runner, this.command, claudeArgv(input), input, 'claude cli failed')
   }
 
   async cancel(_taskId: string): Promise<void> {}
@@ -77,7 +74,8 @@ export class ClaudeCliBackend implements AgentBackend {
 }
 
 /**
- * One-shot `codex exec "<task>"` in the worktree (or workspace).
+ * One-shot `codex exec --sandbox … "<task>"` in a worktree.
+ * Plan uses `read-only`. Delegate/review use `workspace-write`.
  */
 export class CodexCliBackend implements AgentBackend {
   constructor(
@@ -86,13 +84,7 @@ export class CodexCliBackend implements AgentBackend {
   ) {}
 
   async run(input: AgentRunInput): Promise<AgentRunResult> {
-    return runCli(
-      this.runner,
-      this.command,
-      ['exec', headlessPrompt(input)],
-      input,
-      'codex exec failed',
-    )
+    return runCli(this.runner, this.command, codexArgv(input), input, 'codex exec failed')
   }
 
   async cancel(_taskId: string): Promise<void> {}

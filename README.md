@@ -23,8 +23,8 @@ The expensive-vs-cheap split is from [`docs/Solution.md`](./docs/Solution.md). T
 
 | Role | Who | Job | When |
 |---|---|---|---|
-| T3 Supervisor / plan / challenge review | Codex CLI (`codex exec`) | `/plan`, scheduling, adversarial and planning-doc review, PR review | **0.2.5** (opt-in `agentBackend: codex`) |
-| T3 architecture / key review / acceptance | Claude Code CLI (`claude -p`) | Architecture, design, key review, acceptance | **0.2.5** (opt-in `agentBackend: claude`) |
+| T3 Supervisor / plan / challenge review | Codex CLI (`codex exec`) | `/plan`, scheduling, adversarial and planning-doc review, PR review | **0.2.5** (opt-in `agentBackend: codex`; **one `agentBackend` per host**) |
+| T3 architecture / key review / acceptance | Claude Code CLI (`claude -p`) | Architecture, design, key review, acceptance | **0.2.5** (opt-in `agentBackend: claude`; **one `agentBackend` per host**) |
 | T1 / T2 implement | DSH + DeepSeek Flash / V4 Pro | Diffs, tools, bounded code changes **from** the T3 plan | spawn exists in 0.2.3; **no** `contract.tier` routing yet |
 | Optional T2 stand-ins | GLM / Kimi / other APIs already in DSH | Same worker tier, not a new runtime | config later |
 | Outer loop | This plugin | 24h tick, budget, self-iteration — not one unbounded chat | **0.3** |

@@ -5,11 +5,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { RecordingBackend } from '../src/backend.ts'
 import type { AgentBackend, AgentRunInput, AgentRunResult } from '../src/backend.ts'
+import { ClaudeCliBackend } from '../src/cli.ts'
+import type { HeadlessRun } from '../src/dsh.ts'
 import { resolveConfig } from '../src/config.ts'
 import { emptyState, loadState, saveState, withStateLock, workspaceArmed } from '../src/persist.ts'
 import { contractForTask } from '../src/router.ts'
 import DevloopService from '../src/service.ts'
-import { prepareDelegateWorktree, readContractBaseSha } from '../src/worktree.ts'
+import { PLAN_WORKTREE_ID, prepareDelegateWorktree, readContractBaseSha, worktreePath } from '../src/worktree.ts'
 import { initGitRepo, makeTask, mkdtempInRepo } from './helpers.ts'
 
 async function waitForAction(root: string, type: string, timeoutMs = 2000): Promise<void> {
@@ -505,7 +507,8 @@ describe('DevloopService', () => {
         await new Promise(resolve => setImmediate(resolve))
       }
       expect(seen).toBeDefined()
-      vi.advanceTimersByTime(60_000)
+      await vi.advanceTimersByTimeAsync(60_000)
+      await vi.advanceTimersByTimeAsync(2_250)
       await first
       expect(seen?.aborted).toBe(true)
       expect(calls).toBe(1)
@@ -518,5 +521,36 @@ describe('DevloopService', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('runs T3 plan inside a reserved worktree, not the workspace root', async () => {
+    const root = await mkdtempInRepo('devloop-svc-plan-')
+    await mkdir(join(root, '.devloop'))
+    await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
+    await initGitRepo(root)
+    const calls: HeadlessRun[] = []
+    const backend = new ClaudeCliBackend(async request => {
+      calls.push(request)
+      await expect(readFile(join(request.cwd, '.devloop', 'GOAL.md'), 'utf8')).resolves.toBe('# Goal\n')
+      return { stdout: '', stderr: '' }
+    })
+    const ctx = new Context()
+    const service = new DevloopService(ctx, resolveConfig({
+      root,
+      tickIntervalMs: 60_000,
+      enabled: false,
+      agentBackend: 'claude',
+    }), backend)
+    services.push(service)
+    await service.tick()
+    expect(calls).toHaveLength(1)
+    expect(calls[0]?.cwd).toBe(worktreePath(root, PLAN_WORKTREE_ID))
+    expect(calls[0]?.argv).toEqual([
+      '-p',
+      '--permission-mode',
+      'plan',
+      expect.stringContaining('GOAL.md'),
+    ])
+    await expect(lstat(worktreePath(root, PLAN_WORKTREE_ID))).rejects.toMatchObject({ code: 'ENOENT' })
   })
 })

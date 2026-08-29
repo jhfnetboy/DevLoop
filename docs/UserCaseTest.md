@@ -21,7 +21,7 @@ Default `agentBackend: noop` does not spawn workers. These cases map product flo
 ## Manual after GitHub publish
 
 1. `pnpm install && pnpm test && pnpm build`
-2. After GitHub Release `v0.2.3` exists, install as in [`Install.md`](./Install.md) (`'github:jhfnetboy/DevLoop#v0.2.3'` — quote it on zsh — or the Release tarball). Until then, `github:jhfnetboy/DevLoop` tracks `main`.
+2. After GitHub Release `v0.2.5` exists, install as in [`Install.md`](./Install.md) (`'github:jhfnetboy/DevLoop#v0.2.5'` — quote it on zsh — or the Release tarball). Until then, `github:jhfnetboy/DevLoop` tracks `main` (or this PR branch). `v0.2.3` does not accept `agentBackend: claude` / `codex`.
 3. Confirm an unarmed repo stays idle
 4. Copy the bundled `templates/GOAL.md` (from `node_modules/dsh-devloop` after install, or this checkout) to `<repo>/.devloop/GOAL.md` and confirm the host logs a `plan` tick
 5. Default `agentBackend` must not spawn `dsh` / `claude` / `codex`; opt-in values may spawn that CLI

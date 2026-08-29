@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { lstat, mkdir, readFile, realpath, writeFile } from 'node:fs/promises'
+import { copyFile, lstat, mkdir, readFile, realpath, writeFile } from 'node:fs/promises'
 import { join, sep } from 'node:path'
 import { promisify } from 'node:util'
 import { DEVLOOP_DIR, devloopDir } from './persist.js'
@@ -10,6 +10,8 @@ const execFileAsync = promisify(execFile)
 export const WORKTREES_DIR = 'worktrees'
 export const CONTRACT_FILE = 'CONTRACT.json'
 export const WORKTREE_BRANCH_PREFIX = 'devloop/'
+/** Reserved worktree id for T3 `plan`. Not a user task. */
+export const PLAN_WORKTREE_ID = 'loop-plan'
 
 const TASK_TOKEN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
 
@@ -72,6 +74,54 @@ export async function prepareDelegateWorktree(root: string, contract: TaskContra
   await assertInside(pool, dest)
   await writeContractFile(dest, await stampBaseSha(dest, contract))
   return dest
+}
+
+/**
+ * Isolated worktree so T3 plan does not run in the operator workspace.
+ * Always reset to the current workspace HEAD so plan does not see a stale
+ * snapshot. Copies GOAL.md because `.devloop/` is typically untracked.
+ * Caller should `removePlanWorktree` after the one-shot run.
+ */
+export async function preparePlanWorktree(root: string): Promise<string> {
+  const dest = await prepareDelegateWorktree(root, {
+    taskId: PLAN_WORKTREE_ID,
+    title: 'plan',
+    tier: 'T3',
+    allowedPaths: ['.devloop/GOAL.md'],
+    forbidden: ['package.json', '.devloop/STATE.json', '.devloop/PLAN.md'],
+    acceptance: ['bounded task list'],
+    budget: { maxMinutes: 45, maxAttempts: 1 },
+  })
+  const resolvedRoot = await realpath(root)
+  const head = (await git(resolvedRoot, ['rev-parse', 'HEAD'])).trim()
+  await git(dest, ['reset', '--hard', head])
+  const srcGoal = join(resolvedRoot, DEVLOOP_DIR, 'GOAL.md')
+  const destGoal = join(dest, DEVLOOP_DIR, 'GOAL.md')
+  const meta = await lstat(srcGoal)
+  if (meta.isSymbolicLink()) throw new Error('refusing symlink GOAL.md')
+  await copyFile(srcGoal, destGoal)
+  return dest
+}
+
+/** Force-remove the reserved plan worktree and its branch. Missing is success. */
+export async function removePlanWorktree(root: string): Promise<void> {
+  const resolvedRoot = await realpath(root)
+  const dest = worktreePath(resolvedRoot, PLAN_WORKTREE_ID)
+  try {
+    await git(resolvedRoot, ['worktree', 'remove', '--force', dest])
+  } catch {
+    if (await pathExists(dest)) {
+      throw new Error(`failed to remove plan worktree: ${dest}`)
+    }
+  }
+  const branch = `${WORKTREE_BRANCH_PREFIX}${PLAN_WORKTREE_ID}`
+  try {
+    await git(resolvedRoot, ['branch', '-D', branch])
+  } catch {
+    if (await gitOk(resolvedRoot, ['rev-parse', '--verify', `refs/heads/${branch}`])) {
+      throw new Error(`failed to delete plan branch ${branch}`)
+    }
+  }
 }
 
 /**

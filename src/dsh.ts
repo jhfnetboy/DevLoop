@@ -1,18 +1,7 @@
-import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
 import type { AgentBackend, AgentRunInput, AgentRunResult } from './backend.js'
+import { defaultRunner, type HeadlessRun, type HeadlessRunner } from './spawn.js'
 
-const execFileAsync = promisify(execFile)
-
-export interface HeadlessRun {
-  readonly command: string
-  readonly argv: readonly string[]
-  readonly cwd: string
-  readonly timeoutMs: number
-  readonly signal?: AbortSignal
-}
-
-export type HeadlessRunner = (request: HeadlessRun) => Promise<{ stdout: string, stderr: string }>
+export type { HeadlessRun, HeadlessRunner }
 
 export function headlessPrompt(input: AgentRunInput): string {
   if (input.action.type === 'plan') {
@@ -31,17 +20,6 @@ export function headlessPrompt(input: AgentRunInput): string {
     ].join(' ')
   }
   return 'Follow the DevLoop task contract in this workspace.'
-}
-
-async function defaultRunner(request: HeadlessRun): Promise<{ stdout: string, stderr: string }> {
-  const { stdout, stderr } = await execFileAsync(request.command, [...request.argv], {
-    cwd: request.cwd,
-    timeout: request.timeoutMs,
-    encoding: 'utf8',
-    signal: request.signal,
-    maxBuffer: 10 * 1024 * 1024,
-  })
-  return { stdout, stderr }
 }
 
 /**

@@ -14,7 +14,8 @@ import { DshHeadlessBackend } from './dsh.js'
 import { loadState, saveState, withStateLock, workspaceArmed } from './persist.js'
 import { runTick, type TickResult } from './tick.js'
 import type { LoopState } from './types.js'
-import { prepareDelegateWorktree, mergeTaskWorktree, deleteMergedTaskBranch, worktreePath, readContractBaseSha } from './worktree.js'
+import { SIGKILL_GRACE_MS } from './spawn.js'
+import { prepareDelegateWorktree, preparePlanWorktree, removePlanWorktree, mergeTaskWorktree, deleteMergedTaskBranch, worktreePath, readContractBaseSha } from './worktree.js'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -114,6 +115,13 @@ export default class DevloopService extends Service {
               return
             }
           }
+        } else if (!result.skipped && result.action.type === 'plan' && isolatedPlan(this.config.agentBackend)) {
+          try {
+            worktreeRoot = await preparePlanWorktree(this.config.root)
+          } catch (error) {
+            this.ctx.logger.error('[dsh-devloop] plan worktree failed', error)
+            return
+          }
         } else if (!result.skipped && result.action.type === 'review') {
           worktreeRoot = await existingWorktreeRoot(this.config.root, result.action.taskId)
         } else if (!result.skipped && result.action.type === 'merge') {
@@ -172,12 +180,13 @@ export default class DevloopService extends Service {
         this.dispatchAbort = abort
         const timeoutMs = this.config.budget.taskTimeoutMinutes * 60_000
         const timer = setTimeout(() => abort.abort(), timeoutMs)
+        const action = outcome.value.result.action
         try {
-          await raceAbort(
+          await awaitDispatch(
             dispatchTick(
               this.backend,
               this.config.root,
-              outcome.value.result.action,
+              action,
               outcome.value.result.state,
               this.config.budget,
               this.ctx.logger,
@@ -193,6 +202,13 @@ export default class DevloopService extends Service {
         } finally {
           clearTimeout(timer)
           if (this.dispatchAbort === abort) this.dispatchAbort = null
+          if (action.type === 'plan' && isolatedPlan(this.config.agentBackend)) {
+            try {
+              await removePlanWorktree(this.config.root)
+            } catch (error) {
+              this.ctx.logger.error('[dsh-devloop] plan worktree cleanup failed', error)
+            }
+          }
         }
       }
     } catch (error) {
@@ -215,22 +231,33 @@ export default class DevloopService extends Service {
   }
 }
 
-function raceAbort<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
-  if (signal.aborted) return Promise.reject(new Error('backend timeout'))
-  return new Promise<T>((resolve, reject) => {
-    const onAbort = () => reject(new Error('backend timeout'))
-    signal.addEventListener('abort', onAbort, { once: true })
-    work.then(
-      value => {
-        signal.removeEventListener('abort', onAbort)
-        resolve(value)
-      },
-      error => {
-        signal.removeEventListener('abort', onAbort)
-        reject(error)
-      },
-    )
-  })
+function isolatedPlan(agentBackend: Config['agentBackend']): boolean {
+  return agentBackend === 'claude' || agentBackend === 'codex'
+}
+
+const DISPATCH_REAP_GRACE_MS = SIGKILL_GRACE_MS + 250
+
+/**
+ * Prefer waiting until the backend promise settles (child reaped). If the
+ * abort signal fires and the backend ignores it, cap the wait so `busy`
+ * cannot stick forever.
+ */
+async function awaitDispatch(work: Promise<unknown>, signal: AbortSignal): Promise<void> {
+  const settled = work.then(() => undefined, () => undefined)
+  if (!signal.aborted) {
+    await Promise.race([
+      settled,
+      new Promise<void>(resolve => {
+        signal.addEventListener('abort', () => resolve(), { once: true })
+      }),
+    ])
+  }
+  await Promise.race([
+    settled,
+    new Promise<void>(resolve => {
+      setTimeout(resolve, DISPATCH_REAP_GRACE_MS)
+    }),
+  ])
 }
 
 function mergeHoldReason(error: unknown): 'empty_task' | 'merge_wedged' | 'unknown_base' | null {
