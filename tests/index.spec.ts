@@ -8,5 +8,7 @@ describe('package entry exports', () => {
     expect(typeof pkg.worktreeTaskToken).toBe('function')
     expect(typeof pkg.headlessPrompt).toBe('function')
     expect(pkg.DshHeadlessBackend).toBeTypeOf('function')
+    expect(pkg.ClaudeCliBackend).toBeTypeOf('function')
+    expect(pkg.CodexCliBackend).toBeTypeOf('function')
   })
 })

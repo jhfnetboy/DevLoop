@@ -155,6 +155,25 @@ Mechanical merge after Review PASS. No T3 CLI, no unattended 24h loop.
 
 - 工作区必须是 git toplevel，且存在已登记的 task worktree，否则 merge 失败、不 latch
 - 无 Review PASS 的 `merge_ready` 会停给主管，不会合入
-- Worker PASS/REWORK 仍需写进 `STATE.json`（0.2.5 才接 Claude/Codex CLI）
+- Worker PASS/REWORK 仍需写进 `STATE.json`（CLI adapter 不解析 verdict 回写 STATE）
 
 Possible impact: operators who previously marked `merge_ready` without `lastReviewVerdict` will see `no_review_pass` instead of a STATE-only merge. GitHub installs of this slice report `0.2.4`.
+
+## 0.2.5 — 2026-08-29
+
+Optional Claude CLI / Codex CLI T3 adapters. Default stays `noop`. No unattended 24h loop.
+
+### 代码
+
+- `Config.agentBackend`：`'noop' | 'dsh' | 'claude' | 'codex'`，默认仍 `'noop'`
+- `ClaudeCliBackend`：`claude -p "<prompt>"`，cwd 为 worktree（无则 workspace）
+- `CodexCliBackend`：`codex exec "<prompt>"`，同样走 `execFile`、转发 AbortSignal
+- `createBackend()` 按配置选择；生产路径不经过 `RecordingBackend`
+
+### 可能影响
+
+- 默认仍不 spawn；要 T3 CLI 需设 `agentBackend: claude` 或 `codex`，且本机有对应命令
+- CLI 退出码非 0 记 `failed`，与 0.2.3 dsh 一样不重试；不把 stdout 解析成 PASS/REWORK
+- Loop 纯函数未改
+
+Possible impact: hosts without `claude` / `codex` on PATH stay on `noop` or `dsh`. GitHub installs of this slice report `0.2.5`.

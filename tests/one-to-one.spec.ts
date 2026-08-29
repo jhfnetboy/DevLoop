@@ -6,7 +6,8 @@ import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import DevloopService from '../src/service.ts'
 import { evaluateBudget, emptyUsage, recordAction } from '../src/budget.ts'
-import { NoopBackend, runInputFor } from '../src/backend.ts'
+import { NoopBackend, RecordingBackend, runInputFor } from '../src/backend.ts'
+import { ClaudeCliBackend, CodexCliBackend } from '../src/cli.ts'
 import { DshHeadlessBackend } from '../src/dsh.ts'
 import { resolveConfig } from '../src/config.ts'
 import { actionKey, decideNextAction } from '../src/loop.ts'
@@ -228,5 +229,28 @@ describe('Plan 0.2.4 mechanical merge 1:1', () => {
     expect(decideNextAction(baseState({
       tasks: [makeTask({ id: 'm', status: 'merge_ready', lastReviewVerdict: 'PASS_WITH_NOTES' })],
     }))).toEqual({ type: 'merge', taskId: 'm' })
+  })
+})
+
+describe('Plan 0.2.5 T3 CLI adapters 1:1', () => {
+  it('createBackend maps claude and codex; default is never RecordingBackend', () => {
+    const dir = '/tmp'
+    const claude = new DevloopService(new Context(), resolveConfig({
+      root: dir,
+      enabled: false,
+      agentBackend: 'claude',
+    }))
+    const codex = new DevloopService(new Context(), resolveConfig({
+      root: dir,
+      enabled: false,
+      agentBackend: 'codex',
+    }))
+    const def = new DevloopService(new Context(), resolveConfig({ root: dir, enabled: false }))
+    expect(claude.backend).toBeInstanceOf(ClaudeCliBackend)
+    expect(codex.backend).toBeInstanceOf(CodexCliBackend)
+    expect(def.backend).toBeInstanceOf(NoopBackend)
+    expect(def.backend).not.toBeInstanceOf(RecordingBackend)
+    expect(claude.backend).not.toBeInstanceOf(RecordingBackend)
+    expect(codex.backend).not.toBeInstanceOf(RecordingBackend)
   })
 })

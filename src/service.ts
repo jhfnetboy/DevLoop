@@ -9,6 +9,7 @@ import {
   type AgentBackend,
 } from './backend.js'
 import { ConfigSchema, resolveConfig, type Config } from './config.js'
+import { ClaudeCliBackend, CodexCliBackend } from './cli.js'
 import { DshHeadlessBackend } from './dsh.js'
 import { loadState, saveState, withStateLock, workspaceArmed } from './persist.js'
 import { runTick, type TickResult } from './tick.js'
@@ -27,7 +28,7 @@ declare module '@deepseek-ai/cordis' {
  * `AgentBackend` outside the lock. Delegate also creates a git worktree and
  * writes CONTRACT.json. Merge (0.2.4) git-merges the task branch after
  * Review PASS, then deletes the worktree. Set `agentBackend: 'dsh'` to spawn
- * one-shot headless.
+ * one-shot headless, or `claude` / `codex` for T3 CLIs. Default stays noop.
  */
 export default class DevloopService extends Service {
   static inject = []
@@ -202,12 +203,14 @@ export default class DevloopService extends Service {
   }
 
   /**
-   * Cordis constructs `(ctx, config)` only. `agentBackend: 'dsh'` returns
-   * DshHeadlessBackend; the default stays NoopBackend so tests without the
-   * third constructor arg do not spawn.
+   * Cordis constructs `(ctx, config)` only. Opt-in CLIs: `dsh`, `claude`,
+   * `codex`. The default stays NoopBackend so tests without the third
+   * constructor arg do not spawn. RecordingBackend is tests-only.
    */
   protected createBackend(): AgentBackend {
     if (this.config.agentBackend === 'dsh') return new DshHeadlessBackend()
+    if (this.config.agentBackend === 'claude') return new ClaudeCliBackend()
+    if (this.config.agentBackend === 'codex') return new CodexCliBackend()
     return new NoopBackend()
   }
 }
