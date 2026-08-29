@@ -12,6 +12,7 @@ import {
   preparePlanWorktree,
   removePlanWorktree,
   PLAN_WORKTREE_ID,
+  planWorktreePath,
   readContractBaseSha,
   worktreePath,
   worktreeTaskToken,
@@ -60,6 +61,9 @@ describe('worktreeTaskToken', () => {
     expect(worktreeTaskToken('.hidden')).toBeNull()
     expect(worktreeTaskToken('a..b')).toBeNull()
     expect(worktreeTaskToken('x.lock')).toBeNull()
+    expect(worktreeTaskToken(PLAN_WORKTREE_ID)).toBeNull()
+    expect(worktreeTaskToken('LOOP-PLAN')).toBe('LOOP-PLAN')
+    expect(worktreeTaskToken('_loop-plan')).toBeNull()
   })
 })
 
@@ -149,14 +153,28 @@ describe('prepareDelegateWorktree', () => {
     const root = await gitWorkspace()
     await expect(prepareDelegateWorktree(root, contractFor('../x'))).rejects.toThrow(/unsafe task id/)
   })
+
+  it('refuses the reserved plan worktree id', async () => {
+    const root = await gitWorkspace()
+    await expect(prepareDelegateWorktree(root, contractFor(PLAN_WORKTREE_ID))).rejects.toThrow(/unsafe task id/)
+    await expect(mergeTaskWorktree(root, PLAN_WORKTREE_ID, '0'.repeat(40))).rejects.toThrow(/unsafe task id/)
+  })
 })
 
 describe('preparePlanWorktree', () => {
   it('copies GOAL.md into a reserved plan worktree', async () => {
     const root = await gitWorkspace()
     const dest = await preparePlanWorktree(root)
-    expect(dest).toBe(worktreePath(root, PLAN_WORKTREE_ID))
+    expect(dest).toBe(planWorktreePath(root))
     await expect(readFile(join(dest, '.devloop', 'GOAL.md'), 'utf8')).resolves.toBe('# Goal\n')
+  })
+
+  it('does not share a path or branch with a LOOP-PLAN user task', async () => {
+    const root = await gitWorkspace()
+    const taskDest = await prepareDelegateWorktree(root, contractFor('LOOP-PLAN'))
+    const planDest = await preparePlanWorktree(root)
+    expect(planDest).not.toBe(taskDest)
+    expect(planDest.toLowerCase()).not.toBe(taskDest.toLowerCase())
   })
 
   it('resets a reused plan worktree to the current workspace HEAD and can drop it', async () => {

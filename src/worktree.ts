@@ -10,21 +10,31 @@ const execFileAsync = promisify(execFile)
 export const WORKTREES_DIR = 'worktrees'
 export const CONTRACT_FILE = 'CONTRACT.json'
 export const WORKTREE_BRANCH_PREFIX = 'devloop/'
-/** Reserved worktree id for T3 `plan`. Not a user task. */
-export const PLAN_WORKTREE_ID = 'loop-plan'
+/** Reserved worktree id for T3 `plan`. Leading `_` is outside TASK_TOKEN. */
+export const PLAN_WORKTREE_ID = '_loop-plan'
 
 const TASK_TOKEN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
 
 export function worktreeTaskToken(taskId: string): string | null {
   if (!TASK_TOKEN.test(taskId)) return null
   if (taskId.includes('..') || taskId.endsWith('.') || taskId.endsWith('.lock')) return null
+  if (taskId === PLAN_WORKTREE_ID) return null
   return taskId
+}
+
+function worktreeDir(root: string, token: string): string {
+  return join(devloopDir(root), WORKTREES_DIR, token)
 }
 
 export function worktreePath(root: string, taskId: string): string {
   const token = worktreeTaskToken(taskId)
   if (!token) throw new Error(`unsafe task id for worktree: ${taskId}`)
-  return join(devloopDir(root), WORKTREES_DIR, token)
+  return worktreeDir(root, token)
+}
+
+/** Path of the reserved T3 plan worktree. Not a valid user task id. */
+export function planWorktreePath(root: string): string {
+  return worktreeDir(root, PLAN_WORKTREE_ID)
 }
 
 export function contractPath(root: string, taskId: string): string {
@@ -38,7 +48,10 @@ export function contractPath(root: string, taskId: string): string {
 export async function prepareDelegateWorktree(root: string, contract: TaskContract): Promise<string> {
   const token = worktreeTaskToken(contract.taskId)
   if (!token) throw new Error(`unsafe task id for worktree: ${contract.taskId}`)
+  return checkoutWorktree(root, token, contract)
+}
 
+async function checkoutWorktree(root: string, token: string, contract: TaskContract): Promise<string> {
   const resolvedRoot = await realpath(root)
   const toplevel = (await git(resolvedRoot, ['rev-parse', '--show-toplevel'])).trim()
   if (await realpath(toplevel) !== resolvedRoot) {
@@ -83,7 +96,7 @@ export async function prepareDelegateWorktree(root: string, contract: TaskContra
  * Caller should `removePlanWorktree` after the one-shot run.
  */
 export async function preparePlanWorktree(root: string): Promise<string> {
-  const dest = await prepareDelegateWorktree(root, {
+  const dest = await checkoutWorktree(root, PLAN_WORKTREE_ID, {
     taskId: PLAN_WORKTREE_ID,
     title: 'plan',
     tier: 'T3',
@@ -106,7 +119,7 @@ export async function preparePlanWorktree(root: string): Promise<string> {
 /** Force-remove the reserved plan worktree and its branch. Missing is success. */
 export async function removePlanWorktree(root: string): Promise<void> {
   const resolvedRoot = await realpath(root)
-  const dest = worktreePath(resolvedRoot, PLAN_WORKTREE_ID)
+  const dest = planWorktreePath(resolvedRoot)
   try {
     await git(resolvedRoot, ['worktree', 'remove', '--force', dest])
   } catch {

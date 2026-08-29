@@ -174,40 +174,47 @@ export default class DevloopService extends Service {
           this.ctx.logger.error('[dsh-devloop] task branch cleanup failed', error)
         }
       }
-      if (this.disposed) return
-      if (outcome.value && !outcome.value.result.skipped && isAgentAction(outcome.value.result.action)) {
-        const abort = new AbortController()
-        this.dispatchAbort = abort
-        const timeoutMs = this.config.budget.taskTimeoutMinutes * 60_000
-        const timer = setTimeout(() => abort.abort(), timeoutMs)
-        const action = outcome.value.result.action
-        try {
-          await awaitDispatch(
-            dispatchTick(
-              this.backend,
-              this.config.root,
-              action,
-              outcome.value.result.state,
-              this.config.budget,
-              this.ctx.logger,
-              outcome.value.worktreeRoot,
+      const preparedPlan = isolatedPlan(this.config.agentBackend)
+        && outcome.value?.result.action.type === 'plan'
+        && outcome.value.worktreeRoot !== null
+      try {
+        if (this.disposed) return
+        if (outcome.value && !outcome.value.result.skipped && isAgentAction(outcome.value.result.action)) {
+          const abort = new AbortController()
+          this.dispatchAbort = abort
+          const timeoutMs = this.config.budget.taskTimeoutMinutes * 60_000
+          const timer = setTimeout(() => abort.abort(), timeoutMs)
+          const action = outcome.value.result.action
+          try {
+            await awaitDispatch(
+              dispatchTick(
+                this.backend,
+                this.config.root,
+                action,
+                outcome.value.result.state,
+                this.config.budget,
+                this.ctx.logger,
+                outcome.value.worktreeRoot,
+                abort.signal,
+              ),
               abort.signal,
-            ),
-            abort.signal,
-          )
-        } catch (error) {
-          if (!this.disposed) {
-            this.ctx.logger.error('[dsh-devloop] backend timed out', error)
-          }
-        } finally {
-          clearTimeout(timer)
-          if (this.dispatchAbort === abort) this.dispatchAbort = null
-          if (action.type === 'plan' && isolatedPlan(this.config.agentBackend)) {
-            try {
-              await removePlanWorktree(this.config.root)
-            } catch (error) {
-              this.ctx.logger.error('[dsh-devloop] plan worktree cleanup failed', error)
+            )
+          } catch (error) {
+            if (!this.disposed) {
+              const timeout = error instanceof Error && error.message === 'backend timeout'
+              this.ctx.logger.error(timeout ? '[dsh-devloop] backend timed out' : '[dsh-devloop] backend failed', error)
             }
+          } finally {
+            clearTimeout(timer)
+            if (this.dispatchAbort === abort) this.dispatchAbort = null
+          }
+        }
+      } finally {
+        if (preparedPlan) {
+          try {
+            await removePlanWorktree(this.config.root)
+          } catch (error) {
+            this.ctx.logger.error('[dsh-devloop] plan worktree cleanup failed', error)
           }
         }
       }
@@ -243,7 +250,13 @@ const DISPATCH_REAP_GRACE_MS = SIGKILL_GRACE_MS + 250
  * cannot stick forever.
  */
 async function awaitDispatch(work: Promise<unknown>, signal: AbortSignal): Promise<void> {
-  const settled = work.then(() => undefined, () => undefined)
+  let failure: unknown
+  const settled = work.then(
+    () => undefined,
+    error => {
+      failure = error
+    },
+  )
   if (!signal.aborted) {
     await Promise.race([
       settled,
@@ -252,12 +265,16 @@ async function awaitDispatch(work: Promise<unknown>, signal: AbortSignal): Promi
       }),
     ])
   }
-  await Promise.race([
-    settled,
-    new Promise<void>(resolve => {
-      setTimeout(resolve, DISPATCH_REAP_GRACE_MS)
+  const raced = await Promise.race([
+    settled.then(() => 'settled' as const),
+    new Promise<'grace'>(resolve => {
+      setTimeout(() => resolve('grace'), DISPATCH_REAP_GRACE_MS)
     }),
   ])
+  if (raced === 'grace') throw new Error('backend timeout')
+  if (failure !== undefined) {
+    throw failure instanceof Error ? failure : new Error(String(failure))
+  }
 }
 
 function mergeHoldReason(error: unknown): 'empty_task' | 'merge_wedged' | 'unknown_base' | null {

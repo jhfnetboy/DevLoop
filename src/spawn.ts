@@ -9,6 +9,8 @@ export interface HeadlessRun {
   readonly cwd: string
   readonly timeoutMs: number
   readonly signal?: AbortSignal
+  /** Test override. Production callers omit this and use MAX_SPAWN_BUFFER. */
+  readonly maxBuffer?: number
 }
 
 export type HeadlessRunner = (request: HeadlessRun) => Promise<{ stdout: string, stderr: string }>
@@ -38,6 +40,7 @@ export function defaultRunner(request: HeadlessRun): Promise<{ stdout: string, s
     let killTimer: ReturnType<typeof setTimeout> | undefined
     let timeoutTimer: ReturnType<typeof setTimeout> | undefined
     let overflowed = false
+    const maxBuffer = request.maxBuffer ?? MAX_SPAWN_BUFFER
 
     const finish = (error: Error | null) => {
       if (settled) return
@@ -61,10 +64,13 @@ export function defaultRunner(request: HeadlessRun): Promise<{ stdout: string, s
     }
 
     const append = (target: 'stdout' | 'stderr', chunk: string) => {
+      if (overflowed) return
       if (target === 'stdout') stdout += chunk
       else stderr += chunk
-      if (!overflowed && stdout.length + stderr.length > MAX_SPAWN_BUFFER) {
+      if (stdout.length + stderr.length > maxBuffer) {
         overflowed = true
+        child.stdout?.destroy()
+        child.stderr?.destroy()
         onAbort()
       }
     }
@@ -89,7 +95,7 @@ export function defaultRunner(request: HeadlessRun): Promise<{ stdout: string, s
         return
       }
       if (overflowed) {
-        finish(new Error('spawn output exceeded maxBuffer'))
+        finish(new Error(`spawn output exceeded maxBuffer (${stdout.length + stderr.length})`))
         return
       }
       if (code === 0) {

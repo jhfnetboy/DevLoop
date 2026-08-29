@@ -61,7 +61,7 @@ describe('ClaudeCliBackend', () => {
   it('uses permission-mode plan for plan ticks', async () => {
     const calls: HeadlessRun[] = []
     const backend = new ClaudeCliBackend(fakeRunner(calls))
-    await backend.run(planInput('/repo/.devloop/worktrees/loop-plan'))
+    await backend.run(planInput('/repo/.devloop/worktrees/_loop-plan'))
     expect(calls[0]?.argv).toEqual([
       '-p',
       '--permission-mode',
@@ -96,7 +96,7 @@ describe('ClaudeCliBackend', () => {
     const backend = new ClaudeCliBackend(async () => {
       throw new Error('spawn ENOENT')
     })
-    await expect(backend.run(planInput('/repo/.devloop/worktrees/loop-plan'))).resolves.toEqual({
+    await expect(backend.run(planInput('/repo/.devloop/worktrees/_loop-plan'))).resolves.toEqual({
       status: 'failed',
       detail: 'spawn ENOENT',
     })
@@ -110,7 +110,7 @@ describe('ClaudeCliBackend', () => {
       return { stdout: '', stderr: '' }
     })
     await backend.run({
-      ...planInput('/repo/.devloop/worktrees/loop-plan'),
+      ...planInput('/repo/.devloop/worktrees/_loop-plan'),
       signal: abort.signal,
     })
     expect(seen).toBe(abort.signal)
@@ -149,7 +149,7 @@ describe('CodexCliBackend', () => {
   it('uses read-only sandbox for plan ticks', async () => {
     const calls: HeadlessRun[] = []
     const backend = new CodexCliBackend(fakeRunner(calls))
-    await backend.run(planInput('/repo/.devloop/worktrees/loop-plan'))
+    await backend.run(planInput('/repo/.devloop/worktrees/_loop-plan'))
     expect(calls[0]?.argv).toEqual([
       'exec',
       '--sandbox',
@@ -210,7 +210,7 @@ describe('CodexCliBackend', () => {
     const backend = new CodexCliBackend(async () => {
       throw new Error('spawn ENOENT')
     })
-    await expect(backend.run(planInput('/repo/.devloop/worktrees/loop-plan'))).resolves.toEqual({
+    await expect(backend.run(planInput('/repo/.devloop/worktrees/_loop-plan'))).resolves.toEqual({
       status: 'failed',
       detail: 'spawn ENOENT',
     })
@@ -224,7 +224,7 @@ describe('CodexCliBackend', () => {
       return { stdout: '', stderr: '' }
     })
     await backend.run({
-      ...planInput('/repo/.devloop/worktrees/loop-plan'),
+      ...planInput('/repo/.devloop/worktrees/_loop-plan'),
       signal: abort.signal,
     })
     expect(seen).toBe(abort.signal)

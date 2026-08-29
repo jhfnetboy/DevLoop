@@ -11,7 +11,7 @@ import { resolveConfig } from '../src/config.ts'
 import { emptyState, loadState, saveState, withStateLock, workspaceArmed } from '../src/persist.ts'
 import { contractForTask } from '../src/router.ts'
 import DevloopService from '../src/service.ts'
-import { PLAN_WORKTREE_ID, prepareDelegateWorktree, readContractBaseSha, worktreePath } from '../src/worktree.ts'
+import { planWorktreePath, prepareDelegateWorktree, readContractBaseSha, worktreePath } from '../src/worktree.ts'
 import { initGitRepo, makeTask, mkdtempInRepo } from './helpers.ts'
 
 async function waitForAction(root: string, type: string, timeoutMs = 2000): Promise<void> {
@@ -544,13 +544,13 @@ describe('DevloopService', () => {
     services.push(service)
     await service.tick()
     expect(calls).toHaveLength(1)
-    expect(calls[0]?.cwd).toBe(worktreePath(root, PLAN_WORKTREE_ID))
+    expect(calls[0]?.cwd).toBe(planWorktreePath(root))
     expect(calls[0]?.argv).toEqual([
       '-p',
       '--permission-mode',
       'plan',
       expect.stringContaining('GOAL.md'),
     ])
-    await expect(lstat(worktreePath(root, PLAN_WORKTREE_ID))).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(lstat(planWorktreePath(root))).rejects.toMatchObject({ code: 'ENOENT' })
   })
 })

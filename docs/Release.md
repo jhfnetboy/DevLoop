@@ -26,7 +26,7 @@ Host-side checks (`dsh plugin add`, `--dump-config`) are listed in [UserCaseTest
 - CLI adapters do not parse PASS / REWORK from stdout. `lastReviewVerdict` is still operator-driven (or whatever writes STATE).
 - Merge does not push. Conflicted merges abort and retry next tick.
 - One `agentBackend` per host; this slice does not route `contract.tier` to different CLIs.
-- T3 CLIs refuse to run at the workspace root. `plan` uses a reserved `loop-plan` worktree plus read-only / plan permission flags.
+- T3 CLIs refuse to run at the workspace root. `plan` uses a reserved `_loop-plan` worktree plus read-only / plan permission flags. That id is outside the user task-token alphabet.
 - No unattended milestone loop (**0.3**) and no UI (**0.4**).
 - npm registry: not published in this cut unless `npm whoami` works. Install from GitHub or the Release tarball. See [Install.md](./Install.md).
 
