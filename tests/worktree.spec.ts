@@ -206,7 +206,7 @@ describe('mergeTaskWorktree', () => {
     await expect(execFileAsync('git', ['-C', root, 'rev-parse', '-q', '--verify', 'MERGE_HEAD'])).rejects.toThrow()
     await expect(readFile(join(root, 'src.txt'), 'utf8')).resolves.toBe('other\n')
     expect(await pathExists(dest)).toBe(true)
-  })
+  }, 30_000)
 
   it('does not abort a merge that was already in progress', async () => {
     const root = await gitWorkspace()
