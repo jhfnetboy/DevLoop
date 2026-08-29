@@ -1,5 +1,5 @@
-import { lstat, realpath, unlink, writeFile } from 'node:fs/promises'
-import { basename, join } from 'node:path'
+import { lstat, readFile, realpath, unlink, writeFile } from 'node:fs/promises'
+import { basename, isAbsolute, join } from 'node:path'
 import type { AgentBackend, AgentRunInput, AgentRunResult } from './backend.js'
 import { headlessPrompt, type HeadlessRunner } from './dsh.js'
 import { DEVLOOP_DIR } from './persist.js'
@@ -26,17 +26,27 @@ function claudeArgv(input: AgentRunInput): string[] {
   return ['-p', '--permission-mode', mode, '--allowedTools', CLAUDE_DELEGATE_TOOLS, cliPrompt(input)]
 }
 
-function linkedWorktreeGitDir(input: AgentRunInput): string | null {
+async function resolveLinkedGitDir(input: AgentRunInput): Promise<string | null> {
   if (!input.worktreeRoot) return null
+  try {
+    const marker = await readFile(join(input.worktreeRoot, '.git'), 'utf8')
+    const match = /^gitdir:\s*(.+?)\s*$/m.exec(marker)
+    if (match?.[1]) {
+      const raw = match[1]
+      return isAbsolute(raw) ? raw : join(input.worktreeRoot, raw)
+    }
+  } catch {
+    // Missing, unreadable, or a real .git directory.
+  }
   return join(input.workspaceRoot, '.git', 'worktrees', basename(input.worktreeRoot))
 }
 
-function codexArgv(input: AgentRunInput): string[] {
+async function codexArgv(input: AgentRunInput): Promise<string[]> {
   const sandbox = input.action.type === 'delegate' ? 'workspace-write' : 'read-only'
   if (input.action.type !== 'delegate') {
     return ['exec', '--sandbox', sandbox, cliPrompt(input)]
   }
-  const gitDir = linkedWorktreeGitDir(input)
+  const gitDir = await resolveLinkedGitDir(input)
   const argv = ['exec', '--sandbox', sandbox]
   if (gitDir) argv.push('--add-dir', gitDir)
   argv.push(cliPrompt(input))
@@ -160,8 +170,8 @@ export class ClaudeCliBackend implements AgentBackend {
 /**
  * One-shot `codex exec --sandbox … "<task>"` in a worktree.
  * Plan and review use `read-only`. Delegate uses `workspace-write` and
- * `--add-dir` only `.git/worktrees/<id>` (not hooks/refs/objects). The host
- * commits dirty task worktrees after a successful started run.
+ * `--add-dir` of the worktree's real gitdir (from `.git` gitdir: file). The host
+ * commits dirty task worktrees after a successful started run, with hooks disabled.
  */
 export class CodexCliBackend implements AgentBackend {
   constructor(
@@ -170,7 +180,7 @@ export class CodexCliBackend implements AgentBackend {
   ) {}
 
   async run(input: AgentRunInput): Promise<AgentRunResult> {
-    return runCli(this.runner, this.command, codexArgv(input), input, 'codex exec failed')
+    return runCli(this.runner, this.command, await codexArgv(input), input, 'codex exec failed')
   }
 
   async cancel(_taskId: string): Promise<void> {}

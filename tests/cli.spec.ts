@@ -246,6 +246,27 @@ describe('CodexCliBackend', () => {
     expect(calls[0]?.argv.at(-1)).toContain('Commit validated changes')
   })
 
+  it('adds the gitdir from a linked worktree .git file', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'devloop-codex-gitdir-'))
+    const wt = join(root, 'wt')
+    await mkdir(wt)
+    await writeFile(join(wt, '.git'), 'gitdir: /abs/git/worktrees/custom-name\n', 'utf8')
+    const calls: HeadlessRun[] = []
+    const backend = new CodexCliBackend(fakeRunner(calls))
+    await backend.run({
+      ...delegateInput(wt),
+      workspaceRoot: root,
+    })
+    expect(calls[0]?.argv).toEqual([
+      'exec',
+      '--sandbox',
+      'workspace-write',
+      '--add-dir',
+      '/abs/git/worktrees/custom-name',
+      expect.stringContaining('Execute task d1'),
+    ])
+  })
+
   it('uses read-only sandbox for plan ticks', async () => {
     const calls: HeadlessRun[] = []
     const backend = new CodexCliBackend(fakeRunner(calls))

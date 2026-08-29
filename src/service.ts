@@ -11,7 +11,7 @@ import {
 import { ConfigSchema, resolveConfig, type Config } from './config.js'
 import { ClaudeCliBackend, CodexCliBackend } from './cli.js'
 import { DshHeadlessBackend } from './dsh.js'
-import { loadState, saveState, withStateLock, workspaceArmed } from './persist.js'
+import { loadState, saveState, withStateLock, workspaceArmed, type LockResult } from './persist.js'
 import { writeProgress } from './progress.js'
 import { applyRunSignals, rollCostWindows } from './budget.js'
 import { runTick, type TickResult } from './tick.js'
@@ -45,6 +45,7 @@ export default class DevloopService extends Service {
   private sessionCostReset = false
   private disposed = false
   private dispatchAbort: AbortController | null = null
+  private pendingSignals: { taskId: string | null; tokens?: number; costUsd?: number } | null = null
 
   constructor(ctx: Context, rawConfig: Config, backend?: AgentBackend) {
     super(ctx, 'devloop')
@@ -91,6 +92,15 @@ export default class DevloopService extends Service {
         if (this.disposed) return
         let current = await loadState(this.config.root, now)
         let sessionRolled = false
+        let pendingApplied = false
+        if (this.pendingSignals && !current.killSwitch && !current.supervisor) {
+          current = {
+            ...current,
+            usage: applyRunSignals(current.usage, this.pendingSignals.taskId, now, this.pendingSignals),
+          }
+          this.pendingSignals = null
+          pendingApplied = true
+        }
         if (!this.sessionCostReset && !current.killSwitch && current.usage.costUsdSession !== 0) {
           current = {
             ...current,
@@ -181,6 +191,15 @@ export default class DevloopService extends Service {
           await saveState(this.config.root, result.state)
           this.sessionCostReset = true
         } else {
+          const rolled = rollCostWindows(result.state.usage, now)
+          const dayRolled = rolled.costUsdDay !== result.state.usage.costUsdDay
+          if (dayRolled || pendingApplied) {
+            result = {
+              ...result,
+              state: { ...result.state, usage: pendingApplied ? rollCostWindows(result.state.usage, now) : rolled },
+            }
+            await saveState(this.config.root, result.state)
+          }
           this.sessionCostReset = true
         }
         await snapshotProgress(this.config.root, result.state, now, this.ctx.logger)
@@ -247,23 +266,16 @@ export default class DevloopService extends Service {
             if (hasSignals && dispatched && !this.disposed) {
               const taskId = action.type === 'delegate' || action.type === 'review' ? action.taskId : null
               try {
-                const folded = await withStateLock(this.config.root, async () => {
-                  if (this.disposed) return
-                  const current = await loadState(this.config.root, Date.now())
-                  if (current.killSwitch || current.supervisor) return
-                  const next = {
-                    ...current,
-                    usage: applyRunSignals(current.usage, taskId, Date.now(), dispatched),
+                const folded = await persistCostSignals(this.config.root, taskId, dispatched, this.ctx.logger)
+                if (folded.ok) {
+                  this.pendingSignals = null
+                } else {
+                  this.pendingSignals = {
+                    taskId,
+                    tokens: dispatched.tokens,
+                    costUsd: dispatched.costUsd,
                   }
-                  await saveState(this.config.root, next)
-                  try {
-                    await writeProgress(this.config.root, next, Date.now())
-                  } catch (error) {
-                    this.ctx.logger.error('[dsh-devloop] PROGRESS.md write failed', error)
-                  }
-                })
-                if (!folded.ok) {
-                  this.ctx.logger.info('[dsh-devloop] cost signals skipped: lock held')
+                  this.ctx.logger.info('[dsh-devloop] cost signals deferred: lock held')
                 }
               } catch (error) {
                 this.ctx.logger.error('[dsh-devloop] cost signal persist failed', error)
@@ -323,6 +335,29 @@ async function snapshotProgress(
   } catch (error) {
     log.error('[dsh-devloop] PROGRESS.md write failed', error)
   }
+}
+
+async function persistCostSignals(
+  root: string,
+  taskId: string | null,
+  dispatched: { tokens?: number; costUsd?: number },
+  log: { error(message: string, ...rest: unknown[]): void; info(message: string, ...rest: unknown[]): void },
+): Promise<LockResult<void>> {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const folded = await withStateLock(root, async () => {
+      const current = await loadState(root, Date.now())
+      if (current.killSwitch || current.supervisor) return
+      const next = {
+        ...current,
+        usage: applyRunSignals(current.usage, taskId, Date.now(), dispatched),
+      }
+      await saveState(root, next)
+      await snapshotProgress(root, next, Date.now(), log)
+    })
+    if (folded.ok) return folded
+    if (attempt === 0) await new Promise(resolve => setTimeout(resolve, 50))
+  }
+  return { ok: false }
 }
 
 const DISPATCH_REAP_GRACE_MS = RUNNER_REAP_MS + 250

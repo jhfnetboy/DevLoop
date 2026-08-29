@@ -279,7 +279,8 @@ export async function commitDirtyTaskWorktree(worktreeRoot: string): Promise<voi
   await git(worktreeRoot, ['add', '-A'])
   const staged = (await git(worktreeRoot, ['diff', '--cached', '--name-only'])).trim()
   if (staged.length === 0) return
-  await git(worktreeRoot, ['commit', '-m', 'devloop: delegate'])
+  const hooksPath = process.platform === 'win32' ? 'NUL' : '/dev/null'
+  await git(worktreeRoot, ['-c', `core.hooksPath=${hooksPath}`, 'commit', '--no-verify', '-m', 'devloop: delegate'])
 }
 
 export async function readContractBaseSha(worktreeRoot: string): Promise<string | null> {

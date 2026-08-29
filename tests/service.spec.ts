@@ -666,6 +666,79 @@ describe('DevloopService', () => {
     expect(loaded.usage.costUsdSession).toBe(0.4)
   })
 
+  it('defers cost signals when the fold lock is held and applies them next tick', async () => {
+    const root = await mkdtempInRepo('devloop-svc-cost-defer-')
+    await mkdir(join(root, '.devloop'))
+    await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
+    await initGitRepo(root)
+    await saveState(root, {
+      ...emptyState(Date.now()),
+      tasks: [makeTask({ id: 'd1', status: 'ready', title: 'Add persist' })],
+    })
+    class DeferBackend extends RecordingBackend {
+      releaseLock!: () => void
+      override async run(input: Parameters<RecordingBackend['run']>[0]) {
+        await super.run(input)
+        const held = new Promise<void>(resolve => {
+          this.releaseLock = resolve
+        })
+        const acquired = new Promise<void>(resolve => {
+          void withStateLock(root, async () => {
+            resolve()
+            await held
+          })
+        })
+        await acquired
+        return { status: 'recorded' as const, tokens: 12, costUsd: 0.4 }
+      }
+    }
+    const ctx = new Context()
+    const backend = new DeferBackend()
+    const service = new DevloopService(ctx, resolveConfig({
+      root,
+      tickIntervalMs: 60_000,
+      enabled: false,
+    }), backend)
+    services.push(service)
+    await service.tick()
+    let loaded = await loadState(root, Date.now())
+    expect(loaded.usage.costUsdSession).toBe(0)
+    backend.releaseLock()
+    await new Promise(resolve => setTimeout(resolve, 20))
+    await service.tick()
+    loaded = await loadState(root, Date.now())
+    expect(loaded.usage.costUsdSession).toBe(0.4)
+    expect(loaded.usage.tokens.d1).toBe(12)
+  })
+
+  it('persists UTC daily cost rollover on a latched skipped tick', async () => {
+    const root = await armWorkspace()
+    const ctx = new Context()
+    const service = new DevloopService(ctx, resolveConfig({
+      root,
+      tickIntervalMs: 60_000,
+      enabled: false,
+    }))
+    services.push(service)
+    const day1 = Date.UTC(2020, 0, 1, 12)
+    await service.tick(day1)
+    const afterPlan = await loadState(root, day1)
+    expect(afterPlan.lastAction).toEqual({ type: 'plan' })
+    await saveState(root, {
+      ...afterPlan,
+      usage: {
+        ...afterPlan.usage,
+        costUsdDay: 9,
+        lastProgressAt: Date.UTC(2020, 0, 1, 23, 59, 0),
+      },
+    })
+    const justAfterMidnight = Date.UTC(2020, 0, 2, 0, 0, 30)
+    await service.tick(justAfterMidnight)
+    const loaded = await loadState(root, justAfterMidnight)
+    expect(loaded.lastAction).toEqual({ type: 'plan' })
+    expect(loaded.usage.costUsdDay).toBe(0)
+  })
+
   it('still zeros session cost after an unreadable first tick', async () => {
     const root = await mkdtempInRepo('devloop-svc-unread-')
     await mkdir(join(root, '.devloop'))

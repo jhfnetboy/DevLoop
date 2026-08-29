@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { lstat, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, lstat, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -150,6 +150,21 @@ describe('prepareDelegateWorktree', () => {
     const { stdout } = await execFileAsync('git', ['-C', dest, 'show', '--name-only', '--pretty=format:', 'HEAD'], { encoding: 'utf8' })
     expect(stdout).toContain('src.txt')
     expect(stdout).not.toContain('CONTRACT.json')
+    const { stdout: log } = await execFileAsync('git', ['-C', dest, 'log', '-1', '--pretty=%s'], { encoding: 'utf8' })
+    expect(log.trim()).toBe('devloop: delegate')
+  })
+
+  it('host commit does not run worktree-configured hooks', async () => {
+    const root = await gitWorkspace()
+    const dest = await prepareDelegateWorktree(root, contractFor('d1'))
+    const hookDir = join(dest, '.delegate-hooks')
+    await mkdir(hookDir)
+    const hook = join(hookDir, 'pre-commit')
+    await writeFile(hook, '#!/bin/sh\nexit 1\n', 'utf8')
+    await chmod(hook, 0o755)
+    await execFileAsync('git', ['-C', dest, 'config', 'core.hooksPath', '.delegate-hooks'])
+    await writeFile(join(dest, 'src.txt'), 'worker\n', 'utf8')
+    await commitDirtyTaskWorktree(dest)
     const { stdout: log } = await execFileAsync('git', ['-C', dest, 'log', '-1', '--pretty=%s'], { encoding: 'utf8' })
     expect(log.trim()).toBe('devloop: delegate')
   })
