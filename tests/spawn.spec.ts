@@ -3,7 +3,16 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { defaultRunner } from '../src/spawn.ts'
+import { defaultRunner, quoteForWinCmd } from '../src/spawn.ts'
+
+describe('quoteForWinCmd', () => {
+  it('doubles quotes and always wraps so cmd metacharacters stay inside one token', () => {
+    expect(quoteForWinCmd('simple')).toBe('"simple"')
+    expect(quoteForWinCmd('a"b&calc')).toBe('"a""b&calc"')
+    expect(quoteForWinCmd('100%')).toBe('"100%%"')
+    expect(quoteForWinCmd('a"b&calc')).not.toContain('\\"')
+  })
+})
 
 describe('defaultRunner', () => {
   it('stops buffering once maxBuffer is exceeded', async () => {

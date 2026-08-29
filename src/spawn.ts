@@ -130,7 +130,7 @@ function spawnCli(command: string, argv: readonly string[], options: SpawnOption
   if (process.platform !== 'win32') {
     return spawn(command, [...argv], { ...options, detached: true })
   }
-  const line = [command, ...argv].map(winCmdQuote).join(' ')
+  const line = [command, ...argv].map(quoteForWinCmd).join(' ')
   return spawn(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', line], {
     ...options,
     detached: false,
@@ -139,10 +139,12 @@ function spawnCli(command: string, argv: readonly string[], options: SpawnOption
   })
 }
 
-function winCmdQuote(value: string): string {
-  if (value.length === 0) return '""'
-  if (!/[\s"]/.test(value)) return value
-  return `"${value.replace(/"/g, '\\"')}"`
+/**
+ * Quote one argv token for `cmd.exe /s /c`. cmd does not treat `\` as a quote
+ * escape; internal quotes are doubled. Always wrap so `&` `|` cannot inject.
+ */
+export function quoteForWinCmd(value: string): string {
+  return `"${value.replace(/%/g, '%%').replace(/"/g, '""')}"`
 }
 
 function killProcessTree(child: ChildProcess, signal: NodeJS.Signals): void {
