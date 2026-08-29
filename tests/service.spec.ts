@@ -1,6 +1,6 @@
 import { chmod, lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { isAbsolute, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { RecordingBackend } from '../src/backend.ts'
@@ -745,11 +745,22 @@ describe('DevloopService', () => {
     await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
     await initGitRepo(root)
     const now = Date.now()
-    await saveState(root, {
+    const unreadState = {
       ...emptyState(now),
       usage: { ...emptyUsage(now), costUsdSession: 5, lastProgressAt: now },
-    })
-    await chmod(statePath(root), 0)
+    }
+    await saveState(root, unreadState)
+    await writeFile(join(root, '.devloop', 'PROGRESS.md'), [
+      '# DevLoop progress',
+      '',
+      '- costUsdDay: 12',
+      '- tasks: 1 (ready 1)',
+      '',
+      '## Tasks',
+      '',
+      '- t-1 ready Real work',
+      '',
+    ].join('\n'))
     const ctx = new Context()
     const service = new DevloopService(ctx, resolveConfig({
       root,
@@ -757,13 +768,17 @@ describe('DevloopService', () => {
       enabled: false,
     }))
     services.push(service)
+    await chmod(statePath(root), 0)
     await service.tick()
     await chmod(statePath(root), 0o644)
     const unread = await loadState(root, Date.now())
     expect(unread.usage.costUsdSession).toBe(5)
     expect(unread.lastAction).toEqual({ type: 'idle' })
     expect(unread.supervisor).toBeNull()
-    await expect(readFile(join(root, '.devloop', 'PROGRESS.md'), 'utf8')).resolves.toContain('unreadable_state')
+    const afterUnread = await readFile(join(root, '.devloop', 'PROGRESS.md'), 'utf8')
+    expect(afterUnread).toContain('- t-1')
+    expect(afterUnread).toContain('costUsdDay: 12')
+    expect(afterUnread).not.toContain('unreadable_state')
     await service.tick()
     const loaded = await loadState(root, Date.now())
     expect(loaded.usage.costUsdSession).toBe(0)
@@ -832,8 +847,8 @@ describe('DevloopService', () => {
     expect(loaded.lastAction).toEqual({ type: 'stop', reason: 'budget' })
   })
 
-  it('defers a parent-commit hold when LOCK is busy and persists it next tick', async () => {
-    const root = await mkdtempInRepo('devloop-svc-commit-hold-defer-')
+  it('defers cost signals when the fold write fails and applies them next tick', async () => {
+    const root = await mkdtempInRepo('devloop-svc-cost-io-')
     await mkdir(join(root, '.devloop'))
     await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
     await initGitRepo(root)
@@ -841,8 +856,40 @@ describe('DevloopService', () => {
       ...emptyState(Date.now()),
       tasks: [makeTask({ id: 'd1', status: 'ready', title: 'Add persist' })],
     })
-    class DirtyLockedBackend implements AgentBackend {
-      releaseLock!: () => void
+    class WriteFailBackend extends RecordingBackend {
+      override async run(input: Parameters<RecordingBackend['run']>[0]) {
+        await super.run(input)
+        await chmod(join(root, '.devloop'), 0o500)
+        return { status: 'recorded' as const, tokens: 12, costUsd: 0.4 }
+      }
+    }
+    const ctx = new Context()
+    const service = new DevloopService(ctx, resolveConfig({
+      root,
+      tickIntervalMs: 60_000,
+      enabled: false,
+    }), new WriteFailBackend())
+    services.push(service)
+    await service.tick()
+    await chmod(join(root, '.devloop'), 0o755)
+    let loaded = await loadState(root, Date.now())
+    expect(loaded.usage.costUsdSession).toBe(0)
+    await service.tick()
+    loaded = await loadState(root, Date.now())
+    expect(loaded.usage.costUsdSession).toBe(0.4)
+    expect(loaded.usage.tokens.d1).toBe(12)
+  })
+
+  it('holds the task when the host commit fails after a started delegate', async () => {
+    const root = await mkdtempInRepo('devloop-svc-commit-hold-')
+    await mkdir(join(root, '.devloop'))
+    await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
+    await initGitRepo(root)
+    await saveState(root, {
+      ...emptyState(Date.now()),
+      tasks: [makeTask({ id: 'd1', status: 'ready', title: 'Add persist' })],
+    })
+    class DirtyStartedBackend implements AgentBackend {
       async run(input: AgentRunInput): Promise<AgentRunResult> {
         if (!input.worktreeRoot) throw new Error('missing worktree')
         await writeFile(join(input.worktreeRoot, 'src.txt'), 'worker\n', 'utf8')
@@ -851,37 +898,21 @@ describe('DevloopService', () => {
         if (!match?.[1]) throw new Error('missing gitdir')
         const gitDir = isAbsolute(match[1]) ? match[1] : join(input.worktreeRoot, match[1])
         await writeFile(join(gitDir, 'index.lock'), '', 'utf8')
-        const held = new Promise<void>(resolve => {
-          this.releaseLock = resolve
-        })
-        const acquired = new Promise<void>(resolve => {
-          void withStateLock(root, async () => {
-            resolve()
-            await held
-          })
-        })
-        await acquired
         return { status: 'started' }
       }
       async cancel() {}
       async health() { return 'ok' }
     }
     const ctx = new Context()
-    const backend = new DirtyLockedBackend()
     const service = new DevloopService(ctx, resolveConfig({
       root,
       tickIntervalMs: 60_000,
       enabled: false,
-    }), backend)
+    }), new DirtyStartedBackend())
     services.push(service)
     await service.tick()
-    let loaded = await loadState(root, Date.now())
-    expect(loaded.supervisor).toBeNull()
-    expect(loaded.lastAction).toEqual({ type: 'delegate', taskId: 'd1' })
-    backend.releaseLock()
-    await new Promise(resolve => setTimeout(resolve, 20))
-    await service.tick()
-    loaded = await loadState(root, Date.now())
+    const loaded = await loadState(root, Date.now())
     expect(loaded.supervisor).toEqual({ taskId: 'd1', reason: 'parent_commit_failed' })
+    expect(loaded.lastAction).toEqual({ type: 'escalate', taskId: 'd1', reason: 'parent_commit_failed' })
   })
 })

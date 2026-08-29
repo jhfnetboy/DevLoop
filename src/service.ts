@@ -288,6 +288,11 @@ export default class DevloopService extends Service {
                   this.ctx.logger.info('[dsh-devloop] cost signals deferred: lock held')
                 }
               } catch (error) {
+                this.pendingSignals = {
+                  taskId,
+                  tokens: dispatched.tokens,
+                  costUsd: dispatched.costUsd,
+                }
                 this.ctx.logger.error('[dsh-devloop] cost signal persist failed', error)
               }
             }
@@ -334,12 +339,19 @@ function isolatedPlan(agentBackend: Config['agentBackend']): boolean {
   return agentBackend === 'claude' || agentBackend === 'codex'
 }
 
+const SYNTHETIC_STATE_HALTS = new Set(['unreadable_state', 'invalid_state', 'escaped_devloop'])
+
 async function snapshotProgress(
   root: string,
   state: LoopState,
   now: number,
   log: { error(message: string, ...rest: unknown[]): void },
 ): Promise<void> {
+  const reason = state.supervisor?.reason
+  if (reason && SYNTHETIC_STATE_HALTS.has(reason)) {
+    log.error(`[dsh-devloop] PROGRESS.md skipped: ${reason}`)
+    return
+  }
   try {
     await writeProgress(root, state, now)
   } catch (error) {
@@ -354,17 +366,21 @@ async function persistCostSignals(
   log: { error(message: string, ...rest: unknown[]): void; info(message: string, ...rest: unknown[]): void },
 ): Promise<LockResult<void>> {
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    const folded = await withStateLock(root, async () => {
-      const current = await loadState(root, Date.now())
-      if (current.killSwitch || current.supervisor) return
-      const next = {
-        ...current,
-        usage: applyRunSignals(current.usage, taskId, Date.now(), dispatched),
-      }
-      await saveState(root, next)
-      await snapshotProgress(root, next, Date.now(), log)
-    })
-    if (folded.ok) return folded
+    try {
+      const folded = await withStateLock(root, async () => {
+        const current = await loadState(root, Date.now())
+        if (current.killSwitch || current.supervisor) return
+        const next = {
+          ...current,
+          usage: applyRunSignals(current.usage, taskId, Date.now(), dispatched),
+        }
+        await saveState(root, next)
+        await snapshotProgress(root, next, Date.now(), log)
+      })
+      if (folded.ok) return folded
+    } catch {
+      // Treat write/lock IO failures like contention so the caller can defer.
+    }
     if (attempt === 0) await new Promise(resolve => setTimeout(resolve, 50))
   }
   return { ok: false }
