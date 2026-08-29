@@ -12,13 +12,24 @@ function runTimeoutMs(input: AgentRunInput): number {
 }
 
 function claudeArgv(input: AgentRunInput): string[] {
-  const mode = input.action.type === 'plan' ? 'plan' : 'acceptEdits'
-  return ['-p', '--permission-mode', mode, headlessPrompt(input)]
+  const mode = input.action.type === 'delegate' ? 'acceptEdits' : 'plan'
+  return ['-p', '--permission-mode', mode, cliPrompt(input)]
 }
 
 function codexArgv(input: AgentRunInput): string[] {
-  const sandbox = input.action.type === 'plan' ? 'read-only' : 'workspace-write'
-  return ['exec', '--sandbox', sandbox, headlessPrompt(input)]
+  const sandbox = input.action.type === 'delegate' ? 'workspace-write' : 'read-only'
+  return ['exec', '--sandbox', sandbox, cliPrompt(input)]
+}
+
+function cliPrompt(input: AgentRunInput): string {
+  const base = headlessPrompt(input)
+  if (input.action.type === 'delegate') {
+    return `${base}\nCommit validated changes on this task branch before exiting. Do not leave a dirty worktree.`
+  }
+  if (input.action.type === 'review') {
+    return `${base}\nDo not edit files. Verdict only.`
+  }
+  return base
 }
 
 async function samePath(left: string, right: string): Promise<boolean> {
@@ -87,7 +98,7 @@ async function probeHelp(runner: HeadlessRunner, command: string): Promise<'ok' 
 
 /**
  * One-shot `claude -p --permission-mode … "<task>"` in a worktree.
- * Plan uses `plan` (read-only). Delegate/review use `acceptEdits`.
+ * Plan and review use `plan` (read-only). Delegate uses `acceptEdits`.
  */
 export class ClaudeCliBackend implements AgentBackend {
   constructor(
@@ -108,7 +119,7 @@ export class ClaudeCliBackend implements AgentBackend {
 
 /**
  * One-shot `codex exec --sandbox … "<task>"` in a worktree.
- * Plan uses `read-only`. Delegate/review use `workspace-write`.
+ * Plan and review use `read-only`. Delegate uses `workspace-write`.
  */
 export class CodexCliBackend implements AgentBackend {
   constructor(

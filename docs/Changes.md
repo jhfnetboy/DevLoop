@@ -166,8 +166,8 @@ Optional Claude CLI / Codex CLI T3 adapters. Default stays `noop`. No unattended
 ### 代码
 
 - `Config.agentBackend`：`'noop' | 'dsh' | 'claude' | 'codex'`，默认仍 `'noop'`
-- `ClaudeCliBackend`：`claude -p --permission-mode acceptEdits "<prompt>"`（plan 用 `plan`）；cwd 必须是 worktree
-- `CodexCliBackend`：`codex exec --sandbox workspace-write "<prompt>"`（plan 用 `read-only`）；stdin ignore，避免挂满 timeout
+- `ClaudeCliBackend`：`claude -p --permission-mode …`；**delegate** 才 `acceptEdits`，plan/review 用 `plan`；cwd 必须是 worktree；delegate prompt 要求提交，避免脏 worktree 合不进去
+- `CodexCliBackend`：`codex exec --sandbox …`；**delegate** 才 `workspace-write`，plan/review 用 `read-only`；stdin ignore，避免挂满 timeout
 - 共享 `defaultRunner`：Unix 进程组 SIGTERM/SIGKILL，abort 先等 SIGKILL 且等 `close` 再 settle（`close` 仍不来才再等一段宽限期，避免 Windows `taskkill` 失败时永久挂死）；buffer 按 UTF-8 字节计；Windows 经 `cmd.exe /d /v:off /s /c` 跑 `.cmd` shim（关掉 delayed expansion，整段命令再包一层引号，token 用 `""` 转义，并对 CRT 会吞掉的尾部/`"` 前反斜杠加倍），并用 `System32\\taskkill.exe /T` 加 `child.kill` 杀进程树（`spawn` 挂 `error` 监听，避免 ENOENT 打崩宿主）；超 `maxBuffer` 后停写并 destroy stdout/stderr
 - T3 `plan` 在保留 worktree `_loop-plan` 里以 **detached HEAD** 跑（不创建、不 reset、不删除 `devloop/_loop-plan` 分支），并拷入 `GOAL.md`（目标若是 symlink 先 unlink，避免 copyFile 跟出去）；复用前拒绝 symlink/junction 别名，且 git 注册路径必须就是 `_loop-plan`；CLI plan stdout 写入 `.devloop/PLAN.md`，review stdout 写入 `.devloop/REVIEW.md`
 - 无论 dispatch 是否开始，本次 tick 建出的 plan worktree 都会在 `finally` 里删掉

@@ -41,8 +41,20 @@ function planInput(worktreeRoot: string | null) {
   }
 }
 
+function delegateInput(worktreeRoot: string) {
+  return {
+    ...runInputFor(
+      '/repo',
+      { type: 'delegate', taskId: 'd1' },
+      baseState({ tasks: [makeTask({ id: 'd1', status: 'ready', title: 'Add persist' })] }),
+      limits,
+    ),
+    worktreeRoot,
+  }
+}
+
 describe('ClaudeCliBackend', () => {
-  it('runs claude -p --permission-mode acceptEdits in the worktree without a shell', async () => {
+  it('runs claude -p --permission-mode plan for review without write access', async () => {
     const calls: HeadlessRun[] = []
     const backend = new ClaudeCliBackend(fakeRunner(calls))
     const input = reviewInput('/repo/.devloop/worktrees/d1')
@@ -51,11 +63,25 @@ describe('ClaudeCliBackend', () => {
     expect(calls[0]?.argv).toEqual([
       '-p',
       '--permission-mode',
-      'acceptEdits',
+      'plan',
       expect.stringContaining('Review task d1'),
     ])
+    expect(calls[0]?.argv[3]).toContain('Do not edit files')
     expect(calls[0]?.cwd).toBe('/repo/.devloop/worktrees/d1')
     expect(calls[0]?.timeoutMs).toBe(limits.taskTimeoutMinutes * 60_000)
+  })
+
+  it('uses acceptEdits for delegate and asks for a commit', async () => {
+    const calls: HeadlessRun[] = []
+    const backend = new ClaudeCliBackend(fakeRunner(calls))
+    await backend.run(delegateInput('/repo/.devloop/worktrees/d1'))
+    expect(calls[0]?.argv).toEqual([
+      '-p',
+      '--permission-mode',
+      'acceptEdits',
+      expect.stringContaining('Execute task d1'),
+    ])
+    expect(calls[0]?.argv[3]).toContain('Commit validated changes')
   })
 
   it('uses permission-mode plan for plan ticks', async () => {
@@ -162,7 +188,7 @@ describe('ClaudeCliBackend', () => {
 })
 
 describe('CodexCliBackend', () => {
-  it('runs codex exec --sandbox workspace-write in the worktree without a shell', async () => {
+  it('runs codex exec --sandbox read-only for review', async () => {
     const calls: HeadlessRun[] = []
     const backend = new CodexCliBackend(fakeRunner(calls))
     const input = reviewInput('/repo/.devloop/worktrees/d1')
@@ -171,11 +197,25 @@ describe('CodexCliBackend', () => {
     expect(calls[0]?.argv).toEqual([
       'exec',
       '--sandbox',
-      'workspace-write',
+      'read-only',
       expect.stringContaining('Review task d1'),
     ])
+    expect(calls[0]?.argv[3]).toContain('Do not edit files')
     expect(calls[0]?.cwd).toBe('/repo/.devloop/worktrees/d1')
     expect(calls[0]?.timeoutMs).toBe(limits.taskTimeoutMinutes * 60_000)
+  })
+
+  it('uses workspace-write for delegate and asks for a commit', async () => {
+    const calls: HeadlessRun[] = []
+    const backend = new CodexCliBackend(fakeRunner(calls))
+    await backend.run(delegateInput('/repo/.devloop/worktrees/d1'))
+    expect(calls[0]?.argv).toEqual([
+      'exec',
+      '--sandbox',
+      'workspace-write',
+      expect.stringContaining('Execute task d1'),
+    ])
+    expect(calls[0]?.argv[3]).toContain('Commit validated changes')
   })
 
   it('uses read-only sandbox for plan ticks', async () => {
