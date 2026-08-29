@@ -1,5 +1,8 @@
+import { lstat, realpath, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import type { AgentBackend, AgentRunInput, AgentRunResult } from './backend.js'
 import { headlessPrompt, type HeadlessRunner } from './dsh.js'
+import { DEVLOOP_DIR } from './persist.js'
 import { defaultRunner } from './spawn.js'
 
 const PLAN_TIMEOUT_MS = 45 * 60_000
@@ -18,6 +21,31 @@ function codexArgv(input: AgentRunInput): string[] {
   return ['exec', '--sandbox', sandbox, headlessPrompt(input)]
 }
 
+async function samePath(left: string, right: string): Promise<boolean> {
+  try {
+    return await realpath(left) === await realpath(right)
+  } catch {
+    return left === right
+  }
+}
+
+async function writePlanStdout(workspaceRoot: string, stdout: string): Promise<void> {
+  if (stdout.trim().length === 0) return
+  const dir = join(workspaceRoot, DEVLOOP_DIR)
+  const dirMeta = await lstat(dir)
+  if (dirMeta.isSymbolicLink() || !dirMeta.isDirectory()) {
+    throw new Error('refusing symlink .devloop')
+  }
+  const file = join(dir, 'PLAN.md')
+  try {
+    const fileMeta = await lstat(file)
+    if (fileMeta.isSymbolicLink()) throw new Error('refusing symlink PLAN.md')
+  } catch (error) {
+    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error
+  }
+  await writeFile(file, stdout.endsWith('\n') ? stdout : `${stdout}\n`, 'utf8')
+}
+
 async function runCli(
   runner: HeadlessRunner,
   command: string,
@@ -26,11 +54,14 @@ async function runCli(
   failLabel: string,
 ): Promise<AgentRunResult> {
   const cwd = input.worktreeRoot
-  if (!cwd) {
+  if (!cwd || await samePath(cwd, input.workspaceRoot)) {
     return { status: 'failed', detail: 'refusing to run T3 CLI at workspace root' }
   }
   try {
-    await runner({ command, argv, cwd, timeoutMs: runTimeoutMs(input), signal: input.signal })
+    const { stdout } = await runner({ command, argv, cwd, timeoutMs: runTimeoutMs(input), signal: input.signal })
+    if (input.action.type === 'plan') {
+      await writePlanStdout(input.workspaceRoot, stdout)
+    }
     return { status: 'started' }
   } catch (error) {
     const detail = error instanceof Error ? error.message : failLabel

@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, readFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -79,6 +79,27 @@ describe('ClaudeCliBackend', () => {
       detail: 'refusing to run T3 CLI at workspace root',
     })
     expect(calls).toHaveLength(0)
+  })
+
+  it('refuses when worktreeRoot is the workspace root', async () => {
+    const calls: HeadlessRun[] = []
+    const backend = new ClaudeCliBackend(fakeRunner(calls))
+    await expect(backend.run(planInput('/repo'))).resolves.toEqual({
+      status: 'failed',
+      detail: 'refusing to run T3 CLI at workspace root',
+    })
+    expect(calls).toHaveLength(0)
+  })
+
+  it('writes plan stdout to workspace PLAN.md before the caller drops the worktree', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'devloop-plan-out-'))
+    await mkdir(join(root, '.devloop'))
+    const backend = new ClaudeCliBackend(async () => ({ stdout: '# Tasks\n- one\n', stderr: '' }))
+    await expect(backend.run({
+      ...planInput(join(root, 'wt')),
+      workspaceRoot: root,
+    })).resolves.toEqual({ status: 'started' })
+    await expect(readFile(join(root, '.devloop', 'PLAN.md'), 'utf8')).resolves.toBe('# Tasks\n- one\n')
   })
 
   it('passes permission-mode and the prompt as separate argv entries', async () => {

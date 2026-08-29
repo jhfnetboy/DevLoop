@@ -40,13 +40,14 @@ export function defaultRunner(request: HeadlessRun): Promise<{ stdout: string, s
     let killTimer: ReturnType<typeof setTimeout> | undefined
     let timeoutTimer: ReturnType<typeof setTimeout> | undefined
     let overflowed = false
+    let killing = false
     const maxBuffer = request.maxBuffer ?? MAX_SPAWN_BUFFER
 
     const finish = (error: Error | null) => {
       if (settled) return
       settled = true
       if (timeoutTimer) clearTimeout(timeoutTimer)
-      if (killTimer) clearTimeout(killTimer)
+      if (killTimer && !killing) clearTimeout(killTimer)
       request.signal?.removeEventListener('abort', onAbort)
       if (error) reject(error)
       else resolve({ stdout, stderr })
@@ -57,6 +58,7 @@ export function defaultRunner(request: HeadlessRun): Promise<{ stdout: string, s
     }
 
     const onAbort = () => {
+      killing = true
       killTree('SIGTERM')
       if (!killTimer) {
         killTimer = setTimeout(() => killTree('SIGKILL'), SIGKILL_GRACE_MS)
