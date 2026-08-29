@@ -1,4 +1,4 @@
-import { lstat, realpath, writeFile } from 'node:fs/promises'
+import { lstat, realpath, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { AgentBackend, AgentRunInput, AgentRunResult } from './backend.js'
 import { headlessPrompt, type HeadlessRunner } from './dsh.js'
@@ -7,18 +7,48 @@ import { defaultRunner } from './spawn.js'
 
 const PLAN_TIMEOUT_MS = 45 * 60_000
 
+/** Constrained git + test Bash rules. Space before * is required prefix match. */
+export const CLAUDE_DELEGATE_TOOLS = [
+  'Bash(git add *)',
+  'Bash(git commit *)',
+  'Bash(git status *)',
+  'Bash(git diff *)',
+  'Bash(git log *)',
+  'Bash(pnpm test *)',
+].join(',')
+
 function runTimeoutMs(input: AgentRunInput): number {
   return input.contract ? input.contract.budget.maxMinutes * 60_000 : PLAN_TIMEOUT_MS
 }
 
 function claudeArgv(input: AgentRunInput): string[] {
   const mode = input.action.type === 'delegate' ? 'acceptEdits' : 'plan'
-  return ['-p', '--permission-mode', mode, cliPrompt(input)]
+  if (input.action.type !== 'delegate') {
+    return ['-p', '--permission-mode', mode, cliPrompt(input)]
+  }
+  return ['-p', '--permission-mode', mode, '--allowedTools', CLAUDE_DELEGATE_TOOLS, cliPrompt(input)]
+}
+
+function workspaceGitDir(workspaceRoot: string): string {
+  return join(workspaceRoot, '.git')
 }
 
 function codexArgv(input: AgentRunInput): string[] {
   const sandbox = input.action.type === 'delegate' ? 'workspace-write' : 'read-only'
-  return ['exec', '--sandbox', sandbox, cliPrompt(input)]
+  if (input.action.type !== 'delegate') {
+    return ['exec', '--sandbox', sandbox, cliPrompt(input)]
+  }
+  const gitDir = workspaceGitDir(input.workspaceRoot)
+  return [
+    'exec',
+    '--sandbox',
+    sandbox,
+    '--add-dir',
+    gitDir,
+    '-c',
+    `sandbox_workspace_write.writable_roots=${JSON.stringify([gitDir])}`,
+    cliPrompt(input),
+  ]
 }
 
 function cliPrompt(input: AgentRunInput): string {
@@ -40,19 +70,36 @@ async function samePath(left: string, right: string): Promise<boolean> {
   }
 }
 
+function isEnoent(error: unknown): boolean {
+  return error instanceof Error && 'code' in error && error.code === 'ENOENT'
+}
+
 async function writeDevloopNote(workspaceRoot: string, filename: 'PLAN.md' | 'REVIEW.md', stdout: string): Promise<void> {
-  if (stdout.trim().length === 0) return
   const dir = join(workspaceRoot, DEVLOOP_DIR)
+  const file = join(dir, filename)
+  if (stdout.trim().length === 0) {
+    try {
+      const dirMeta = await lstat(dir)
+      if (dirMeta.isSymbolicLink() || !dirMeta.isDirectory()) {
+        throw new Error('refusing symlink .devloop')
+      }
+      const fileMeta = await lstat(file)
+      if (fileMeta.isSymbolicLink()) throw new Error(`refusing symlink ${filename}`)
+      await unlink(file)
+    } catch (error) {
+      if (!isEnoent(error)) throw error
+    }
+    return
+  }
   const dirMeta = await lstat(dir)
   if (dirMeta.isSymbolicLink() || !dirMeta.isDirectory()) {
     throw new Error('refusing symlink .devloop')
   }
-  const file = join(dir, filename)
   try {
     const fileMeta = await lstat(file)
     if (fileMeta.isSymbolicLink()) throw new Error(`refusing symlink ${filename}`)
   } catch (error) {
-    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error
+    if (!isEnoent(error)) throw error
   }
   await writeFile(file, stdout.endsWith('\n') ? stdout : `${stdout}\n`, 'utf8')
 }
@@ -98,7 +145,8 @@ async function probeHelp(runner: HeadlessRunner, command: string): Promise<'ok' 
 
 /**
  * One-shot `claude -p --permission-mode … "<task>"` in a worktree.
- * Plan and review use `plan` (read-only). Delegate uses `acceptEdits`.
+ * Plan and review use `plan` (read-only). Delegate uses `acceptEdits`
+ * plus constrained `--allowedTools` so noninteractive `-p` can git-commit.
  */
 export class ClaudeCliBackend implements AgentBackend {
   constructor(
@@ -119,7 +167,8 @@ export class ClaudeCliBackend implements AgentBackend {
 
 /**
  * One-shot `codex exec --sandbox … "<task>"` in a worktree.
- * Plan and review use `read-only`. Delegate uses `workspace-write`.
+ * Plan and review use `read-only`. Delegate uses `workspace-write` and
+ * adds the workspace `.git` to the writable scope (linked worktree metadata).
  */
 export class CodexCliBackend implements AgentBackend {
   constructor(

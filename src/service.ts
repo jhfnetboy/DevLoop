@@ -12,6 +12,8 @@ import { ConfigSchema, resolveConfig, type Config } from './config.js'
 import { ClaudeCliBackend, CodexCliBackend } from './cli.js'
 import { DshHeadlessBackend } from './dsh.js'
 import { loadState, saveState, withStateLock, workspaceArmed } from './persist.js'
+import { writeProgress } from './progress.js'
+import { applyRunSignals, rollCostWindows } from './budget.js'
 import { runTick, type TickResult } from './tick.js'
 import type { LoopState } from './types.js'
 import { RUNNER_REAP_MS } from './spawn.js'
@@ -40,6 +42,7 @@ export default class DevloopService extends Service {
   readonly backend: AgentBackend
   private timer: ReturnType<typeof setInterval> | null = null
   private busy = false
+  private sessionCostReset = false
   private disposed = false
   private dispatchAbort: AbortController | null = null
 
@@ -86,7 +89,15 @@ export default class DevloopService extends Service {
         worktreeRoot: string | null
       } | undefined> => {
         if (this.disposed) return
-        const current = await loadState(this.config.root, now)
+        let current = await loadState(this.config.root, now)
+        let sessionRolled = false
+        if (!this.sessionCostReset && !current.killSwitch && current.usage.costUsdSession !== 0) {
+          current = {
+            ...current,
+            usage: rollCostWindows(current.usage, now, true),
+          }
+          sessionRolled = true
+        }
         if (current.supervisor?.reason === 'unreadable_state') {
           this.ctx.logger.error('[dsh-devloop] tick skipped: unreadable STATE.json')
           return
@@ -151,6 +162,7 @@ export default class DevloopService extends Service {
         if (!result.skipped) {
           try {
             await saveState(this.config.root, result.state)
+            this.sessionCostReset = true
             this.ctx.logger.info(`[dsh-devloop] tick action=${result.action.type}`)
           } catch (error) {
             if (worktreeRoot && result.action.type === 'plan' && isolatedPlan(this.config.agentBackend)) {
@@ -163,6 +175,16 @@ export default class DevloopService extends Service {
             }
             throw error
           }
+        } else if (sessionRolled) {
+          await saveState(this.config.root, result.state)
+          this.sessionCostReset = true
+        } else {
+          this.sessionCostReset = true
+        }
+        try {
+          await writeProgress(this.config.root, result.state, now)
+        } catch (error) {
+          this.ctx.logger.error('[dsh-devloop] PROGRESS.md write failed', error)
         }
         if (result.action.type === 'stop' || result.state.killSwitch) {
           this.stop()
@@ -198,7 +220,7 @@ export default class DevloopService extends Service {
           const timer = setTimeout(() => abort.abort(), timeoutMs)
           const action = outcome.value.result.action
           try {
-            await awaitDispatch(
+            const dispatched = await awaitDispatch(
               dispatchTick(
                 this.backend,
                 this.config.root,
@@ -211,6 +233,33 @@ export default class DevloopService extends Service {
               ),
               abort.signal,
             )
+            const hasSignals = dispatched
+              && (finitePositive(dispatched.tokens) || finitePositive(dispatched.costUsd))
+            if (hasSignals && dispatched && !this.disposed) {
+              const taskId = action.type === 'delegate' || action.type === 'review' ? action.taskId : null
+              try {
+                const folded = await withStateLock(this.config.root, async () => {
+                  if (this.disposed) return
+                  const current = await loadState(this.config.root, Date.now())
+                  if (current.killSwitch || current.supervisor) return
+                  const next = {
+                    ...current,
+                    usage: applyRunSignals(current.usage, taskId, Date.now(), dispatched),
+                  }
+                  await saveState(this.config.root, next)
+                  try {
+                    await writeProgress(this.config.root, next, Date.now())
+                  } catch (error) {
+                    this.ctx.logger.error('[dsh-devloop] PROGRESS.md write failed', error)
+                  }
+                })
+                if (!folded.ok) {
+                  this.ctx.logger.info('[dsh-devloop] cost signals skipped: lock held')
+                }
+              } catch (error) {
+                this.ctx.logger.error('[dsh-devloop] cost signal persist failed', error)
+              }
+            }
           } catch (error) {
             if (!this.disposed) {
               const timeout = error instanceof Error && error.message === 'backend timeout'
@@ -261,10 +310,13 @@ const DISPATCH_REAP_GRACE_MS = RUNNER_REAP_MS + 250
  * abort signal fires and the backend ignores it, cap the wait so `busy`
  * cannot stick forever.
  */
-async function awaitDispatch(work: Promise<unknown>, signal: AbortSignal): Promise<void> {
+async function awaitDispatch<T>(work: Promise<T>, signal: AbortSignal): Promise<T | undefined> {
+  let value: T | undefined
   let failure: unknown
   const settled = work.then(
-    () => undefined,
+    result => {
+      value = result
+    },
     error => {
       failure = error
     },
@@ -289,6 +341,11 @@ async function awaitDispatch(work: Promise<unknown>, signal: AbortSignal): Promi
   if (failure !== undefined) {
     throw failure instanceof Error ? failure : new Error(String(failure))
   }
+  return value
+}
+
+function finitePositive(value: number | undefined): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
 }
 
 function mergeHoldReason(error: unknown): 'empty_task' | 'merge_wedged' | 'unknown_base' | null {

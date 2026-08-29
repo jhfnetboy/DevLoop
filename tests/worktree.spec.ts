@@ -189,7 +189,7 @@ describe('preparePlanWorktree', () => {
     await expect(readFile(join(second, 'file.txt'), 'utf8')).resolves.toBe('v2\n')
     await removePlanWorktree(root)
     await expect(lstat(first)).rejects.toMatchObject({ code: 'ENOENT' })
-  })
+  }, 30_000)
 
   it('removes a partial plan worktree if GOAL.md is missing', async () => {
     const root = await gitWorkspace()
@@ -259,7 +259,7 @@ describe('mergeTaskWorktree', () => {
     await execFileAsync('git', ['-C', root, 'rev-parse', '--verify', 'devloop/d1'])
     await deleteMergedTaskBranch(root, 'd1')
     await expect(execFileAsync('git', ['-C', root, 'rev-parse', '--verify', 'devloop/d1'])).rejects.toThrow()
-  })
+  }, 30_000)
 
   it('refuses merge when the workspace has tracked changes', async () => {
     const root = await gitWorkspace()

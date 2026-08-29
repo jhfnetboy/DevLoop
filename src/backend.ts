@@ -15,11 +15,13 @@ export interface AgentRunInput {
 export interface AgentRunResult {
   readonly status: 'recorded' | 'started' | 'failed'
   readonly detail?: string
+  readonly tokens?: number
+  readonly costUsd?: number
 }
 
 /**
  * Adapter boundary for DSH / Codex / Claude workers.
- * `cancel` / `health` are reserved; 0.2.5 production calls `run` on noop / dsh / claude / codex.
+ * `cancel` / `health` are reserved; 0.3 production calls `run` on noop / dsh / claude / codex.
  */
 export interface AgentBackend {
   run(input: AgentRunInput): Promise<AgentRunResult>
@@ -78,7 +80,7 @@ export async function dispatchTick(
   log: DispatchLog,
   worktreeRoot: string | null = null,
   signal?: AbortSignal,
-): Promise<void> {
+): Promise<AgentRunResult | undefined> {
   if (!isAgentAction(action)) return
   const input = runInputFor(workspaceRoot, action, state, limits)
   if (action.type !== 'plan' && !input.contract) {
@@ -90,6 +92,7 @@ export async function dispatchTick(
     if (dispatched.status === 'failed') {
       log.error(`[dsh-devloop] backend failed: ${dispatched.detail ?? 'unknown'}`)
     }
+    return dispatched
   } catch (error) {
     log.error('[dsh-devloop] backend threw', error)
   }

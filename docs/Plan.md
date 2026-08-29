@@ -2,7 +2,7 @@
 
 按阶段推进。每阶段一个分支、一个 PR，不把前一阶段自行合进 main。新阶段从最新阶段分支拉出。
 
-**当前分支实现 0.2.5（T3 CLI adapters）。0.2.4 已合入 `main`（PR #11）。0.3 未开始。**
+**当前分支实现 0.3（无人值守循环）。0.2.5 已合入 `main`（PR #12）。**
 
 0.1 只做「能安装的 DSH 插件 + 可测试的调度核心」。不在本阶段接真实 Worker 进程。
 
@@ -32,16 +32,16 @@
 | 0.2.2 | git worktree + 写入 Task Contract | delegate 时隔离目录存在合同文件 | **Done** (PR #6) |
 | 0.2.3 | DSH headless 实现 `AgentBackend.run` | 覆盖 `createBackend()`（cordis 只传 ctx+config）；`agentBackend: dsh` 真派一次 `dsh --profile headless`；默认 `noop` 不 spawn；超时 abort；不改 Loop 纯函数 | **Done** (PR #7, tag v0.2.3) |
 | 0.2.4 | 机械 `/merge` 脚本 | 无 Review PASS 不能合；合完删 worktree | **Done** (PR #11) |
-| 0.2.5 | Codex / Claude CLI 作为 T3 最小接线 | 可选 adapter；生产默认仍是 `noop` / `dsh`，不经过 `RecordingBackend` | **This slice** |
+| 0.2.5 | Codex / Claude CLI 作为 T3 最小接线 | 可选 adapter；生产默认仍是 `noop` / `dsh`，不经过 `RecordingBackend` | **Done** (PR #12) |
 
 **本阶段明确不做**：Web UI、OpenCode adapter、LiteLLM、日预算面板。
 
 ## Milestone 0.3 — Unattended loop
 
-**未开始。** 在 0.2.4 与 0.2.5 都已合入 `main` 之后开始。这才是「24 小时按规划路径自我迭代」的里程碑。
+**This slice.** Continuous `setInterval` tick (already in 0.2), one-shot dispatch (next tick waits; at most one in flight), optional token/cost signals, `.devloop/PROGRESS.md`.
 
 - `devloop run` 式持续 tick（程序循环）
-- 自动泵：一任务一 fresh agent
+- 自动泵：每个 dispatch 是一次 one-shot；同一时刻最多一个（下一拍等）
 - 熔断接入真实 token / 成本信号（能拿到多少算多少，拿不到用墙钟）
 - 进度汇总写入 PROGRESS.md
 
