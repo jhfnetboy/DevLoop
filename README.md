@@ -4,7 +4,7 @@ DeepSeek Harness plugin: **expensive models plan and review, cheap models implem
 
 This repository is `dsh-devloop`. It is not another coding agent and it does not fork DSH core. Design and decisions: [docs/](https://github.com/jhfnetboy/DevLoop/tree/main/docs).
 
-## What 0.2.3 does
+## What 0.2.4 does
 
 - Installs into a DSH profile as a bundle plugin
 - On each tick, if the workspace has `.devloop/GOAL.md`, reads `STATE.json` and records the next loop action (plan / delegate / review / merge / stop)
@@ -13,6 +13,7 @@ This repository is `dsh-devloop`. It is not another coding agent and it does not
 - After writing STATE, plan / delegate / review is handed to `AgentBackend.run` (NoopBackend in production, outside the lock)
 - `delegate` creates `.devloop/worktrees/<taskId>` and writes `.devloop/CONTRACT.json` inside it
 - Set `agentBackend: dsh` to spawn `dsh --profile headless "<task>"` in the worktree (or workspace)
+- `merge` is mechanical git: `merge_ready` plus Review `PASS` / `PASS_WITH_NOTES` merges `devloop/<taskId>` into workspace HEAD, deletes the worktree, marks the task `done`. No PASS → escalate. Does not push. Does not call AgentBackend.
 
 Install: [`docs/Install.md`](./docs/Install.md). This cut: [`docs/Release.md`](./docs/Release.md).
 
@@ -34,7 +35,7 @@ The expensive-vs-cheap split is from [`docs/Solution.md`](./docs/Solution.md). T
 
 ## Progress vs that target
 
-**0.2.4 is not done.** Current tag is **v0.2.3**. Mechanical merge, Claude/Codex CLI, and the 24h unattended loop are still ahead.
+**0.2.4 is this slice.** Mechanical merge lands after Review PASS. Claude/Codex CLI and the 24h unattended loop are still ahead.
 
 | Slice | Status | Meaning |
 |---|---|---|
@@ -42,7 +43,7 @@ The expensive-vs-cheap split is from [`docs/Solution.md`](./docs/Solution.md). T
 | 0.2.1 | **Done** | `AgentBackend` after lock; production default `noop` |
 | 0.2.2 | **Done** | Worktree + frozen Task Contract |
 | 0.2.3 | **Done** (tag `v0.2.3`) | Opt-in `dsh --profile headless`; same command for plan/delegate/review; no tier split |
-| **0.2.4** | **Not started** | Mechanical merge only after Review PASS; then delete worktree |
+| **0.2.4** | **This slice** | Mechanical merge only after Review PASS; then delete worktree |
 | **0.2.5** | **Not started** | Spawn `claude` / `codex` as T3; DSH Flash/Pro remain T1/T2 |
 | **0.3** | **Not started** | Unattended 24h loop, auto-pump, PROGRESS.md |
 | **0.4** | **Not started** | Operator UI / human queue / budget panel — **not** required for the autonomous loop |
@@ -50,8 +51,8 @@ The expensive-vs-cheap split is from [`docs/Solution.md`](./docs/Solution.md). T
 Path to the goal you described:
 
 ```text
-v0.2.3 (now)
-  → 0.2.4 mechanical merge          # land code, delete worktree
+v0.2.3
+  → 0.2.4 mechanical merge          # this slice: land code, delete worktree
   → 0.2.5 Claude + Codex T3 CLIs    # plan/review vs implement split
   → 0.3 unattended loop             # 24h self-iteration under budget
 ```
@@ -70,7 +71,7 @@ flowchart LR
     Plugin -->|escalate| You
 ```
 
-Harness is the agent runtime. This plugin is the engineering scheduler. Default `noop` only writes the next action. `agentBackend: dsh` also spawns one-shot headless. Merge is still STATE-only.
+Harness is the agent runtime. This plugin is the engineering scheduler. Default `noop` only writes the next action. `agentBackend: dsh` also spawns one-shot headless. Merge is mechanical git after Review PASS.
 
 ## Tick (what ships now)
 
@@ -123,23 +124,23 @@ flowchart TB
     Progress --> SM
 ```
 
-Until 0.2.4, `merge` is still STATE-only. Headless spawn is opt-in via `agentBackend: dsh`.
+Until 0.2.5, plan / delegate / review still share the same headless command. Merge lands git locally and does not push.
 
-## Can 0.2.3 meet the product goal?
+## Can 0.2.4 meet the product goal?
 
 The goal is: expensive models plan and review, cheap models implement, a program loop keeps the factory inside budget.
 
-| Goal slice | 0.2.3 |
+| Goal slice | 0.2.4 |
 |---|---|
 | DSH plugin, not a new runtime | Yes. Bundle + Cordis Service. |
 | Program loop, one transition per tick | Yes. Pure `decideNextAction` plus `runTick`. |
 | Hard budget / kill switch | Yes, in-process. No live token/cost feed yet. |
 | File-backed recoverability | Partial. `GOAL.md` + `STATE.json` + `LOCK` + worktree `CONTRACT.json`. No PLAN / PROGRESS yet. |
-| Cheap workers actually implement | Partial. Opt-in `agentBackend: dsh` spawns one-shot `dsh --profile headless`; it does not pick a cheap worker via `contract.tier`. Merge still does not land code. |
-| Expensive models actually review | Partial. Plan / delegate / review all use that same headless command; there is no higher-tier reviewer routing. PASS / REWORK is operator-driven. |
+| Cheap workers actually implement | Partial. Opt-in `agentBackend: dsh` spawns one-shot `dsh --profile headless`; it does not pick a cheap worker via `contract.tier`. Merge lands local git after Review PASS; it does not push. |
+| Expensive models actually review | Partial. Plan / delegate / review all use that same headless command; there is no higher-tier reviewer routing. PASS / REWORK is still operator-driven (or a later T3 CLI). |
 | Unattended milestone completion | **No.** 0.3. |
 
-0.2.3 is the installable scheduler plus optional headless dispatch. It cannot yet turn a GOAL into merged code (**0.2.4**), cannot spawn Claude/Codex (**0.2.5**), and cannot run unattended 24h (**0.3**).
+0.2.4 can turn a Review PASS into merged code on the local branch. It cannot spawn Claude/Codex (**0.2.5**), and cannot run unattended 24h (**0.3**).
 
 ## Requirements
 

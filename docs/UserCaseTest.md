@@ -1,4 +1,4 @@
-# User-case tests (0.1–0.2.3)
+# User-case tests (0.1–0.2.4)
 
 Default `agentBackend: noop` does not spawn workers. These cases map product flows to automated specs. Manual checks after install are listed at the end.
 
@@ -8,13 +8,14 @@ Default `agentBackend: noop` does not spawn workers. These cases map product flo
 | UC-02 | Loop | No tasks → record `plan` | Plan 0.1.3 / Features F1 in `tests/one-to-one.spec.ts` |
 | UC-03 | Operator | Inject a ready task → record `delegate` | `tests/flow.spec.ts` |
 | UC-04 | Operator | Mark `review_pending` → record `review` | `tests/flow.spec.ts` |
-| UC-05 | Operator | Mark `merge_ready` → record `merge` | `tests/flow.spec.ts` |
+| UC-05 | Operator | Mark `merge_ready` + Review PASS → git merge, delete worktree, task `done` | `tests/flow.spec.ts`, `tests/worktree.spec.ts`, `tests/service.spec.ts` |
 | UC-06 | Operator | Mark `done` → `stop` / kill switch | `tests/flow.spec.ts` |
 | UC-07 | Reviewer | Rework after failed review → retry delegate | `tests/flow.spec.ts`, `tests/persist.spec.ts` |
 | UC-08 | Budget | Exhausted attempts halt and stay halted | `tests/flow.spec.ts`, Plan 0.1.4 |
 | UC-09 | Security | High-risk ready task escalates | Features P4 in `tests/one-to-one.spec.ts` |
 | UC-10 | Install | Package is a DSH bundle plugin | Plan 0.1.2 in `tests/one-to-one.spec.ts` |
 | UC-11 | Operator | Opt-in `agentBackend: dsh` spawns one-shot headless; default stays Noop | Plan 0.2.3 in `tests/dsh.spec.ts`, `tests/one-to-one.spec.ts` |
+| UC-12 | Loop | `merge_ready` without PASS escalates; git conflict aborts and retries | Plan 0.2.4 in `tests/loop.spec.ts`, `tests/worktree.spec.ts` |
 
 ## Manual after GitHub publish
 

@@ -19,7 +19,7 @@ export interface AgentRunResult {
 
 /**
  * Adapter boundary for DSH / Codex / Claude workers.
- * `cancel` / `health` are reserved; 0.2.3 production only calls `run`.
+ * `cancel` / `health` are reserved; 0.2.4 production only calls `run`.
  */
 export interface AgentBackend {
   run(input: AgentRunInput): Promise<AgentRunResult>

@@ -236,14 +236,55 @@ describe('persist and tick', () => {
     expect(loaded.supervisor?.reason).toBe('invalid_state')
   })
 
-  it('round-trips STATE.json', async () => {
+  it('round-trips STATE.json including lastReviewVerdict', async () => {
     const root = await mkdtemp(join(tmpdir(), 'devloop-'))
     await mkdir(join(root, '.devloop'))
-    const state = emptyState(1)
+    const state = {
+      ...emptyState(1),
+      tasks: [{ ...sampleTask('merge_ready'), lastReviewVerdict: 'PASS' as const }],
+    }
     await saveState(root, state)
     const loaded = await loadState(root, 2)
     expect(loaded.version).toBe(1)
     expect(loaded.lastAction).toEqual({ type: 'idle' })
+    expect(loaded.tasks[0]?.lastReviewVerdict).toBe('PASS')
+  })
+
+  it('round-trips STATE.json including task baseSha', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'devloop-'))
+    await mkdir(join(root, '.devloop'))
+    const baseSha = 'a'.repeat(40)
+    const state = {
+      ...emptyState(1),
+      tasks: [{ ...sampleTask('merge_ready'), baseSha }],
+    }
+    await saveState(root, state)
+    const loaded = await loadState(root, 2)
+    expect(loaded.tasks[0]?.baseSha).toBe(baseSha)
+  })
+
+  it('halts when task baseSha is not a 40-hex git SHA', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'devloop-'))
+    await mkdir(join(root, '.devloop'))
+    await writeFile(join(root, '.devloop', 'STATE.json'), JSON.stringify({
+      ...emptyState(0),
+      tasks: [{ ...sampleTask('merge_ready'), baseSha: 'not-a-sha' }],
+    }), 'utf8')
+    const loaded = await loadState(root, 1)
+    expect(loaded.killSwitch).toBe(true)
+    expect(loaded.supervisor?.reason).toBe('invalid_state')
+  })
+
+  it('halts when lastReviewVerdict is not a known verdict', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'devloop-'))
+    await mkdir(join(root, '.devloop'))
+    await writeFile(join(root, '.devloop', 'STATE.json'), JSON.stringify({
+      ...emptyState(0),
+      tasks: [{ ...sampleTask('merge_ready'), lastReviewVerdict: 'SHIP_IT' }],
+    }), 'utf8')
+    const loaded = await loadState(root, 1)
+    expect(loaded.killSwitch).toBe(true)
+    expect(loaded.supervisor?.reason).toBe('invalid_state')
   })
 
   it('records plan when the armed workspace has no tasks', () => {
@@ -251,6 +292,33 @@ describe('persist and tick', () => {
     expect(result.action).toEqual({ type: 'plan' })
     expect(result.state.lastAction).toEqual({ type: 'plan' })
     expect(result.skipped).toBe(false)
+  })
+
+  it('does not latch merge so a failed git merge can retry', () => {
+    const limits = resolveConfig({}).budget
+    const first = runTick({
+      ...emptyState(0),
+      tasks: [{ ...sampleTask('merge_ready'), lastReviewVerdict: 'PASS' }],
+    }, limits, 10)
+    expect(first.action).toEqual({ type: 'merge', taskId: 't-1' })
+    const second = runTick(first.state, limits, 20)
+    expect(second.skipped).toBe(false)
+    expect(second.action).toEqual({ type: 'merge', taskId: 't-1' })
+  })
+
+  it('halts repeated merge ticks via duplicate_action', () => {
+    const limits = resolveConfig({}).budget
+    let beat = runTick({
+      ...emptyState(0),
+      tasks: [{ ...sampleTask('merge_ready'), lastReviewVerdict: 'PASS' }],
+    }, limits, 10)
+    for (let i = 1; i < limits.maxSameAction; i += 1) {
+      beat = runTick(beat.state, limits, 10 + i)
+      expect(beat.action).toEqual({ type: 'merge', taskId: 't-1' })
+    }
+    const halted = runTick(beat.state, limits, 10 + limits.maxSameAction)
+    expect(halted.action).toEqual({ type: 'stop', reason: 'budget' })
+    expect(halted.state.supervisor?.reason).toBe('duplicate_action:merge:t-1')
   })
 
   it('latches a repeated plan instead of rewriting state', () => {

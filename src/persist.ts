@@ -1,7 +1,7 @@
 import { link, lstat, mkdir, readFile, realpath, rename, rm, unlink, utimes, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { emptyUsage } from './budget.js'
-import type { LoopState, ModelTier, Risk, TaskStatus } from './types.js'
+import type { LoopState, ModelTier, ReviewVerdict, Risk, TaskStatus } from './types.js'
 import { STATE_VERSION } from './types.js'
 
 export const DEVLOOP_DIR = '.devloop'
@@ -322,6 +322,13 @@ const TASK_STATUSES = new Set<TaskStatus>([
 ])
 const MODEL_TIERS = new Set<ModelTier>(['T0', 'T1', 'T2', 'T3'])
 const RISKS = new Set<Risk>(['low', 'medium', 'high'])
+const REVIEW_VERDICTS = new Set<ReviewVerdict>([
+  'PASS',
+  'PASS_WITH_NOTES',
+  'REWORK',
+  'REPLAN',
+  'BLOCKED',
+])
 
 function isTaskShape(value: unknown): boolean {
   if (typeof value !== 'object' || value === null) return false
@@ -336,6 +343,8 @@ function isTaskShape(value: unknown): boolean {
     && isNonNegInt(task.reviewCycles)
     && isStringArray(task.allowedPaths)
     && isStringArray(task.acceptance)
+    && (task.lastReviewVerdict === undefined || REVIEW_VERDICTS.has(task.lastReviewVerdict as ReviewVerdict))
+    && (task.baseSha === undefined || (typeof task.baseSha === 'string' && /^[0-9a-f]{40}$/i.test(task.baseSha)))
 }
 
 function isUsageShape(value: unknown): boolean {

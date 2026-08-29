@@ -29,6 +29,9 @@ export interface Task {
   readonly reviewCycles: number
   readonly allowedPaths: readonly string[]
   readonly acceptance: readonly string[]
+  readonly lastReviewVerdict?: ReviewVerdict
+  /** Git SHA of the task branch at delegate. Merge refuses if the branch is still this. */
+  readonly baseSha?: string
 }
 
 export interface SupervisorHold {
@@ -80,6 +83,8 @@ export interface TaskContract {
     readonly maxMinutes: number
     readonly maxAttempts: number
   }
+  /** Git SHA of the task branch at delegate time. Merge refuses if HEAD of the branch is still this. */
+  readonly baseSha?: string
 }
 
 export interface Route {

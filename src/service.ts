@@ -4,6 +4,7 @@ import { Service, type Context } from '@deepseek-ai/cordis'
 import {
   NoopBackend,
   dispatchTick,
+  isAgentAction,
   runInputFor,
   type AgentBackend,
 } from './backend.js'
@@ -11,7 +12,8 @@ import { ConfigSchema, resolveConfig, type Config } from './config.js'
 import { DshHeadlessBackend } from './dsh.js'
 import { loadState, saveState, withStateLock, workspaceArmed } from './persist.js'
 import { runTick, type TickResult } from './tick.js'
-import { prepareDelegateWorktree, worktreePath } from './worktree.js'
+import type { LoopState } from './types.js'
+import { prepareDelegateWorktree, mergeTaskWorktree, deleteMergedTaskBranch, worktreePath, readContractBaseSha } from './worktree.js'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -23,7 +25,9 @@ declare module '@deepseek-ai/cordis' {
  * Host service: a process-local timer drives one deterministic tick against
  * `<root>/.devloop/`. After STATE is written, plan/delegate/review is handed to
  * `AgentBackend` outside the lock. Delegate also creates a git worktree and
- * writes CONTRACT.json. Set `agentBackend: 'dsh'` to spawn one-shot headless.
+ * writes CONTRACT.json. Merge (0.2.4) git-merges the task branch after
+ * Review PASS, then deletes the worktree. Set `agentBackend: 'dsh'` to spawn
+ * one-shot headless.
  */
 export default class DevloopService extends Service {
   static inject = []
@@ -89,7 +93,7 @@ export default class DevloopService extends Service {
           this.stop()
           return
         }
-        const result = runTick(current, this.config.budget, now)
+        let result = runTick(current, this.config.budget, now)
         if (this.disposed) return
         let worktreeRoot: string | null = null
         if (!result.skipped && result.action.type === 'delegate') {
@@ -97,6 +101,13 @@ export default class DevloopService extends Service {
           if (input.contract) {
             try {
               worktreeRoot = await prepareDelegateWorktree(this.config.root, input.contract)
+              const baseSha = await readContractBaseSha(worktreeRoot)
+              if (baseSha) {
+                result = {
+                  ...result,
+                  state: stampTaskBaseSha(result.state, result.action.taskId, baseSha),
+                }
+              }
             } catch (error) {
               this.ctx.logger.error('[dsh-devloop] worktree failed', error)
               return
@@ -104,6 +115,29 @@ export default class DevloopService extends Service {
           }
         } else if (!result.skipped && result.action.type === 'review') {
           worktreeRoot = await existingWorktreeRoot(this.config.root, result.action.taskId)
+        } else if (!result.skipped && result.action.type === 'merge') {
+          const mergeTaskId = result.action.taskId
+          try {
+            await mergeTaskWorktree(
+              this.config.root,
+              mergeTaskId,
+              result.state.tasks.find(task => task.id === mergeTaskId)?.baseSha ?? null,
+            )
+            result = {
+              ...result,
+              state: markTaskDone(result.state, mergeTaskId),
+            }
+          } catch (error) {
+            this.ctx.logger.error('[dsh-devloop] merge failed', error)
+            const reason = mergeHoldReason(error)
+            if (reason) {
+              result = {
+                ...result,
+                action: { type: 'escalate', taskId: mergeTaskId, reason },
+                state: holdTask(result.state, mergeTaskId, reason),
+              }
+            }
+          }
         }
         if (!result.skipped) {
           await saveState(this.config.root, result.state)
@@ -118,8 +152,21 @@ export default class DevloopService extends Service {
         this.ctx.logger.info('[dsh-devloop] tick skipped: lock held')
         return
       }
+      const tick = outcome.value?.result
+      const mergeAction = tick?.action
+      const mergedTaskId = mergeAction?.type === 'merge'
+        && tick?.state.tasks.some(task => task.id === mergeAction.taskId && task.status === 'done')
+        ? mergeAction.taskId
+        : null
+      if (mergedTaskId) {
+        try {
+          await deleteMergedTaskBranch(this.config.root, mergedTaskId)
+        } catch (error) {
+          this.ctx.logger.error('[dsh-devloop] task branch cleanup failed', error)
+        }
+      }
       if (this.disposed) return
-      if (outcome.value && !outcome.value.result.skipped) {
+      if (outcome.value && !outcome.value.result.skipped && isAgentAction(outcome.value.result.action)) {
         const abort = new AbortController()
         this.dispatchAbort = abort
         const timeoutMs = this.config.budget.taskTimeoutMinutes * 60_000
@@ -181,6 +228,36 @@ function raceAbort<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
       },
     )
   })
+}
+
+function mergeHoldReason(error: unknown): 'empty_task' | 'merge_wedged' | 'unknown_base' | null {
+  const message = error instanceof Error ? error.message : ''
+  if (message.startsWith('empty_task')) return 'empty_task'
+  if (message.startsWith('merge_wedged')) return 'merge_wedged'
+  if (message.startsWith('unknown_base')) return 'unknown_base'
+  return null
+}
+
+function holdTask(state: LoopState, taskId: string, reason: string): LoopState {
+  return {
+    ...state,
+    supervisor: { taskId, reason },
+    lastAction: { type: 'escalate', taskId, reason },
+  }
+}
+
+function stampTaskBaseSha(state: LoopState, taskId: string, baseSha: string): LoopState {
+  return {
+    ...state,
+    tasks: state.tasks.map(task => task.id === taskId ? { ...task, baseSha } : task),
+  }
+}
+
+function markTaskDone(state: LoopState, taskId: string): LoopState {
+  return {
+    ...state,
+    tasks: state.tasks.map(task => task.id === taskId ? { ...task, status: 'done' } : task),
+  }
 }
 
 async function existingWorktreeRoot(root: string, taskId: string): Promise<string | null> {

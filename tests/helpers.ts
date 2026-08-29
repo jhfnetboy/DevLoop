@@ -43,10 +43,10 @@ export function withTasks(state: LoopState, tasks: readonly Task[]): LoopState {
   return { ...state, tasks }
 }
 
-export function setStatus(state: LoopState, id: string, status: TaskStatus): LoopState {
+export function setStatus(state: LoopState, id: string, status: TaskStatus, extra: Partial<Task> = {}): LoopState {
   return {
     ...state,
-    tasks: state.tasks.map(task => task.id === id ? { ...task, status } : task),
+    tasks: state.tasks.map(task => task.id === id ? { ...task, status, ...extra } : task),
   }
 }
 
