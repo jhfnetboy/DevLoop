@@ -66,18 +66,22 @@ describe('prepareDelegateWorktree', () => {
     const dest = await prepareDelegateWorktree(root, contract)
     expect(dest).toBe(worktreePath(root, 'd1'))
     const raw = await readFile(join(dest, '.devloop', 'CONTRACT.json'), 'utf8')
-    expect(JSON.parse(raw)).toEqual(contract)
+    const parsed = JSON.parse(raw) as { taskId: string; baseSha: string }
+    expect(parsed).toEqual({ ...contract, baseSha: parsed.baseSha })
+    expect(parsed.baseSha).toMatch(/^[0-9a-f]{40}$/)
     await expect(readFile(join(root, 'README.md'), 'utf8')).resolves.toContain('# t')
   })
 
   it('reuses an existing worktree and rewrites the contract', async () => {
     const root = await gitWorkspace()
     const first = await prepareDelegateWorktree(root, contractFor('d1'))
+    const firstSha = JSON.parse(await readFile(join(first, '.devloop', 'CONTRACT.json'), 'utf8')).baseSha as string
     const updated = { ...contractFor('d1'), title: 'Updated' }
     const second = await prepareDelegateWorktree(root, updated)
     expect(second).toBe(first)
-    const raw = await readFile(join(first, '.devloop', 'CONTRACT.json'), 'utf8')
-    expect(JSON.parse(raw).title).toBe('Updated')
+    const parsed = JSON.parse(await readFile(join(first, '.devloop', 'CONTRACT.json'), 'utf8')) as { title: string; baseSha: string }
+    expect(parsed.title).toBe('Updated')
+    expect(parsed.baseSha).toBe(firstSha)
   })
 
   it('refuses a destination that already exists and is not a worktree', async () => {
@@ -173,6 +177,14 @@ describe('mergeTaskWorktree', () => {
   it('refuses merge when the worktree is missing', async () => {
     const root = await gitWorkspace()
     await expect(mergeTaskWorktree(root, 'd1')).rejects.toThrow(/registered task worktree/)
+  })
+
+  it('refuses an empty task branch that never moved past delegate', async () => {
+    const root = await gitWorkspace()
+    const dest = await prepareDelegateWorktree(root, contractFor('d1'))
+    await expect(mergeTaskWorktree(root, 'd1')).rejects.toThrow(/empty_task/)
+    expect(await pathExists(dest)).toBe(true)
+    await execFileAsync('git', ['-C', root, 'rev-parse', '--verify', 'devloop/d1'])
   })
 
   it('aborts a conflicted merge and leaves HEAD clean', async () => {

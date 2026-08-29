@@ -109,14 +109,23 @@ export default class DevloopService extends Service {
         } else if (!result.skipped && result.action.type === 'review') {
           worktreeRoot = await existingWorktreeRoot(this.config.root, result.action.taskId)
         } else if (!result.skipped && result.action.type === 'merge') {
+          const mergeTaskId = result.action.taskId
           try {
-            await mergeTaskWorktree(this.config.root, result.action.taskId)
+            await mergeTaskWorktree(this.config.root, mergeTaskId)
             result = {
               ...result,
-              state: markTaskDone(result.state, result.action.taskId),
+              state: markTaskDone(result.state, mergeTaskId),
             }
           } catch (error) {
             this.ctx.logger.error('[dsh-devloop] merge failed', error)
+            const reason = mergeHoldReason(error)
+            if (reason) {
+              result = {
+                ...result,
+                action: { type: 'escalate', taskId: mergeTaskId, reason },
+                state: holdTask(result.state, mergeTaskId, reason),
+              }
+            }
           }
         }
         if (!result.skipped) {
@@ -208,6 +217,21 @@ function raceAbort<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
       },
     )
   })
+}
+
+function mergeHoldReason(error: unknown): 'empty_task' | 'merge_wedged' | null {
+  const message = error instanceof Error ? error.message : ''
+  if (message.startsWith('empty_task')) return 'empty_task'
+  if (message.startsWith('merge_wedged')) return 'merge_wedged'
+  return null
+}
+
+function holdTask(state: LoopState, taskId: string, reason: string): LoopState {
+  return {
+    ...state,
+    supervisor: { taskId, reason },
+    lastAction: { type: 'escalate', taskId, reason },
+  }
 }
 
 function markTaskDone(state: LoopState, taskId: string): LoopState {

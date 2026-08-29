@@ -81,6 +81,8 @@ export interface TaskContract {
     readonly maxMinutes: number
     readonly maxAttempts: number
   }
+  /** Git SHA of the task branch at delegate time. Merge refuses if HEAD of the branch is still this. */
+  readonly baseSha?: string
 }
 
 export interface Route {

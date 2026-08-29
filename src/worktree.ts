@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { lstat, mkdir, realpath, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, readFile, realpath, writeFile } from 'node:fs/promises'
 import { join, sep } from 'node:path'
 import { promisify } from 'node:util'
 import { DEVLOOP_DIR, devloopDir } from './persist.js'
@@ -64,13 +64,13 @@ export async function prepareDelegateWorktree(root: string, contract: TaskContra
     }
     await assertInside(pool, dest)
     await ensureWorktreeBranch(dest, branch)
-    await writeContractFile(dest, contract)
+    await writeContractFile(dest, await stampBaseSha(dest, contract))
     return dest
   }
 
   await git(resolvedRoot, ['worktree', 'add', '-B', branch, dest])
   await assertInside(pool, dest)
-  await writeContractFile(dest, contract)
+  await writeContractFile(dest, await stampBaseSha(dest, contract))
   return dest
 }
 
@@ -124,14 +124,20 @@ export async function mergeTaskWorktree(root: string, taskId: string): Promise<v
     throw new Error('workspace has tracked changes; commit or stash them before merge')
   }
 
+  const baseSha = present ? await readContractBaseSha(dest) : null
+  const branchSha = (await git(resolvedRoot, ['rev-parse', `refs/heads/${branch}`])).trim()
+  if (baseSha !== null && branchSha.toLowerCase() === baseSha) {
+    throw new Error('empty_task')
+  }
+
   try {
     await git(resolvedRoot, ['merge', '--no-edit', '-m', `devloop: merge ${token}`, branch])
   } catch (error) {
     if (await mergeHeadExists(resolvedRoot)) {
       try {
         await git(resolvedRoot, ['merge', '--abort'])
-      } catch {
-        // Report the original merge failure even if abort itself fails.
+      } catch (abortError) {
+        throw new Error('merge_wedged: git merge --abort failed', { cause: abortError })
       }
     }
     const stderr = error instanceof Error && 'stderr' in error
@@ -169,6 +175,24 @@ export async function deleteMergedTaskBranch(root: string, taskId: string): Prom
     if (await gitOk(resolvedRoot, ['rev-parse', '--verify', `refs/heads/${branch}`])) {
       throw error
     }
+  }
+}
+
+async function stampBaseSha(worktreeRoot: string, contract: TaskContract): Promise<TaskContract> {
+  const head = (await git(worktreeRoot, ['rev-parse', 'HEAD'])).trim()
+  const previous = await readContractBaseSha(worktreeRoot)
+  return { ...contract, baseSha: previous ?? head }
+}
+
+async function readContractBaseSha(worktreeRoot: string): Promise<string | null> {
+  try {
+    const raw = await readFile(join(worktreeRoot, DEVLOOP_DIR, CONTRACT_FILE), 'utf8')
+    const parsed: unknown = JSON.parse(raw)
+    if (typeof parsed !== 'object' || parsed === null) return null
+    const sha = (parsed as { baseSha?: unknown }).baseSha
+    return typeof sha === 'string' && /^[0-9a-f]{40}$/i.test(sha) ? sha.toLowerCase() : null
+  } catch {
+    return null
   }
 }
 
