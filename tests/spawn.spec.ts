@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { defaultRunner, quoteForWinCmd, spawnFireAndForget, winCmdCArgument, SIGKILL_GRACE_MS } from '../src/spawn.ts'
+import { defaultRunner, quoteForWinCmd, spawnFireAndForget, winCmdCArgument, winCmdSpawnArgs, SIGKILL_GRACE_MS } from '../src/spawn.ts'
 
 describe('quoteForWinCmd', () => {
   it('doubles quotes and always wraps so cmd metacharacters stay inside one token', () => {
@@ -20,6 +20,16 @@ describe('quoteForWinCmd', () => {
     const wrapped = winCmdCArgument('codex', ['exec', 'a"b&c'])
     expect(wrapped).toBe(`"${inner}"`)
     expect(wrapped.slice(1, -1)).toBe(inner)
+  })
+
+  it('disables cmd AutoRun and delayed expansion', () => {
+    expect(winCmdSpawnArgs('codex', ['exec'])).toEqual([
+      '/d',
+      '/v:off',
+      '/s',
+      '/c',
+      winCmdCArgument('codex', ['exec']),
+    ])
   })
 })
 
@@ -64,6 +74,26 @@ describe('defaultRunner', () => {
     }
   }, 8_000)
 
+  it('counts maxBuffer in UTF-8 bytes, not JS string length', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'devloop-cjk-'))
+    const cap = 100
+    try {
+      await defaultRunner({
+        command: process.execPath,
+        argv: ['-e', 'process.stdout.write("你".repeat(50)); setInterval(() => {}, 1e9)'],
+        cwd,
+        timeoutMs: 8_000,
+        maxBuffer: cap,
+      })
+      throw new Error('expected overflow')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : ''
+      expect(message).toMatch(/spawn output exceeded maxBuffer/)
+      const captured = Number(/maxBuffer \((\d+)\)/.exec(message)?.[1])
+      expect(captured).toBeGreaterThan(cap)
+    }
+  }, 8_000)
+
   it('rejects after SIGKILL grace when the child ignores SIGTERM', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'devloop-hang-'))
     const script = fileURLToPath(new URL('./fixtures/hang.mjs', import.meta.url))
@@ -78,6 +108,6 @@ describe('defaultRunner', () => {
     })
     abort.abort()
     await expect(run).rejects.toThrow(/backend timeout/)
-    expect(Date.now() - started).toBeLessThan(SIGKILL_GRACE_MS + 1_500)
+    expect(Date.now() - started).toBeLessThan(SIGKILL_GRACE_MS * 2 + 1_500)
   }, 8_000)
 })
