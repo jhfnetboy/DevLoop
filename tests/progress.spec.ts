@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, symlink, writeFile } from 'node:fs/promises'
+import { link, mkdir, mkdtemp, readFile, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -69,5 +69,18 @@ describe('writeProgress', () => {
     await mkdir(outside)
     await symlink(outside, join(root, '.devloop'))
     await expect(writeProgress(root, emptyState(0), 0)).rejects.toThrow(/devloop directory must be a real directory/)
+  })
+
+  it('replaces a hardlinked PROGRESS.md without writing through the other name', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'devloop-progress-hard-'))
+    await mkdir(join(root, '.devloop'))
+    const victim = join(root, 'victim.txt')
+    await writeFile(victim, 'keep me\n', 'utf8')
+    await link(victim, join(root, '.devloop', 'PROGRESS.md'))
+    await writeProgress(root, emptyState(0), 0)
+    await expect(readFile(victim, 'utf8')).resolves.toBe('keep me\n')
+    const md = await readFile(join(root, '.devloop', 'PROGRESS.md'), 'utf8')
+    expect(md).toContain('# DevLoop progress')
+    expect(md).toContain('lastAction: idle')
   })
 })

@@ -1,4 +1,4 @@
-import { constants, open } from 'node:fs/promises'
+import { constants, lstat, open, rename, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { assertLocalDevloopDir, devloopDir } from './persist.js'
 import type { LoopAction, LoopState, Task } from './types.js'
@@ -42,18 +42,31 @@ export function renderProgress(state: LoopState, now: number): string {
 export async function writeProgress(root: string, state: LoopState, now: number): Promise<void> {
   await assertLocalDevloopDir(root)
   const file = progressPath(root)
-  const flags = constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW
+  try {
+    const meta = await lstat(file)
+    if (meta.isSymbolicLink()) throw new Error('refusing symlink PROGRESS.md')
+  } catch (error) {
+    if (!isNotFound(error)) throw error
+  }
+  const temp = `${file}.${String(process.pid)}.${String(Date.now())}.tmp`
+  const flags = constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW
   let handle
   try {
-    handle = await open(file, flags, 0o644)
+    handle = await open(temp, flags, 0o644)
   } catch (error) {
     if (isLoop(error)) throw new Error('refusing symlink PROGRESS.md')
     throw error
   }
   try {
-    await handle.writeFile(renderProgress(state, now), 'utf8')
-  } finally {
-    await handle.close()
+    try {
+      await handle.writeFile(renderProgress(state, now), 'utf8')
+    } finally {
+      await handle.close()
+    }
+    await rename(temp, file)
+  } catch (error) {
+    await unlink(temp).catch(() => undefined)
+    throw error
   }
 }
 
@@ -85,5 +98,9 @@ function formatCounts(counts: Record<string, number>): string {
 }
 
 function isLoop(error: unknown): boolean {
-  return typeof error === 'object' && error !== null && 'code' in error && (error as { code: string }).code === 'ELOOP'
+  return error instanceof Error && 'code' in error && (error.code === 'ELOOP' || error.code === 'EMLINK')
+}
+
+function isNotFound(error: unknown): boolean {
+  return error instanceof Error && 'code' in error && error.code === 'ENOENT'
 }
