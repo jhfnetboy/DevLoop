@@ -143,6 +143,7 @@ export async function removePlanWorktree(root: string): Promise<void> {
     if (await pathExists(dest)) {
       throw new Error(`failed to remove plan worktree: ${dest}`)
     }
+    await git(resolvedRoot, ['worktree', 'prune'])
   }
 }
 

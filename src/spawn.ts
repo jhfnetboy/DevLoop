@@ -130,7 +130,7 @@ function spawnCli(command: string, argv: readonly string[], options: SpawnOption
   if (process.platform !== 'win32') {
     return spawn(command, [...argv], { ...options, detached: true })
   }
-  const line = [command, ...argv].map(quoteForWinCmd).join(' ')
+  const line = winCmdCArgument(command, argv)
   return spawn(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', line], {
     ...options,
     detached: false,
@@ -145,6 +145,15 @@ function spawnCli(command: string, argv: readonly string[], options: SpawnOption
  */
 export function quoteForWinCmd(value: string): string {
   return `"${value.replace(/%/g, '%%').replace(/"/g, '""')}"`
+}
+
+/**
+ * `/s /c` strips the first and last quote on the remainder. Wrap the already
+ * token-quoted command so that strip leaves `"cmd" "arg"` intact.
+ */
+export function winCmdCArgument(command: string, argv: readonly string[]): string {
+  const line = [command, ...argv].map(quoteForWinCmd).join(' ')
+  return `"${line}"`
 }
 
 function killProcessTree(child: ChildProcess, signal: NodeJS.Signals): void {

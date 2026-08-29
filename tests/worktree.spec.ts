@@ -210,6 +210,16 @@ describe('preparePlanWorktree', () => {
     const { stdout: after } = await execFileAsync('git', ['-C', root, 'rev-parse', `${WORKTREE_BRANCH_PREFIX}${PLAN_WORKTREE_ID}`], { encoding: 'utf8' })
     expect(after.trim()).toBe(before.trim())
   })
+
+  it('prunes a stale git worktree registration when the directory is already gone', async () => {
+    const root = await gitWorkspace()
+    const dest = await preparePlanWorktree(root)
+    await rm(dest, { recursive: true, force: true })
+    await removePlanWorktree(root)
+    const again = await preparePlanWorktree(root)
+    expect(again).toBe(planWorktreePath(root))
+    await removePlanWorktree(root)
+  }, 30_000)
 })
 
 describe('mergeTaskWorktree', () => {

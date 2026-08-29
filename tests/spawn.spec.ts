@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { defaultRunner, quoteForWinCmd, spawnFireAndForget } from '../src/spawn.ts'
+import { defaultRunner, quoteForWinCmd, spawnFireAndForget, winCmdCArgument } from '../src/spawn.ts'
 
 describe('quoteForWinCmd', () => {
   it('doubles quotes and always wraps so cmd metacharacters stay inside one token', () => {
@@ -11,6 +11,13 @@ describe('quoteForWinCmd', () => {
     expect(quoteForWinCmd('a"b&calc')).toBe('"a""b&calc"')
     expect(quoteForWinCmd('100%')).toBe('"100%%"')
     expect(quoteForWinCmd('a"b&calc')).not.toContain('\\"')
+  })
+
+  it('wraps the full /c string so cmd /s strips only the outer quotes', () => {
+    const inner = `${quoteForWinCmd('codex')} ${quoteForWinCmd('exec')} ${quoteForWinCmd('a"b&c')}`
+    const wrapped = winCmdCArgument('codex', ['exec', 'a"b&c'])
+    expect(wrapped).toBe(`"${inner}"`)
+    expect(wrapped.slice(1, -1)).toBe(inner)
   })
 })
 
