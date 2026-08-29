@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { copyFile, lstat, mkdir, readFile, realpath, unlink, writeFile } from 'node:fs/promises'
-import { basename, dirname, join, sep } from 'node:path'
+import { basename, join, sep } from 'node:path'
 import { promisify } from 'node:util'
 import { DEVLOOP_DIR, devloopDir } from './persist.js'
 import type { TaskContract } from './types.js'
@@ -281,8 +281,7 @@ export async function commitDirtyTaskWorktree(worktreeRoot: string, taskId: stri
     throw new Error(`refusing parent commit: worktree HEAD is not ${expected}`)
   }
   const dest = await realpath(worktreeRoot)
-  const common = (await git(worktreeRoot, ['rev-parse', '--path-format=absolute', '--git-common-dir'])).trim().replace(/\/+$/, '')
-  const listed = await listedWorktreePaths(dirname(common))
+  const listed = await listedWorktreePaths(worktreeRoot)
   if (!await isRegisteredWorktree(listed, dest)) {
     throw new Error('refusing parent commit: worktree is not registered')
   }

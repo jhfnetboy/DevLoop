@@ -220,6 +220,15 @@ export default class DevloopService extends Service {
                 await commitDirtyTaskWorktree(outcome.value.worktreeRoot, action.taskId)
               } catch (error) {
                 this.ctx.logger.error('[dsh-devloop] parent commit failed', error)
+                try {
+                  await withStateLock(this.config.root, async () => {
+                    const current = await loadState(this.config.root, Date.now())
+                    if (current.killSwitch || current.supervisor) return
+                    await saveState(this.config.root, holdTask(current, action.taskId, 'parent_commit_failed'))
+                  })
+                } catch (holdError) {
+                  this.ctx.logger.error('[dsh-devloop] parent commit hold failed', holdError)
+                }
               }
             }
           } catch (error) {

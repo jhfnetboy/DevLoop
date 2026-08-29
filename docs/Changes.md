@@ -188,9 +188,9 @@ T3 follow-up after Codex RC on merged #12. No unattended loop (that's 0.3).
 
 ### 代码
 
-- Claude delegate: `--allowedTools Bash(pnpm *)` and `--` before the prompt (no git in the sandbox)
+- Claude delegate: `--` before the prompt; no Bash auto-approve (no `pnpm *` tunnel)
 - Codex delegate: `--add-dir` from the worktree `.git` `gitdir:` pointer
-- Host `commitDirtyTaskWorktree` after a started delegate: registered worktree, `refs/heads/devloop/<taskId>` only, hooks disabled
+- Host `commitDirtyTaskWorktree` after a started delegate: registered worktree, `refs/heads/devloop/<taskId>` only, hooks disabled; list worktrees from the worktree itself (separate-git-dir); commit failure latches `parent_commit_failed`
 - Empty plan/review stdout unlinks stale `PLAN.md` / `REVIEW.md`
 
 ### 可能影响
