@@ -221,6 +221,20 @@ describe('preparePlanWorktree', () => {
     expect((await lstat(taskDest)).isDirectory()).toBe(true)
   }, 30_000)
 
+  it('does not follow a destination GOAL.md symlink when reusing the plan worktree', async () => {
+    const root = await gitWorkspace()
+    const dest = await preparePlanWorktree(root)
+    const outside = join(root, 'outside.txt')
+    await writeFile(outside, 'keep\n', 'utf8')
+    const destGoal = join(dest, '.devloop', 'GOAL.md')
+    await rm(destGoal)
+    await symlink(outside, destGoal)
+    await preparePlanWorktree(root)
+    await expect(readFile(outside, 'utf8')).resolves.toBe('keep\n')
+    await expect(readFile(destGoal, 'utf8')).resolves.toBe('# Goal\n')
+    expect((await lstat(destGoal)).isSymbolicLink()).toBe(false)
+  }, 30_000)
+
   it('prunes a stale git worktree registration when the directory is already gone', async () => {
     const root = await gitWorkspace()
     const dest = await preparePlanWorktree(root)

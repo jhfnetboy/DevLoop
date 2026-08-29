@@ -11,6 +11,8 @@ describe('quoteForWinCmd', () => {
     expect(quoteForWinCmd('a"b&calc')).toBe('"a""b&calc"')
     expect(quoteForWinCmd('100%')).toBe('"100%%"')
     expect(quoteForWinCmd('a"b&calc')).not.toContain('\\"')
+    expect(quoteForWinCmd('hello\\')).toBe('"hello\\\\"')
+    expect(quoteForWinCmd('a\\"b')).toBe('"a\\\\""b"')
   })
 
   it('wraps the full /c string so cmd /s strips only the outer quotes', () => {

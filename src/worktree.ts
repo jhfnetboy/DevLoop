@@ -115,10 +115,7 @@ export async function preparePlanWorktree(root: string): Promise<string> {
     await git(dest, ['reset', '--hard', head])
     const srcGoal = join(resolvedRoot, DEVLOOP_DIR, 'GOAL.md')
     const destLoop = await ensureRealDir(join(dest, DEVLOOP_DIR), dest)
-    const destGoal = join(destLoop, 'GOAL.md')
-    const meta = await lstat(srcGoal)
-    if (meta.isSymbolicLink()) throw new Error('refusing symlink GOAL.md')
-    await copyFile(srcGoal, destGoal)
+    await copyWorkspaceGoal(srcGoal, destLoop)
     return dest
   } catch (error) {
     try {
@@ -287,6 +284,23 @@ export async function readContractBaseSha(worktreeRoot: string): Promise<string 
 function normalizeSha(value: string | null | undefined): string | null {
   if (typeof value !== 'string') return null
   return /^[0-9a-f]{40}$/i.test(value) ? value.toLowerCase() : null
+}
+
+async function copyWorkspaceGoal(srcGoal: string, destLoop: string): Promise<void> {
+  const destGoal = join(destLoop, 'GOAL.md')
+  const srcMeta = await lstat(srcGoal)
+  if (srcMeta.isSymbolicLink()) throw new Error('refusing symlink GOAL.md')
+  try {
+    const destMeta = await lstat(destGoal)
+    if (destMeta.isSymbolicLink()) {
+      await unlink(destGoal)
+    }
+  } catch (error) {
+    if (!isNotFound(error)) throw error
+  }
+  await copyFile(srcGoal, destGoal)
+  const written = await lstat(destGoal)
+  if (written.isSymbolicLink()) throw new Error('refusing symlink GOAL.md')
 }
 
 async function writeContractFile(worktreeRoot: string, contract: TaskContract): Promise<void> {

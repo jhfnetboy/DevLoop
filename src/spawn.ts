@@ -143,8 +143,17 @@ function spawnCli(command: string, argv: readonly string[], options: SpawnOption
  * Quote one argv token for `cmd.exe /s /c`. cmd does not treat `\` as a quote
  * escape; internal quotes are doubled. Always wrap so `&` `|` cannot inject.
  */
+/**
+ * Quote one argv token for `cmd /s /c` with `windowsVerbatimArguments`.
+ * cmd.exe uses `""` for an embedded quote. CommandLineToArgvW treats `\`
+ * immediately before `"` as escaping it, so those backslashes (and trailing
+ * backslashes before the closer) are doubled.
+ */
 export function quoteForWinCmd(value: string): string {
-  return `"${value.replace(/%/g, '%%').replace(/"/g, '""')}"`
+  const withPct = value.replace(/%/g, '%%')
+  const withBs = withPct.replace(/(\\*)"/g, (_all, bs: string) => `${bs}${bs}"`)
+  const trailed = withBs.replace(/(\\+)$/, m => m + m)
+  return `"${trailed.replace(/"/g, '""')}"`
 }
 
 /**
