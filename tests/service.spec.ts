@@ -577,6 +577,24 @@ describe('DevloopService', () => {
     expect(secondUpdated).not.toBe(firstUpdated)
   })
 
+  it('overwrites PROGRESS.md on a killSwitch tick', async () => {
+    const root = await armWorkspace()
+    const now = Date.now()
+    await saveState(root, { ...emptyState(now), killSwitch: true })
+    await writeFile(join(root, '.devloop', 'PROGRESS.md'), '- killSwitch: false\n', 'utf8')
+    const ctx = new Context()
+    const service = new DevloopService(ctx, resolveConfig({
+      root,
+      tickIntervalMs: 60_000,
+      enabled: false,
+    }))
+    services.push(service)
+    await service.tick()
+    const progress = await readFile(join(root, '.devloop', 'PROGRESS.md'), 'utf8')
+    expect(progress).toContain('killSwitch: true')
+    expect(progress).not.toContain('killSwitch: false')
+  })
+
   it('folds backend cost and tokens into STATE after dispatch', async () => {
     const root = await mkdtempInRepo('devloop-svc-cost-')
     await mkdir(join(root, '.devloop'))
@@ -668,6 +686,11 @@ describe('DevloopService', () => {
     services.push(service)
     await service.tick()
     await chmod(statePath(root), 0o644)
+    const unread = await loadState(root, Date.now())
+    expect(unread.usage.costUsdSession).toBe(5)
+    expect(unread.lastAction).toEqual({ type: 'idle' })
+    expect(unread.supervisor).toBeNull()
+    await expect(readFile(join(root, '.devloop', 'PROGRESS.md'), 'utf8')).resolves.toContain('unreadable_state')
     await service.tick()
     const loaded = await loadState(root, Date.now())
     expect(loaded.usage.costUsdSession).toBe(0)

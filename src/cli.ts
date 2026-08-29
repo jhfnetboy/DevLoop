@@ -1,5 +1,5 @@
 import { lstat, realpath, unlink, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import type { AgentBackend, AgentRunInput, AgentRunResult } from './backend.js'
 import { headlessPrompt, type HeadlessRunner } from './dsh.js'
 import { DEVLOOP_DIR } from './persist.js'
@@ -7,15 +7,12 @@ import { defaultRunner } from './spawn.js'
 
 const PLAN_TIMEOUT_MS = 45 * 60_000
 
-/** Constrained git + test Bash rules. Space before * is required prefix match. */
-export const CLAUDE_DELEGATE_TOOLS = [
-  'Bash(git add *)',
-  'Bash(git commit *)',
-  'Bash(git status *)',
-  'Bash(git diff *)',
-  'Bash(git log *)',
-  'Bash(pnpm test *)',
-].join(',')
+/**
+ * Prefix match (https://code.claude.com/docs/en/headless): a space before *
+ * matches that command plus args. `Bash(git status *)` would miss bare
+ * `git status`; `Bash(git *)` matches `git status` and `git commit -m`.
+ */
+export const CLAUDE_DELEGATE_TOOLS = ['Bash(git *)', 'Bash(pnpm *)'].join(',')
 
 function runTimeoutMs(input: AgentRunInput): number {
   return input.contract ? input.contract.budget.maxMinutes * 60_000 : PLAN_TIMEOUT_MS
@@ -29,8 +26,9 @@ function claudeArgv(input: AgentRunInput): string[] {
   return ['-p', '--permission-mode', mode, '--allowedTools', CLAUDE_DELEGATE_TOOLS, cliPrompt(input)]
 }
 
-function workspaceGitDir(workspaceRoot: string): string {
-  return join(workspaceRoot, '.git')
+function linkedWorktreeGitDir(input: AgentRunInput): string | null {
+  if (!input.worktreeRoot) return null
+  return join(input.workspaceRoot, '.git', 'worktrees', basename(input.worktreeRoot))
 }
 
 function codexArgv(input: AgentRunInput): string[] {
@@ -38,17 +36,11 @@ function codexArgv(input: AgentRunInput): string[] {
   if (input.action.type !== 'delegate') {
     return ['exec', '--sandbox', sandbox, cliPrompt(input)]
   }
-  const gitDir = workspaceGitDir(input.workspaceRoot)
-  return [
-    'exec',
-    '--sandbox',
-    sandbox,
-    '--add-dir',
-    gitDir,
-    '-c',
-    `sandbox_workspace_write.writable_roots=${JSON.stringify([gitDir])}`,
-    cliPrompt(input),
-  ]
+  const gitDir = linkedWorktreeGitDir(input)
+  const argv = ['exec', '--sandbox', sandbox]
+  if (gitDir) argv.push('--add-dir', gitDir)
+  argv.push(cliPrompt(input))
+  return argv
 }
 
 function cliPrompt(input: AgentRunInput): string {
@@ -168,7 +160,8 @@ export class ClaudeCliBackend implements AgentBackend {
 /**
  * One-shot `codex exec --sandbox … "<task>"` in a worktree.
  * Plan and review use `read-only`. Delegate uses `workspace-write` and
- * adds the workspace `.git` to the writable scope (linked worktree metadata).
+ * `--add-dir` only `.git/worktrees/<id>` (not hooks/refs/objects). The host
+ * commits dirty task worktrees after a successful started run.
  */
 export class CodexCliBackend implements AgentBackend {
   constructor(

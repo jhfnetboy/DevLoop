@@ -84,9 +84,7 @@ describe('ClaudeCliBackend', () => {
       expect.stringContaining('Execute task d1'),
     ])
     expect(calls[0]?.argv.at(-1)).toContain('Commit validated changes')
-    expect(CLAUDE_DELEGATE_TOOLS).toContain('Bash(git commit *)')
-    expect(CLAUDE_DELEGATE_TOOLS).toContain('Bash(git add *)')
-    expect(CLAUDE_DELEGATE_TOOLS).toContain('Bash(pnpm test *)')
+    expect(CLAUDE_DELEGATE_TOOLS).toBe('Bash(git *),Bash(pnpm *)')
   })
 
   it('uses permission-mode plan for plan ticks', async () => {
@@ -242,9 +240,7 @@ describe('CodexCliBackend', () => {
       '--sandbox',
       'workspace-write',
       '--add-dir',
-      '/repo/.git',
-      '-c',
-      'sandbox_workspace_write.writable_roots=["/repo/.git"]',
+      '/repo/.git/worktrees/d1',
       expect.stringContaining('Execute task d1'),
     ])
     expect(calls[0]?.argv.at(-1)).toContain('Commit validated changes')

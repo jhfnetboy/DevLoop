@@ -188,11 +188,11 @@ Unattended loop: continuous tick, one-shot auto-pump, PROGRESS.md, optional cost
 
 ### 代码
 
-- 每个 tick（含 latched / idle）都写 `.devloop/PROGRESS.md`（给人看；STATE 仍是权威）。`O_NOFOLLOW` 拒绝 symlink 目标
+- 每个 tick（含 latched / idle / killSwitch / unreadable STATE）都写 `.devloop/PROGRESS.md`（给人看；STATE 仍是权威）。`O_NOFOLLOW` 拒绝 symlink 目标
 - 一拍最多一个 dispatch（`busy`）；下一拍等上一拍结束。每个 dispatch 仍是新的 one-shot AbortController
 - `AgentRunResult.tokens` / `costUsd` 可选；有有限正数才折进 usage。进程启动清零 `costUsdSession`（成功写入 STATE 之后才记一次，unreadable STATE 不烧掉这次机会）；UTC 日期变了清零 `costUsdDay`
 - 折费用时若 STATE 已 killSwitch / supervisor，不覆盖任务列表
-- T3 follow-up after Codex RC on #12: Claude delegate adds constrained `--allowedTools` for git add/commit/status/diff/log and `pnpm test`; Codex delegate `--add-dir` + `writable_roots` for workspace `.git`; empty plan/review stdout unlinks stale `PLAN.md` / `REVIEW.md`
+- T3 follow-up after Codex RC on #12: Claude delegate `--allowedTools Bash(git *)` / `Bash(pnpm *)`; Codex `--add-dir` only `.git/worktrees/<id>` (host `commitDirtyTaskWorktree` after started); empty plan/review stdout unlinks stale `PLAN.md` / `REVIEW.md`
 - Loop 纯函数未改
 
 ### 可能影响

@@ -11,6 +11,7 @@ import {
   prepareDelegateWorktree,
   preparePlanWorktree,
   removePlanWorktree,
+  commitDirtyTaskWorktree,
   PLAN_WORKTREE_ID,
   WORKTREE_BRANCH_PREFIX,
   planWorktreePath,
@@ -139,6 +140,18 @@ describe('prepareDelegateWorktree', () => {
     const { stdout } = await execFileAsync('git', ['-C', dest, 'show', '--name-only', '--pretty=format:', 'HEAD'], { encoding: 'utf8' })
     expect(stdout).toContain('src.txt')
     expect(stdout).not.toContain('CONTRACT.json')
+  })
+
+  it('commits dirty task files from the host process', async () => {
+    const root = await gitWorkspace()
+    const dest = await prepareDelegateWorktree(root, contractFor('d1'))
+    await writeFile(join(dest, 'src.txt'), 'worker\n', 'utf8')
+    await commitDirtyTaskWorktree(dest)
+    const { stdout } = await execFileAsync('git', ['-C', dest, 'show', '--name-only', '--pretty=format:', 'HEAD'], { encoding: 'utf8' })
+    expect(stdout).toContain('src.txt')
+    expect(stdout).not.toContain('CONTRACT.json')
+    const { stdout: log } = await execFileAsync('git', ['-C', dest, 'log', '-1', '--pretty=%s'], { encoding: 'utf8' })
+    expect(log.trim()).toBe('devloop: delegate')
   })
 
   it('reattaches a detached worktree HEAD onto the task branch', async () => {

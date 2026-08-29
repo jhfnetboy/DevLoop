@@ -17,7 +17,7 @@ import { applyRunSignals, rollCostWindows } from './budget.js'
 import { runTick, type TickResult } from './tick.js'
 import type { LoopState } from './types.js'
 import { RUNNER_REAP_MS } from './spawn.js'
-import { prepareDelegateWorktree, preparePlanWorktree, removePlanWorktree, mergeTaskWorktree, deleteMergedTaskBranch, worktreePath, readContractBaseSha } from './worktree.js'
+import { prepareDelegateWorktree, preparePlanWorktree, removePlanWorktree, mergeTaskWorktree, deleteMergedTaskBranch, worktreePath, readContractBaseSha, commitDirtyTaskWorktree } from './worktree.js'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -100,9 +100,11 @@ export default class DevloopService extends Service {
         }
         if (current.supervisor?.reason === 'unreadable_state') {
           this.ctx.logger.error('[dsh-devloop] tick skipped: unreadable STATE.json')
+          await snapshotProgress(this.config.root, current, now, this.ctx.logger)
           return
         }
         if (current.killSwitch || current.lastAction.type === 'stop') {
+          await snapshotProgress(this.config.root, current, now, this.ctx.logger)
           this.stop()
           return
         }
@@ -181,11 +183,7 @@ export default class DevloopService extends Service {
         } else {
           this.sessionCostReset = true
         }
-        try {
-          await writeProgress(this.config.root, result.state, now)
-        } catch (error) {
-          this.ctx.logger.error('[dsh-devloop] PROGRESS.md write failed', error)
-        }
+        await snapshotProgress(this.config.root, result.state, now, this.ctx.logger)
         if (result.action.type === 'stop' || result.state.killSwitch) {
           this.stop()
         }
@@ -233,6 +231,17 @@ export default class DevloopService extends Service {
               ),
               abort.signal,
             )
+            if (
+              dispatched?.status === 'started'
+              && action.type === 'delegate'
+              && outcome.value.worktreeRoot
+            ) {
+              try {
+                await commitDirtyTaskWorktree(outcome.value.worktreeRoot)
+              } catch (error) {
+                this.ctx.logger.error('[dsh-devloop] parent commit failed', error)
+              }
+            }
             const hasSignals = dispatched
               && (finitePositive(dispatched.tokens) || finitePositive(dispatched.costUsd))
             if (hasSignals && dispatched && !this.disposed) {
@@ -301,6 +310,19 @@ export default class DevloopService extends Service {
 
 function isolatedPlan(agentBackend: Config['agentBackend']): boolean {
   return agentBackend === 'claude' || agentBackend === 'codex'
+}
+
+async function snapshotProgress(
+  root: string,
+  state: LoopState,
+  now: number,
+  log: { error(message: string, ...rest: unknown[]): void },
+): Promise<void> {
+  try {
+    await writeProgress(root, state, now)
+  } catch (error) {
+    log.error('[dsh-devloop] PROGRESS.md write failed', error)
+  }
 }
 
 const DISPATCH_REAP_GRACE_MS = RUNNER_REAP_MS + 250

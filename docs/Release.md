@@ -6,7 +6,7 @@ Package version: **0.3.0**. This document is the release note, not a second semv
 
 ## What is in this version
 
-Stacked merges already on `main`, plus 0.2.5 (PR #12) and this slice:
+Merges already on `main` through 0.2.5 (PR #12), plus this slice:
 
 | Slice | PR | Ships |
 |---|---|---|
@@ -27,7 +27,7 @@ Host-side checks (`dsh plugin add`, `--dump-config`) are listed in [UserCaseTest
 - CLI adapters do not parse PASS / REWORK from stdout. `lastReviewVerdict` is still operator-driven (or whatever writes STATE).
 - Merge does not push. Conflicted merges abort and retry next tick.
 - One `agentBackend` per host; this slice does not route `contract.tier` to different CLIs.
-- T3 CLIs refuse to run at the workspace root (null cwd **or** cwd equal to the workspace). `plan` and `review` use read-only / plan permission flags; only `delegate` gets write access (Claude: `--allowedTools` for git/test; Codex: workspace `.git` in writable scope). `plan` uses a reserved detached `_loop-plan` worktree (does not create or delete `devloop/_loop-plan`). Plan stdout is copied to `.devloop/PLAN.md`; review stdout to `.devloop/REVIEW.md`; whitespace-only stdout removes a stale note. Adapters still do not parse PASS/REWORK into STATE.
+- T3 CLIs refuse to run at the workspace root (null cwd **or** cwd equal to the workspace). `plan` and `review` use read-only / plan permission flags; only `delegate` gets write access (Claude: `--allowedTools Bash(git *)` / `Bash(pnpm *)`; Codex: `--add-dir` only `.git/worktrees/<id>`). After a started delegate, the **host** commits dirty task files so the sandbox never writes hooks or `refs/heads/main`. `plan` uses a reserved detached `_loop-plan` worktree (does not create or delete `devloop/_loop-plan`). Plan stdout is copied to `.devloop/PLAN.md`; review stdout to `.devloop/REVIEW.md`; whitespace-only stdout removes a stale note. Adapters still do not parse PASS/REWORK into STATE.
 - Token/cost melt the circuit only when the backend fills `AgentRunResult`; otherwise the loop uses wall-clock `lastProgressAt`. Session cost resets after the first successful STATE persist of this process; daily cost resets at UTC midnight.
 - No operator UI (**0.4**).
 - npm registry: not published in this cut unless `npm whoami` works. Install from GitHub or the Release tarball. See [Install.md](./Install.md).

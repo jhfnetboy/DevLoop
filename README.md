@@ -6,11 +6,10 @@ This repository is `dsh-devloop`. It is not another coding agent and it does not
 
 ## What 0.3.0 does
 
-- Same loop as 0.2.5, plus a human snapshot at `.devloop/PROGRESS.md` after each tick (including latched idle)
+- Same loop as 0.2.5, plus a human snapshot at `.devloop/PROGRESS.md` after each tick (including latched idle, killSwitch, and unreadable STATE)
 - Each dispatch is a new one-shot CLI; at most one in flight (`busy`). The next tick waits.
 - Optional `tokens` / `costUsd` from the backend fold into budget usage when present; session cost resets when the plugin starts; daily cost resets at UTC midnight
 - Still no operator UI (**0.4**)
-
 - Installs into a DSH profile as a bundle plugin
 - On each tick, if the workspace has `.devloop/GOAL.md`, reads `STATE.json` and records the next loop action (plan / delegate / review / merge / stop)
 - Enforces budget / circuit-breaker rules in-process
@@ -40,7 +39,7 @@ The expensive-vs-cheap split is from [`docs/Solution.md`](./docs/Solution.md). T
 
 ## Progress vs that target
 
-**0.3 is this slice.** Unattended tick, auto-pump, PROGRESS.md. 0.2.5 is the stacked T3 CLI PR.
+**0.3 is this slice.** Unattended tick, auto-pump, PROGRESS.md. 0.2.5 is on `main` (PR #12).
 
 | Slice | Status | Meaning |
 |---|---|---|
@@ -49,7 +48,7 @@ The expensive-vs-cheap split is from [`docs/Solution.md`](./docs/Solution.md). T
 | 0.2.2 | **Done** | Worktree + frozen Task Contract |
 | 0.2.3 | **Done** (tag `v0.2.3`) | Opt-in `dsh --profile headless`; same command for plan/delegate/review; no tier split |
 | **0.2.4** | **Done** (PR #11 on `main`) | Mechanical merge only after Review PASS; then delete worktree |
-| **0.2.5** | **Stacked** (PR #12) | Spawn `claude` / `codex` as T3; DSH Flash/Pro remain T1/T2 |
+| **0.2.5** | **Done** (PR #12 on `main`) | Spawn `claude` / `codex` as T3; DSH Flash/Pro remain T1/T2 |
 | **0.3** | **This slice** | Unattended 24h loop, auto-pump, PROGRESS.md |
 | **0.4** | **Not started** | Operator UI / human queue / budget panel — **not** required for the autonomous loop |
 
@@ -62,7 +61,7 @@ v0.2.3
   → 0.3 unattended loop             # 24h self-iteration under budget
 ```
 
-Each slice is its own stacked PR onto the latest `main`. Merge 0.2.4 when it is approved, then start 0.2.5 from that `main`, then 0.3. Do not skip 0.2.4/0.2.5 and jump to 0.3. **0.4 is a later operator surface**, after the loop can already run.
+Each slice is its own stacked PR onto the latest `main`. 0.2.4 (PR #11) and 0.2.5 (PR #12) are already on `main`; this slice is 0.3. Do not skip 0.2.4/0.2.5 and jump to 0.3. **0.4 is a later operator surface**, after the loop can already run.
 
 ## How it fits
 
@@ -129,7 +128,7 @@ flowchart TB
     Progress --> SM
 ```
 
-Until 0.2.5, plan / delegate / review still share the same headless command. Merge lands git locally and does not push.
+Plan / delegate / review still share the same CLI on one host (`agentBackend`). Merge lands git locally and does not push.
 
 ## Can 0.3 meet the product goal?
 
