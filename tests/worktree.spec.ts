@@ -211,6 +211,16 @@ describe('preparePlanWorktree', () => {
     expect(after.trim()).toBe(before.trim())
   })
 
+  it('refuses a symlink _loop-plan that aliases another task worktree', async () => {
+    const root = await gitWorkspace()
+    const taskDest = await prepareDelegateWorktree(root, contractFor('d1'))
+    await writeFile(join(taskDest, 'keep.txt'), 'uncommitted\n', 'utf8')
+    await symlink(taskDest, planWorktreePath(root))
+    await expect(preparePlanWorktree(root)).rejects.toThrow(/symlink plan worktree/)
+    await expect(readFile(join(taskDest, 'keep.txt'), 'utf8')).resolves.toBe('uncommitted\n')
+    expect((await lstat(taskDest)).isDirectory()).toBe(true)
+  }, 30_000)
+
   it('prunes a stale git worktree registration when the directory is already gone', async () => {
     const root = await gitWorkspace()
     const dest = await preparePlanWorktree(root)

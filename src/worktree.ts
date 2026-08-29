@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
-import { copyFile, lstat, mkdir, readFile, realpath, writeFile } from 'node:fs/promises'
-import { join, sep } from 'node:path'
+import { copyFile, lstat, mkdir, readFile, realpath, unlink, writeFile } from 'node:fs/promises'
+import { basename, join, sep } from 'node:path'
 import { promisify } from 'node:util'
 import { DEVLOOP_DIR, devloopDir } from './persist.js'
 import type { TaskContract } from './types.js'
@@ -105,10 +105,7 @@ export async function preparePlanWorktree(root: string): Promise<string> {
     const dest = join(pool, PLAN_WORKTREE_ID)
     const listed = await listedWorktreePaths(resolvedRoot)
     if (await pathExists(dest)) {
-      if (!await isRegisteredWorktree(listed, dest)) {
-        throw new Error('worktree destination exists but is not a git worktree')
-      }
-      await assertInside(pool, dest)
+      await assertReusablePlanWorktree(listed, dest, pool)
     } else {
       await git(resolvedRoot, ['worktree', 'add', '--detach', dest])
       await assertInside(pool, dest)
@@ -137,6 +134,16 @@ export async function preparePlanWorktree(root: string): Promise<string> {
 export async function removePlanWorktree(root: string): Promise<void> {
   const resolvedRoot = await realpath(root)
   const dest = planWorktreePath(resolvedRoot)
+  try {
+    const meta = await lstat(dest)
+    if (meta.isSymbolicLink()) {
+      await unlink(dest)
+      await git(resolvedRoot, ['worktree', 'prune'])
+      return
+    }
+  } catch (error) {
+    if (!isNotFound(error)) throw error
+  }
   try {
     await git(resolvedRoot, ['worktree', 'remove', '--force', dest])
   } catch {
@@ -312,6 +319,29 @@ async function assertInside(parent: string, child: string): Promise<void> {
   if (resolvedChild !== resolvedParent && !resolvedChild.startsWith(resolvedParent + sep)) {
     throw new Error(`path escapes worktree pool: ${child}`)
   }
+}
+
+/** Reuse only a real directory registered as `_loop-plan`, not a symlink alias. */
+async function assertReusablePlanWorktree(listed: Set<string>, dest: string, pool: string): Promise<void> {
+  const meta = await lstat(dest)
+  if (meta.isSymbolicLink()) {
+    throw new Error('refusing symlink plan worktree')
+  }
+  if (!meta.isDirectory()) {
+    throw new Error('worktree destination exists but is not a git worktree')
+  }
+  await assertInside(pool, dest)
+  const resolvedDest = await realpath(dest)
+  for (const entry of listed) {
+    try {
+      if (await realpath(entry) !== resolvedDest) continue
+      if (basename(entry) !== PLAN_WORKTREE_ID) continue
+      return
+    } catch {
+      continue
+    }
+  }
+  throw new Error('worktree destination exists but is not a git worktree')
 }
 
 async function isRegisteredWorktree(listed: Set<string>, dest: string): Promise<boolean> {
