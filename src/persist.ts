@@ -84,7 +84,7 @@ async function isLocalDevloopDir(root: string, options: { allowMissing?: boolean
   return resolvedDir === join(resolvedRoot, DEVLOOP_DIR)
 }
 
-async function assertLocalDevloopDir(root: string): Promise<void> {
+export async function assertLocalDevloopDir(root: string): Promise<void> {
   if (!await isLocalDevloopDir(root, { allowMissing: true })) {
     throw new Error('devloop directory must be a real directory inside the workspace')
   }

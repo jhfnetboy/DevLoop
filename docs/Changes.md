@@ -200,3 +200,24 @@ T3 follow-up after Codex RC on merged #12. No unattended loop (that's 0.3).
 
 Possible impact: T3 hosts pick up safer argv and host commits. Package version stays **0.2.5** until 0.3.0.
 
+## 0.3.0 — 2026-08-29
+
+Unattended loop: continuous tick, one-shot auto-pump, PROGRESS.md, optional cost/token signals. T3 argv/host-commit lives in 0.2.6 (PR #14).
+
+### 代码
+
+- 每个 tick（含 latched / idle / killSwitch / unreadable STATE）都写 `.devloop/PROGRESS.md`（给人看；STATE 仍是权威）。`O_NOFOLLOW` 拒绝 symlink 目标
+- 一拍最多一个 dispatch（`busy`）；下一拍等上一拍结束。每个 dispatch 仍是新的 one-shot AbortController
+- `AgentRunResult.tokens` / `costUsd` 可选；有有限正数才折进 usage。进程启动清零 `costUsdSession`（成功写入 STATE 之后才记一次，unreadable STATE 不烧掉这次机会）；UTC 日期变了清零 `costUsdDay`
+- 折费用时若 STATE 已 killSwitch / supervisor，不覆盖任务列表
+- 费用信号 retry/defer，`saveState` 成功后才清 `pendingSignals`；skipped ticks 仍持久化 UTC 日费用 rollover
+- Loop 纯函数未改
+
+### 可能影响
+
+- PROGRESS.md 写失败只打日志，不回滚 STATE
+- CLI 默认仍不解析 stdout 里的费用；要进熔断需 backend 自己填 `costUsd` / `tokens`
+- 无 UI（**0.4**）
+
+Possible impact: GitHub installs of this slice report `0.3.0`.
+

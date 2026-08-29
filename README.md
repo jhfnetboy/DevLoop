@@ -4,8 +4,12 @@ DeepSeek Harness plugin: **expensive models plan and review, cheap models implem
 
 This repository is `dsh-devloop`. It is not another coding agent and it does not fork DSH core. Design and decisions: [docs/](https://github.com/jhfnetboy/DevLoop/tree/main/docs).
 
-## What 0.2.5 does
+## What 0.3.0 does
 
+- Same loop as 0.2.5, plus a human snapshot at `.devloop/PROGRESS.md` after each tick (including latched idle, killSwitch, and unreadable STATE)
+- Each dispatch is a new one-shot CLI; at most one in flight (`busy`). The next tick waits.
+- Optional `tokens` / `costUsd` from the backend fold into budget usage when present; session cost resets when the plugin starts; daily cost resets at UTC midnight
+- Still no operator UI (**0.4**)
 - Installs into a DSH profile as a bundle plugin
 - On each tick, if the workspace has `.devloop/GOAL.md`, reads `STATE.json` and records the next loop action (plan / delegate / review / merge / stop)
 - Enforces budget / circuit-breaker rules in-process
@@ -35,7 +39,7 @@ The expensive-vs-cheap split is from [`docs/Solution.md`](./docs/Solution.md). T
 
 ## Progress vs that target
 
-**0.2.4 is this slice.** Mechanical merge lands after Review PASS. Claude/Codex CLI and the 24h unattended loop are still ahead.
+**0.3 is this slice.** Unattended tick, auto-pump, PROGRESS.md. Stacked on 0.2.6 (PR #14); 0.2.5 is on `main` (PR #12). T3 git/host-commit is not in this diff.
 
 | Slice | Status | Meaning |
 |---|---|---|
@@ -43,21 +47,23 @@ The expensive-vs-cheap split is from [`docs/Solution.md`](./docs/Solution.md). T
 | 0.2.1 | **Done** | `AgentBackend` after lock; production default `noop` |
 | 0.2.2 | **Done** | Worktree + frozen Task Contract |
 | 0.2.3 | **Done** (tag `v0.2.3`) | Opt-in `dsh --profile headless`; same command for plan/delegate/review; no tier split |
-| **0.2.4** | **This slice** | Mechanical merge only after Review PASS; then delete worktree |
-| **0.2.5** | **Not started** | Spawn `claude` / `codex` as T3; DSH Flash/Pro remain T1/T2 |
-| **0.3** | **Not started** | Unattended 24h loop, auto-pump, PROGRESS.md |
+| **0.2.4** | **Done** (PR #11 on `main`) | Mechanical merge only after Review PASS; then delete worktree |
+| **0.2.5** | **Done** (PR #12 on `main`) | Spawn `claude` / `codex` as T3; DSH Flash/Pro remain T1/T2 |
+| **0.2.6** | **Open** (PR #14) | Host commit, Claude `--`, Codex gitdir |
+| **0.3** | **This slice** | Unattended 24h loop, auto-pump, PROGRESS.md |
 | **0.4** | **Not started** | Operator UI / human queue / budget panel — **not** required for the autonomous loop |
 
 Path to the goal you described:
 
 ```text
 v0.2.3
-  → 0.2.4 mechanical merge          # this slice: land code, delete worktree
-  → 0.2.5 Claude + Codex T3 CLIs    # plan/review vs implement split
-  → 0.3 unattended loop             # 24h self-iteration under budget
+  → 0.2.4 mechanical merge          # on main (PR #11)
+  → 0.2.5 Claude + Codex T3 CLIs    # on main (PR #12)
+  → 0.2.6 T3 harden                 # host commit (PR #14)
+  → 0.3 unattended loop             # this slice: 24h self-iteration under budget
 ```
 
-Each slice is its own stacked PR onto the latest `main`. Merge 0.2.4 when it is approved, then start 0.2.5 from that `main`, then 0.3. Do not skip 0.2.4/0.2.5 and jump to 0.3. **0.4 is a later operator surface**, after the loop can already run.
+Each slice is its own stacked PR. 0.2.4 (PR #11) and 0.2.5 (PR #12) are on `main`; this 0.3 PR stacks on 0.2.6 (PR #14). **0.4 is a later operator surface**, after the loop can already run.
 
 ## How it fits
 
@@ -124,23 +130,23 @@ flowchart TB
     Progress --> SM
 ```
 
-Until 0.2.5, plan / delegate / review still share the same headless command. Merge lands git locally and does not push.
+Plan / delegate / review still share the same CLI on one host (`agentBackend`). Merge lands git locally and does not push.
 
-## Can 0.2.4 meet the product goal?
+## Can 0.3 meet the product goal?
 
 The goal is: expensive models plan and review, cheap models implement, a program loop keeps the factory inside budget.
 
-| Goal slice | 0.2.4 |
+| Goal slice | 0.3.0 |
 |---|---|
 | DSH plugin, not a new runtime | Yes. Bundle + Cordis Service. |
-| Program loop, one transition per tick | Yes. Pure `decideNextAction` plus `runTick`. |
-| Hard budget / kill switch | Yes, in-process. No live token/cost feed yet. |
-| File-backed recoverability | Partial. `GOAL.md` + `STATE.json` + `LOCK` + worktree `CONTRACT.json`. No PLAN / PROGRESS yet. |
+| Program loop, one transition per tick | Yes. Pure `decideNextAction` plus `runTick`, driven by `setInterval`. |
+| Hard budget / kill switch | Yes, in-process. Live token/cost only if the backend fills `AgentRunResult`. |
+| File-backed recoverability | `GOAL.md` + `STATE.json` + `LOCK` + `PROGRESS.md` + worktree `CONTRACT.json`. |
 | Cheap workers actually implement | Partial. Opt-in `dsh` / `claude` / `codex` spawn that CLI; it does not pick a worker via `contract.tier`. Merge lands local git after Review PASS; it does not push. |
-| Expensive models actually review | Partial. Plan / delegate / review all use that same headless command; there is no higher-tier reviewer routing. PASS / REWORK is still operator-driven (or a later T3 CLI). |
-| Unattended milestone completion | **No.** 0.3. |
+| Expensive models actually review | Partial. Same CLI for plan/delegate/review; PASS / REWORK is still operator-driven. |
+| Unattended milestone completion | **This slice**: continuous tick + auto-pump. Goal-complete still depends on tasks reaching `done`. |
 
-0.2.4 can turn a Review PASS into merged code on the local branch. It cannot spawn Claude/Codex (**0.2.5**), and cannot run unattended 24h (**0.3**).
+0.3 can keep ticking unattended under budget. It still does not route by `contract.tier`, parse PASS/REWORK, or ship an operator UI (**0.4**).
 
 ## Requirements
 
