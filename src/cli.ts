@@ -29,17 +29,17 @@ async function samePath(left: string, right: string): Promise<boolean> {
   }
 }
 
-async function writePlanStdout(workspaceRoot: string, stdout: string): Promise<void> {
+async function writeDevloopNote(workspaceRoot: string, filename: 'PLAN.md' | 'REVIEW.md', stdout: string): Promise<void> {
   if (stdout.trim().length === 0) return
   const dir = join(workspaceRoot, DEVLOOP_DIR)
   const dirMeta = await lstat(dir)
   if (dirMeta.isSymbolicLink() || !dirMeta.isDirectory()) {
     throw new Error('refusing symlink .devloop')
   }
-  const file = join(dir, 'PLAN.md')
+  const file = join(dir, filename)
   try {
     const fileMeta = await lstat(file)
-    if (fileMeta.isSymbolicLink()) throw new Error('refusing symlink PLAN.md')
+    if (fileMeta.isSymbolicLink()) throw new Error(`refusing symlink ${filename}`)
   } catch (error) {
     if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error
   }
@@ -60,7 +60,9 @@ async function runCli(
   try {
     const { stdout } = await runner({ command, argv, cwd, timeoutMs: runTimeoutMs(input), signal: input.signal })
     if (input.action.type === 'plan') {
-      await writePlanStdout(input.workspaceRoot, stdout)
+      await writeDevloopNote(input.workspaceRoot, 'PLAN.md', stdout)
+    } else if (input.action.type === 'review') {
+      await writeDevloopNote(input.workspaceRoot, 'REVIEW.md', stdout)
     }
     return { status: 'started' }
   } catch (error) {

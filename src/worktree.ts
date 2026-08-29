@@ -51,7 +51,7 @@ export async function prepareDelegateWorktree(root: string, contract: TaskContra
   return checkoutWorktree(root, token, contract)
 }
 
-async function checkoutWorktree(root: string, token: string, contract: TaskContract): Promise<string> {
+async function ensureWorktreePool(root: string): Promise<{ resolvedRoot: string, pool: string }> {
   const resolvedRoot = await realpath(root)
   const toplevel = (await git(resolvedRoot, ['rev-parse', '--show-toplevel'])).trim()
   if (await realpath(toplevel) !== resolvedRoot) {
@@ -68,9 +68,13 @@ async function checkoutWorktree(root: string, token: string, contract: TaskContr
   }
 
   const pool = await ensureRealDir(join(loopDir, WORKTREES_DIR), loopDir)
-  const dest = join(pool, token)
   await ignoreWorktrees(pool)
+  return { resolvedRoot, pool }
+}
 
+async function checkoutWorktree(root: string, token: string, contract: TaskContract): Promise<string> {
+  const { resolvedRoot, pool } = await ensureWorktreePool(root)
+  const dest = join(pool, token)
   const listed = await listedWorktreePaths(resolvedRoot)
   const branch = `${WORKTREE_BRANCH_PREFIX}${token}`
   if (await pathExists(dest)) {
@@ -90,27 +94,31 @@ async function checkoutWorktree(root: string, token: string, contract: TaskContr
 }
 
 /**
- * Isolated worktree so T3 plan does not run in the operator workspace.
- * Always reset to the current workspace HEAD so plan does not see a stale
- * snapshot. Copies GOAL.md because `.devloop/` is typically untracked.
+ * Isolated detached worktree so T3 plan does not run in the operator workspace
+ * and does not create or reset `devloop/_loop-plan`. Always reset to workspace
+ * HEAD. Copies GOAL.md because `.devloop/` is typically untracked.
  * Caller should `removePlanWorktree` after the one-shot run.
  */
 export async function preparePlanWorktree(root: string): Promise<string> {
-  const dest = await checkoutWorktree(root, PLAN_WORKTREE_ID, {
-    taskId: PLAN_WORKTREE_ID,
-    title: 'plan',
-    tier: 'T3',
-    allowedPaths: ['.devloop/GOAL.md'],
-    forbidden: ['package.json', '.devloop/STATE.json', '.devloop/PLAN.md'],
-    acceptance: ['bounded task list'],
-    budget: { maxMinutes: 45, maxAttempts: 1 },
-  })
   try {
-    const resolvedRoot = await realpath(root)
+    const { resolvedRoot, pool } = await ensureWorktreePool(root)
+    const dest = join(pool, PLAN_WORKTREE_ID)
+    const listed = await listedWorktreePaths(resolvedRoot)
+    if (await pathExists(dest)) {
+      if (!await isRegisteredWorktree(listed, dest)) {
+        throw new Error('worktree destination exists but is not a git worktree')
+      }
+      await assertInside(pool, dest)
+    } else {
+      await git(resolvedRoot, ['worktree', 'add', '--detach', dest])
+      await assertInside(pool, dest)
+    }
+    await git(dest, ['checkout', '--detach', '-f'])
     const head = (await git(resolvedRoot, ['rev-parse', 'HEAD'])).trim()
     await git(dest, ['reset', '--hard', head])
     const srcGoal = join(resolvedRoot, DEVLOOP_DIR, 'GOAL.md')
-    const destGoal = join(dest, DEVLOOP_DIR, 'GOAL.md')
+    const destLoop = await ensureRealDir(join(dest, DEVLOOP_DIR), dest)
+    const destGoal = join(destLoop, 'GOAL.md')
     const meta = await lstat(srcGoal)
     if (meta.isSymbolicLink()) throw new Error('refusing symlink GOAL.md')
     await copyFile(srcGoal, destGoal)
@@ -125,7 +133,7 @@ export async function preparePlanWorktree(root: string): Promise<string> {
   }
 }
 
-/** Force-remove the reserved plan worktree and its branch. Missing is success. */
+/** Force-remove the reserved plan worktree. Does not delete any branch. Missing is success. */
 export async function removePlanWorktree(root: string): Promise<void> {
   const resolvedRoot = await realpath(root)
   const dest = planWorktreePath(resolvedRoot)
@@ -134,14 +142,6 @@ export async function removePlanWorktree(root: string): Promise<void> {
   } catch {
     if (await pathExists(dest)) {
       throw new Error(`failed to remove plan worktree: ${dest}`)
-    }
-  }
-  const branch = `${WORKTREE_BRANCH_PREFIX}${PLAN_WORKTREE_ID}`
-  try {
-    await git(resolvedRoot, ['branch', '-D', branch])
-  } catch {
-    if (await gitOk(resolvedRoot, ['rev-parse', '--verify', `refs/heads/${branch}`])) {
-      throw new Error(`failed to delete plan branch ${branch}`)
     }
   }
 }

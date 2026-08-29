@@ -102,6 +102,17 @@ describe('ClaudeCliBackend', () => {
     await expect(readFile(join(root, '.devloop', 'PLAN.md'), 'utf8')).resolves.toBe('# Tasks\n- one\n')
   })
 
+  it('writes review stdout to workspace REVIEW.md', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'devloop-review-out-'))
+    await mkdir(join(root, '.devloop'))
+    const backend = new ClaudeCliBackend(async () => ({ stdout: 'PASS\n', stderr: '' }))
+    await expect(backend.run({
+      ...reviewInput(join(root, 'wt')),
+      workspaceRoot: root,
+    })).resolves.toEqual({ status: 'started' })
+    await expect(readFile(join(root, '.devloop', 'REVIEW.md'), 'utf8')).resolves.toBe('PASS\n')
+  })
+
   it('passes permission-mode and the prompt as separate argv entries', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'devloop-claude-argv-'))
     const command = fileURLToPath(new URL('./fixtures/echo-argv.mjs', import.meta.url))

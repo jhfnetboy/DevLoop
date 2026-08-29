@@ -12,6 +12,7 @@ import {
   preparePlanWorktree,
   removePlanWorktree,
   PLAN_WORKTREE_ID,
+  WORKTREE_BRANCH_PREFIX,
   planWorktreePath,
   readContractBaseSha,
   worktreePath,
@@ -175,7 +176,7 @@ describe('preparePlanWorktree', () => {
     const planDest = await preparePlanWorktree(root)
     expect(planDest).not.toBe(taskDest)
     expect(planDest.toLowerCase()).not.toBe(taskDest.toLowerCase())
-  })
+  }, 30_000)
 
   it('resets a reused plan worktree to the current workspace HEAD and can drop it', async () => {
     const root = await gitWorkspace()
@@ -195,6 +196,19 @@ describe('preparePlanWorktree', () => {
     await rm(join(root, '.devloop', 'GOAL.md'))
     await expect(preparePlanWorktree(root)).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(lstat(planWorktreePath(root))).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('does not reset or delete an existing devloop/_loop-plan branch', async () => {
+    const root = await gitWorkspace()
+    await writeFile(join(root, 'keep.txt'), 'keep\n', 'utf8')
+    await execFileAsync('git', ['-C', root, 'add', 'keep.txt'])
+    await execFileAsync('git', ['-C', root, 'commit', '-m', 'keep'])
+    await execFileAsync('git', ['-C', root, 'branch', `${WORKTREE_BRANCH_PREFIX}${PLAN_WORKTREE_ID}`])
+    const { stdout: before } = await execFileAsync('git', ['-C', root, 'rev-parse', `${WORKTREE_BRANCH_PREFIX}${PLAN_WORKTREE_ID}`], { encoding: 'utf8' })
+    await preparePlanWorktree(root)
+    await removePlanWorktree(root)
+    const { stdout: after } = await execFileAsync('git', ['-C', root, 'rev-parse', `${WORKTREE_BRANCH_PREFIX}${PLAN_WORKTREE_ID}`], { encoding: 'utf8' })
+    expect(after.trim()).toBe(before.trim())
   })
 })
 

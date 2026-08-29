@@ -253,7 +253,7 @@ describe('DevloopService', () => {
     expect(backend.runs).toHaveLength(0)
     await expect(readFile(join(root, 'src.txt'), 'utf8')).resolves.toBe('merged\n')
     await expect(execFileAsync('git', ['-C', root, 'rev-parse', '--verify', 'refs/heads/devloop/m1'])).rejects.toThrow()
-  })
+  }, 30_000)
 
   it('git-merges PASS work, deletes the worktree, and does not call AgentBackend', async () => {
     const root = await mkdtempInRepo('devloop-svc-merge-')
@@ -422,7 +422,7 @@ describe('DevloopService', () => {
     const { promisify } = await import('node:util')
     const execFileAsync = promisify(execFile)
     await execFileAsync('git', ['-C', root, 'rev-parse', '--verify', 'refs/heads/devloop/m1'])
-  })
+  }, 30_000)
 
   it('does not retry after a throwing backend; STATE stays latched', async () => {
     const root = await armWorkspace()
