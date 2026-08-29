@@ -250,6 +250,31 @@ describe('persist and tick', () => {
     expect(loaded.tasks[0]?.lastReviewVerdict).toBe('PASS')
   })
 
+  it('round-trips STATE.json including task baseSha', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'devloop-'))
+    await mkdir(join(root, '.devloop'))
+    const baseSha = 'a'.repeat(40)
+    const state = {
+      ...emptyState(1),
+      tasks: [{ ...sampleTask('merge_ready'), baseSha }],
+    }
+    await saveState(root, state)
+    const loaded = await loadState(root, 2)
+    expect(loaded.tasks[0]?.baseSha).toBe(baseSha)
+  })
+
+  it('halts when task baseSha is not a 40-hex git SHA', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'devloop-'))
+    await mkdir(join(root, '.devloop'))
+    await writeFile(join(root, '.devloop', 'STATE.json'), JSON.stringify({
+      ...emptyState(0),
+      tasks: [{ ...sampleTask('merge_ready'), baseSha: 'not-a-sha' }],
+    }), 'utf8')
+    const loaded = await loadState(root, 1)
+    expect(loaded.killSwitch).toBe(true)
+    expect(loaded.supervisor?.reason).toBe('invalid_state')
+  })
+
   it('halts when lastReviewVerdict is not a known verdict', async () => {
     const root = await mkdtemp(join(tmpdir(), 'devloop-'))
     await mkdir(join(root, '.devloop'))

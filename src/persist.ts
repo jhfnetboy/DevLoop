@@ -344,6 +344,7 @@ function isTaskShape(value: unknown): boolean {
     && isStringArray(task.allowedPaths)
     && isStringArray(task.acceptance)
     && (task.lastReviewVerdict === undefined || REVIEW_VERDICTS.has(task.lastReviewVerdict as ReviewVerdict))
+    && (task.baseSha === undefined || (typeof task.baseSha === 'string' && /^[0-9a-f]{40}$/i.test(task.baseSha)))
 }
 
 function isUsageShape(value: unknown): boolean {

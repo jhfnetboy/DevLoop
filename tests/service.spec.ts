@@ -1,4 +1,4 @@
-import { lstat, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -9,7 +9,7 @@ import { resolveConfig } from '../src/config.ts'
 import { emptyState, loadState, saveState, withStateLock, workspaceArmed } from '../src/persist.ts'
 import { contractForTask } from '../src/router.ts'
 import DevloopService from '../src/service.ts'
-import { prepareDelegateWorktree } from '../src/worktree.ts'
+import { prepareDelegateWorktree, readContractBaseSha } from '../src/worktree.ts'
 import { initGitRepo, makeTask, mkdtempInRepo } from './helpers.ts'
 
 async function waitForAction(root: string, type: string, timeoutMs = 2000): Promise<void> {
@@ -231,6 +231,12 @@ describe('DevloopService', () => {
       limits.taskTimeoutMinutes,
       limits.maxTaskAttempts,
     ))
+    const baseSha = await readContractBaseSha(dest)
+    expect(baseSha).toMatch(/^[0-9a-f]{40}$/)
+    await saveState(root, {
+      ...first,
+      tasks: [{ ...first.tasks[0]!, baseSha: baseSha! }],
+    })
     await writeFile(join(dest, 'src.txt'), 'merged\n', 'utf8')
     const { execFile } = await import('node:child_process')
     const { promisify } = await import('node:util')
@@ -270,7 +276,12 @@ describe('DevloopService', () => {
     await execFileAsync('git', ['-C', dest, 'commit', '-m', 'worker'])
     await saveState(root, {
       ...emptyState(Date.now()),
-      tasks: [makeTask({ id: 'm1', status: 'merge_ready', lastReviewVerdict: 'PASS_WITH_NOTES' })],
+      tasks: [makeTask({
+        id: 'm1',
+        status: 'merge_ready',
+        lastReviewVerdict: 'PASS_WITH_NOTES',
+        baseSha: (await readContractBaseSha(dest)) ?? undefined,
+      })],
     })
     const backend = new RecordingBackend()
     const ctx = new Context()
@@ -306,7 +317,12 @@ describe('DevloopService', () => {
     ))
     await saveState(root, {
       ...emptyState(Date.now()),
-      tasks: [makeTask({ id: 'm1', status: 'merge_ready', lastReviewVerdict: 'PASS' })],
+      tasks: [makeTask({
+        id: 'm1',
+        status: 'merge_ready',
+        lastReviewVerdict: 'PASS',
+        baseSha: (await readContractBaseSha(dest)) ?? undefined,
+      })],
     })
     const backend = new RecordingBackend()
     const ctx = new Context()
@@ -322,6 +338,84 @@ describe('DevloopService', () => {
     expect(loaded.tasks[0]?.status).toBe('merge_ready')
     expect(loaded.supervisor).toEqual({ taskId: 'm1', reason: 'empty_task' })
     expect((await lstat(dest)).isDirectory()).toBe(true)
+    const { execFile } = await import('node:child_process')
+    const { promisify } = await import('node:util')
+    const execFileAsync = promisify(execFile)
+    await execFileAsync('git', ['-C', root, 'rev-parse', '--verify', 'refs/heads/devloop/m1'])
+  })
+
+  it('escalates an empty PASS task after the worktree is gone', async () => {
+    const root = await mkdtempInRepo('devloop-svc-empty-gone-')
+    await mkdir(join(root, '.devloop'))
+    await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
+    await initGitRepo(root)
+    const limits = resolveConfig({}).budget
+    const dest = await prepareDelegateWorktree(root, contractForTask(
+      'm1',
+      'Add persist',
+      'T1',
+      ['src/**'],
+      ['tests pass'],
+      limits.taskTimeoutMinutes,
+      limits.maxTaskAttempts,
+    ))
+    const baseSha = await readContractBaseSha(dest)
+    await saveState(root, {
+      ...emptyState(Date.now()),
+      tasks: [makeTask({ id: 'm1', status: 'merge_ready', lastReviewVerdict: 'PASS', baseSha: baseSha ?? undefined })],
+    })
+    const { execFile } = await import('node:child_process')
+    const { promisify } = await import('node:util')
+    const execFileAsync = promisify(execFile)
+    await execFileAsync('git', ['-C', root, 'worktree', 'remove', dest])
+    const backend = new RecordingBackend()
+    const ctx = new Context()
+    const service = new DevloopService(ctx, resolveConfig({
+      root,
+      tickIntervalMs: 60_000,
+      enabled: false,
+    }), backend)
+    services.push(service)
+    await service.tick()
+    const loaded = await loadState(root, Date.now())
+    expect(loaded.lastAction).toEqual({ type: 'escalate', taskId: 'm1', reason: 'empty_task' })
+    expect(loaded.tasks[0]?.status).toBe('merge_ready')
+    await execFileAsync('git', ['-C', root, 'rev-parse', '--verify', 'refs/heads/devloop/m1'])
+  })
+
+  it('escalates an empty PASS task when CONTRACT.json is missing', async () => {
+    const root = await mkdtempInRepo('devloop-svc-empty-nocontract-')
+    await mkdir(join(root, '.devloop'))
+    await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
+    await initGitRepo(root)
+    const limits = resolveConfig({}).budget
+    const dest = await prepareDelegateWorktree(root, contractForTask(
+      'm1',
+      'Add persist',
+      'T1',
+      ['src/**'],
+      ['tests pass'],
+      limits.taskTimeoutMinutes,
+      limits.maxTaskAttempts,
+    ))
+    const baseSha = await readContractBaseSha(dest)
+    await rm(join(dest, '.devloop', 'CONTRACT.json'))
+    await saveState(root, {
+      ...emptyState(Date.now()),
+      tasks: [makeTask({ id: 'm1', status: 'merge_ready', lastReviewVerdict: 'PASS', baseSha: baseSha ?? undefined })],
+    })
+    const backend = new RecordingBackend()
+    const ctx = new Context()
+    const service = new DevloopService(ctx, resolveConfig({
+      root,
+      tickIntervalMs: 60_000,
+      enabled: false,
+    }), backend)
+    services.push(service)
+    await service.tick()
+    const loaded = await loadState(root, Date.now())
+    expect(loaded.lastAction).toEqual({ type: 'escalate', taskId: 'm1', reason: 'empty_task' })
+    expect(loaded.tasks[0]?.status).toBe('merge_ready')
     const { execFile } = await import('node:child_process')
     const { promisify } = await import('node:util')
     const execFileAsync = promisify(execFile)

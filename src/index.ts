@@ -1,7 +1,7 @@
 export { default } from './service.js'
 export { NoopBackend, RecordingBackend, dispatchTick, isAgentAction, runInputFor } from './backend.js'
 export { DshHeadlessBackend, headlessPrompt } from './dsh.js'
-export { prepareDelegateWorktree, mergeTaskWorktree, deleteMergedTaskBranch, worktreePath, worktreeTaskToken } from './worktree.js'
+export { prepareDelegateWorktree, mergeTaskWorktree, deleteMergedTaskBranch, worktreePath, worktreeTaskToken, readContractBaseSha } from './worktree.js'
 export type { AgentAction, AgentBackend, AgentRunInput, AgentRunResult } from './backend.js'
 export { Config, ConfigSchema, resolveConfig } from './config.js'
 export type { BudgetLimits, RoutingTable } from './config.js'

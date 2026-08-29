@@ -77,10 +77,15 @@ export async function prepareDelegateWorktree(root: string, contract: TaskContra
 /**
  * Merge `devloop/<taskId>` into the workspace HEAD, then remove the worktree
  * and delete the task branch. Caller must already have enforced Review PASS.
- * Does not push. Throws without mutating STATE; the next tick may retry.
+ * Does not push. `recordedBaseSha` is the delegate SHA from STATE: missing is
+ * `unknown_base`, unchanged branch is `empty_task`. Throws without mutating STATE.
  * Idempotent if a previous attempt already merged and removed the worktree.
  */
-export async function mergeTaskWorktree(root: string, taskId: string): Promise<void> {
+export async function mergeTaskWorktree(
+  root: string,
+  taskId: string,
+  recordedBaseSha: string | null,
+): Promise<void> {
   const token = worktreeTaskToken(taskId)
   if (!token) throw new Error(`unsafe task id for worktree: ${taskId}`)
 
@@ -124,9 +129,12 @@ export async function mergeTaskWorktree(root: string, taskId: string): Promise<v
     throw new Error('workspace has tracked changes; commit or stash them before merge')
   }
 
-  const baseSha = present ? await readContractBaseSha(dest) : null
-  const branchSha = (await git(resolvedRoot, ['rev-parse', `refs/heads/${branch}`])).trim()
-  if (baseSha !== null && branchSha.toLowerCase() === baseSha) {
+  const expected = normalizeSha(recordedBaseSha)
+  if (expected === null) {
+    throw new Error('unknown_base')
+  }
+  const branchSha = (await git(resolvedRoot, ['rev-parse', `refs/heads/${branch}`])).trim().toLowerCase()
+  if (branchSha === expected) {
     throw new Error('empty_task')
   }
 
@@ -181,19 +189,24 @@ export async function deleteMergedTaskBranch(root: string, taskId: string): Prom
 async function stampBaseSha(worktreeRoot: string, contract: TaskContract): Promise<TaskContract> {
   const head = (await git(worktreeRoot, ['rev-parse', 'HEAD'])).trim()
   const previous = await readContractBaseSha(worktreeRoot)
-  return { ...contract, baseSha: previous ?? head }
+  return { ...contract, baseSha: previous ?? head.toLowerCase() }
 }
 
-async function readContractBaseSha(worktreeRoot: string): Promise<string | null> {
+export async function readContractBaseSha(worktreeRoot: string): Promise<string | null> {
   try {
     const raw = await readFile(join(worktreeRoot, DEVLOOP_DIR, CONTRACT_FILE), 'utf8')
     const parsed: unknown = JSON.parse(raw)
     if (typeof parsed !== 'object' || parsed === null) return null
     const sha = (parsed as { baseSha?: unknown }).baseSha
-    return typeof sha === 'string' && /^[0-9a-f]{40}$/i.test(sha) ? sha.toLowerCase() : null
+    return normalizeSha(typeof sha === 'string' ? sha : null)
   } catch {
     return null
   }
+}
+
+function normalizeSha(value: string | null | undefined): string | null {
+  if (typeof value !== 'string') return null
+  return /^[0-9a-f]{40}$/i.test(value) ? value.toLowerCase() : null
 }
 
 async function writeContractFile(worktreeRoot: string, contract: TaskContract): Promise<void> {

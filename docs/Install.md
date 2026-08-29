@@ -135,7 +135,7 @@ curl -fsSL https://raw.githubusercontent.com/jhfnetboy/DevLoop/v0.2.3/templates/
 
 Edit `GOAL.md`, then start DSH from that project (or set `config.root`). Each tick writes `.devloop/STATE.json` with `lastAction`.
 
-Until 0.2.5, PASS/REWORK is still operator-driven (or whatever writes `lastReviewVerdict` on the task). After Review `PASS` / `PASS_WITH_NOTES`, the next tick git-merges `devloop/<taskId>` into the workspace HEAD, deletes the worktree, and marks the task `done`. It does not push. `merge_ready` without PASS escalates.
+Until 0.2.5, PASS/REWORK is still operator-driven (or whatever writes `lastReviewVerdict` on the task). After Review `PASS` / `PASS_WITH_NOTES`, the next tick git-merges `devloop/<taskId>` into the workspace HEAD, deletes the worktree, and marks the task `done`. It does not push. `merge_ready` without PASS escalates. If STATE shows `supervisor.reason: merge_wedged`, the workspace is stuck mid-merge: run `git merge --abort` in the project root, confirm a clean tree, then clear the supervisor hold.
 
 ## Uninstall
 

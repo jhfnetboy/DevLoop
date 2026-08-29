@@ -13,7 +13,7 @@ import { DshHeadlessBackend } from './dsh.js'
 import { loadState, saveState, withStateLock, workspaceArmed } from './persist.js'
 import { runTick, type TickResult } from './tick.js'
 import type { LoopState } from './types.js'
-import { prepareDelegateWorktree, mergeTaskWorktree, deleteMergedTaskBranch, worktreePath } from './worktree.js'
+import { prepareDelegateWorktree, mergeTaskWorktree, deleteMergedTaskBranch, worktreePath, readContractBaseSha } from './worktree.js'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -101,6 +101,13 @@ export default class DevloopService extends Service {
           if (input.contract) {
             try {
               worktreeRoot = await prepareDelegateWorktree(this.config.root, input.contract)
+              const baseSha = await readContractBaseSha(worktreeRoot)
+              if (baseSha) {
+                result = {
+                  ...result,
+                  state: stampTaskBaseSha(result.state, result.action.taskId, baseSha),
+                }
+              }
             } catch (error) {
               this.ctx.logger.error('[dsh-devloop] worktree failed', error)
               return
@@ -111,7 +118,11 @@ export default class DevloopService extends Service {
         } else if (!result.skipped && result.action.type === 'merge') {
           const mergeTaskId = result.action.taskId
           try {
-            await mergeTaskWorktree(this.config.root, mergeTaskId)
+            await mergeTaskWorktree(
+              this.config.root,
+              mergeTaskId,
+              result.state.tasks.find(task => task.id === mergeTaskId)?.baseSha ?? null,
+            )
             result = {
               ...result,
               state: markTaskDone(result.state, mergeTaskId),
@@ -219,10 +230,11 @@ function raceAbort<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
   })
 }
 
-function mergeHoldReason(error: unknown): 'empty_task' | 'merge_wedged' | null {
+function mergeHoldReason(error: unknown): 'empty_task' | 'merge_wedged' | 'unknown_base' | null {
   const message = error instanceof Error ? error.message : ''
   if (message.startsWith('empty_task')) return 'empty_task'
   if (message.startsWith('merge_wedged')) return 'merge_wedged'
+  if (message.startsWith('unknown_base')) return 'unknown_base'
   return null
 }
 
@@ -231,6 +243,13 @@ function holdTask(state: LoopState, taskId: string, reason: string): LoopState {
     ...state,
     supervisor: { taskId, reason },
     lastAction: { type: 'escalate', taskId, reason },
+  }
+}
+
+function stampTaskBaseSha(state: LoopState, taskId: string, baseSha: string): LoopState {
+  return {
+    ...state,
+    tasks: state.tasks.map(task => task.id === taskId ? { ...task, baseSha } : task),
   }
 }
 

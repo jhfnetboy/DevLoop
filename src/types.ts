@@ -30,6 +30,8 @@ export interface Task {
   readonly allowedPaths: readonly string[]
   readonly acceptance: readonly string[]
   readonly lastReviewVerdict?: ReviewVerdict
+  /** Git SHA of the task branch at delegate. Merge refuses if the branch is still this. */
+  readonly baseSha?: string
 }
 
 export interface SupervisorHold {
