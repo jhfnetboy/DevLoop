@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { copyFile, lstat, mkdir, readFile, realpath, unlink, writeFile } from 'node:fs/promises'
-import { basename, join, sep } from 'node:path'
+import { basename, dirname, join, sep } from 'node:path'
 import { promisify } from 'node:util'
 import { DEVLOOP_DIR, devloopDir } from './persist.js'
 import type { TaskContract } from './types.js'
@@ -267,6 +267,32 @@ async function stampBaseSha(worktreeRoot: string, contract: TaskContract): Promi
   const head = (await git(worktreeRoot, ['rev-parse', 'HEAD'])).trim()
   const previous = await readContractBaseSha(worktreeRoot)
   return { ...contract, baseSha: previous ?? head.toLowerCase() }
+}
+
+/**
+ * Host-side commit after a T3 delegate. The sandbox must not write hooks,
+ * objects, or `refs/heads/main`; git metadata updates stay in this process.
+ */
+export async function commitDirtyTaskWorktree(worktreeRoot: string, taskId: string): Promise<void> {
+  const token = worktreeTaskToken(taskId)
+  if (!token) throw new Error(`unsafe task id for worktree: ${taskId}`)
+  const expected = `refs/heads/${WORKTREE_BRANCH_PREFIX}${token}`
+  if (await symbolicHead(worktreeRoot) !== expected) {
+    throw new Error(`refusing parent commit: worktree HEAD is not ${expected}`)
+  }
+  const dest = await realpath(worktreeRoot)
+  const common = (await git(worktreeRoot, ['rev-parse', '--path-format=absolute', '--git-common-dir'])).trim().replace(/\/+$/, '')
+  const listed = await listedWorktreePaths(dirname(common))
+  if (!await isRegisteredWorktree(listed, dest)) {
+    throw new Error('refusing parent commit: worktree is not registered')
+  }
+  const status = (await git(worktreeRoot, ['status', '--porcelain'])).trim()
+  if (status.length === 0) return
+  await git(worktreeRoot, ['add', '-A'])
+  const staged = (await git(worktreeRoot, ['diff', '--cached', '--name-only'])).trim()
+  if (staged.length === 0) return
+  const hooksPath = process.platform === 'win32' ? 'NUL' : '/dev/null'
+  await git(worktreeRoot, ['-c', `core.hooksPath=${hooksPath}`, 'commit', '--no-verify', '-m', 'devloop: delegate'])
 }
 
 export async function readContractBaseSha(worktreeRoot: string): Promise<string | null> {

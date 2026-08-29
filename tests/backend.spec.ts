@@ -133,4 +133,16 @@ describe('dispatchTick', () => {
     await dispatchTick(backend, '/repo', { type: 'plan' }, baseState(), limits, log)
     expect(logs.some(line => line.includes('backend failed: nope'))).toBe(true)
   })
+
+  it('returns the adapter result so the host can commit after started', async () => {
+    const backend = new RecordingBackend()
+    await expect(dispatchTick(
+      backend,
+      '/repo',
+      { type: 'plan' },
+      baseState(),
+      limits,
+      log,
+    )).resolves.toEqual({ status: 'recorded' })
+  })
 })

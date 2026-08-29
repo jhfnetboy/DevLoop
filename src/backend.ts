@@ -78,7 +78,7 @@ export async function dispatchTick(
   log: DispatchLog,
   worktreeRoot: string | null = null,
   signal?: AbortSignal,
-): Promise<void> {
+): Promise<AgentRunResult | undefined> {
   if (!isAgentAction(action)) return
   const input = runInputFor(workspaceRoot, action, state, limits)
   if (action.type !== 'plan' && !input.contract) {
@@ -90,6 +90,7 @@ export async function dispatchTick(
     if (dispatched.status === 'failed') {
       log.error(`[dsh-devloop] backend failed: ${dispatched.detail ?? 'unknown'}`)
     }
+    return dispatched
   } catch (error) {
     log.error('[dsh-devloop] backend threw', error)
   }

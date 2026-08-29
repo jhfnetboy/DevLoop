@@ -1,5 +1,5 @@
-import { lstat, realpath, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { lstat, readFile, realpath, unlink, writeFile } from 'node:fs/promises'
+import { basename, isAbsolute, join } from 'node:path'
 import type { AgentBackend, AgentRunInput, AgentRunResult } from './backend.js'
 import { headlessPrompt, type HeadlessRunner } from './dsh.js'
 import { DEVLOOP_DIR } from './persist.js'
@@ -7,24 +7,55 @@ import { defaultRunner } from './spawn.js'
 
 const PLAN_TIMEOUT_MS = 45 * 60_000
 
+/**
+ * Prefix match (https://code.claude.com/docs/en/headless): a space before *
+ * matches that command plus args. Git stays with the host commit path.
+ */
+export const CLAUDE_DELEGATE_TOOLS = 'Bash(pnpm *)'
+
 function runTimeoutMs(input: AgentRunInput): number {
   return input.contract ? input.contract.budget.maxMinutes * 60_000 : PLAN_TIMEOUT_MS
 }
 
 function claudeArgv(input: AgentRunInput): string[] {
   const mode = input.action.type === 'delegate' ? 'acceptEdits' : 'plan'
-  return ['-p', '--permission-mode', mode, cliPrompt(input)]
+  if (input.action.type !== 'delegate') {
+    return ['-p', '--permission-mode', mode, cliPrompt(input)]
+  }
+  return ['-p', '--permission-mode', mode, '--allowedTools', CLAUDE_DELEGATE_TOOLS, '--', cliPrompt(input)]
 }
 
-function codexArgv(input: AgentRunInput): string[] {
+async function resolveLinkedGitDir(input: AgentRunInput): Promise<string | null> {
+  if (!input.worktreeRoot) return null
+  try {
+    const marker = await readFile(join(input.worktreeRoot, '.git'), 'utf8')
+    const match = /^gitdir:\s*(.+?)\s*$/m.exec(marker)
+    if (match?.[1]) {
+      const raw = match[1]
+      return isAbsolute(raw) ? raw : join(input.worktreeRoot, raw)
+    }
+  } catch {
+    // Missing, unreadable, or a real .git directory.
+  }
+  return join(input.workspaceRoot, '.git', 'worktrees', basename(input.worktreeRoot))
+}
+
+async function codexArgv(input: AgentRunInput): Promise<string[]> {
   const sandbox = input.action.type === 'delegate' ? 'workspace-write' : 'read-only'
-  return ['exec', '--sandbox', sandbox, cliPrompt(input)]
+  if (input.action.type !== 'delegate') {
+    return ['exec', '--sandbox', sandbox, cliPrompt(input)]
+  }
+  const gitDir = await resolveLinkedGitDir(input)
+  const argv = ['exec', '--sandbox', sandbox]
+  if (gitDir) argv.push('--add-dir', gitDir)
+  argv.push(cliPrompt(input))
+  return argv
 }
 
 function cliPrompt(input: AgentRunInput): string {
   const base = headlessPrompt(input)
   if (input.action.type === 'delegate') {
-    return `${base}\nCommit validated changes on this task branch before exiting. Do not leave a dirty worktree.`
+    return `${base}\nEdit files in this worktree only. Do not run git. The host commits the task branch.`
   }
   if (input.action.type === 'review') {
     return `${base}\nDo not edit files. Verdict only.`
@@ -40,19 +71,36 @@ async function samePath(left: string, right: string): Promise<boolean> {
   }
 }
 
+function isEnoent(error: unknown): boolean {
+  return error instanceof Error && 'code' in error && error.code === 'ENOENT'
+}
+
 async function writeDevloopNote(workspaceRoot: string, filename: 'PLAN.md' | 'REVIEW.md', stdout: string): Promise<void> {
-  if (stdout.trim().length === 0) return
   const dir = join(workspaceRoot, DEVLOOP_DIR)
+  const file = join(dir, filename)
+  if (stdout.trim().length === 0) {
+    try {
+      const dirMeta = await lstat(dir)
+      if (dirMeta.isSymbolicLink() || !dirMeta.isDirectory()) {
+        throw new Error('refusing symlink .devloop')
+      }
+      const fileMeta = await lstat(file)
+      if (fileMeta.isSymbolicLink()) throw new Error(`refusing symlink ${filename}`)
+      await unlink(file)
+    } catch (error) {
+      if (!isEnoent(error)) throw error
+    }
+    return
+  }
   const dirMeta = await lstat(dir)
   if (dirMeta.isSymbolicLink() || !dirMeta.isDirectory()) {
     throw new Error('refusing symlink .devloop')
   }
-  const file = join(dir, filename)
   try {
     const fileMeta = await lstat(file)
     if (fileMeta.isSymbolicLink()) throw new Error(`refusing symlink ${filename}`)
   } catch (error) {
-    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error
+    if (!isEnoent(error)) throw error
   }
   await writeFile(file, stdout.endsWith('\n') ? stdout : `${stdout}\n`, 'utf8')
 }
@@ -98,7 +146,8 @@ async function probeHelp(runner: HeadlessRunner, command: string): Promise<'ok' 
 
 /**
  * One-shot `claude -p --permission-mode … "<task>"` in a worktree.
- * Plan and review use `plan` (read-only). Delegate uses `acceptEdits`.
+ * Plan and review use `plan` (read-only). Delegate uses `acceptEdits`
+ * plus `--allowedTools Bash(pnpm *)`; git stays on the host commit path.
  */
 export class ClaudeCliBackend implements AgentBackend {
   constructor(
@@ -119,7 +168,9 @@ export class ClaudeCliBackend implements AgentBackend {
 
 /**
  * One-shot `codex exec --sandbox … "<task>"` in a worktree.
- * Plan and review use `read-only`. Delegate uses `workspace-write`.
+ * Plan and review use `read-only`. Delegate uses `workspace-write` and
+ * `--add-dir` of the worktree's real gitdir (from `.git` gitdir: file). The host
+ * commits dirty task worktrees after a successful started run, with hooks disabled.
  */
 export class CodexCliBackend implements AgentBackend {
   constructor(
@@ -128,7 +179,7 @@ export class CodexCliBackend implements AgentBackend {
   ) {}
 
   async run(input: AgentRunInput): Promise<AgentRunResult> {
-    return runCli(this.runner, this.command, codexArgv(input), input, 'codex exec failed')
+    return runCli(this.runner, this.command, await codexArgv(input), input, 'codex exec failed')
   }
 
   async cancel(_taskId: string): Promise<void> {}

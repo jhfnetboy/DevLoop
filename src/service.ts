@@ -15,7 +15,7 @@ import { loadState, saveState, withStateLock, workspaceArmed } from './persist.j
 import { runTick, type TickResult } from './tick.js'
 import type { LoopState } from './types.js'
 import { RUNNER_REAP_MS } from './spawn.js'
-import { prepareDelegateWorktree, preparePlanWorktree, removePlanWorktree, mergeTaskWorktree, deleteMergedTaskBranch, worktreePath, readContractBaseSha } from './worktree.js'
+import { prepareDelegateWorktree, preparePlanWorktree, removePlanWorktree, mergeTaskWorktree, deleteMergedTaskBranch, worktreePath, readContractBaseSha, commitDirtyTaskWorktree } from './worktree.js'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -198,7 +198,7 @@ export default class DevloopService extends Service {
           const timer = setTimeout(() => abort.abort(), timeoutMs)
           const action = outcome.value.result.action
           try {
-            await awaitDispatch(
+            const dispatched = await awaitDispatch(
               dispatchTick(
                 this.backend,
                 this.config.root,
@@ -211,6 +211,17 @@ export default class DevloopService extends Service {
               ),
               abort.signal,
             )
+            if (
+              dispatched?.status === 'started'
+              && action.type === 'delegate'
+              && outcome.value.worktreeRoot
+            ) {
+              try {
+                await commitDirtyTaskWorktree(outcome.value.worktreeRoot, action.taskId)
+              } catch (error) {
+                this.ctx.logger.error('[dsh-devloop] parent commit failed', error)
+              }
+            }
           } catch (error) {
             if (!this.disposed) {
               const timeout = error instanceof Error && error.message === 'backend timeout'
@@ -261,10 +272,13 @@ const DISPATCH_REAP_GRACE_MS = RUNNER_REAP_MS + 250
  * abort signal fires and the backend ignores it, cap the wait so `busy`
  * cannot stick forever.
  */
-async function awaitDispatch(work: Promise<unknown>, signal: AbortSignal): Promise<void> {
+async function awaitDispatch<T>(work: Promise<T>, signal: AbortSignal): Promise<T | undefined> {
+  let value: T | undefined
   let failure: unknown
   const settled = work.then(
-    () => undefined,
+    result => {
+      value = result
+    },
     error => {
       failure = error
     },
@@ -289,6 +303,7 @@ async function awaitDispatch(work: Promise<unknown>, signal: AbortSignal): Promi
   if (failure !== undefined) {
     throw failure instanceof Error ? failure : new Error(String(failure))
   }
+  return value
 }
 
 function mergeHoldReason(error: unknown): 'empty_task' | 'merge_wedged' | 'unknown_base' | null {

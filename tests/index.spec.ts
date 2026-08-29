@@ -14,5 +14,6 @@ describe('package entry exports', () => {
     expect(pkg.DshHeadlessBackend).toBeTypeOf('function')
     expect(pkg.ClaudeCliBackend).toBeTypeOf('function')
     expect(pkg.CodexCliBackend).toBeTypeOf('function')
+    expect(typeof pkg.commitDirtyTaskWorktree).toBe('function')
   })
 })
