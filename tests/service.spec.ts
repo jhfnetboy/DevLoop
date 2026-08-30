@@ -915,4 +915,57 @@ describe('DevloopService', () => {
     expect(loaded.supervisor).toEqual({ taskId: 'd1', reason: 'parent_commit_failed' })
     expect(loaded.lastAction).toEqual({ type: 'escalate', taskId: 'd1', reason: 'parent_commit_failed' })
   })
+
+  it('defers a parent-commit hold when LOCK is busy and persists it next tick', async () => {
+    const root = await mkdtempInRepo('devloop-svc-commit-hold-defer-')
+    await mkdir(join(root, '.devloop'))
+    await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
+    await initGitRepo(root)
+    await saveState(root, {
+      ...emptyState(Date.now()),
+      tasks: [makeTask({ id: 'd1', status: 'ready', title: 'Add persist' })],
+    })
+    class DirtyLockedBackend implements AgentBackend {
+      releaseLock!: () => void
+      async run(input: AgentRunInput): Promise<AgentRunResult> {
+        if (!input.worktreeRoot) throw new Error('missing worktree')
+        await writeFile(join(input.worktreeRoot, 'src.txt'), 'worker\n', 'utf8')
+        const marker = await readFile(join(input.worktreeRoot, '.git'), 'utf8')
+        const match = /^gitdir:\s*(.+?)\s*$/m.exec(marker)
+        if (!match?.[1]) throw new Error('missing gitdir')
+        const gitDir = isAbsolute(match[1]) ? match[1] : join(input.worktreeRoot, match[1])
+        await writeFile(join(gitDir, 'index.lock'), '', 'utf8')
+        const held = new Promise<void>(resolve => {
+          this.releaseLock = resolve
+        })
+        const acquired = new Promise<void>(resolve => {
+          void withStateLock(root, async () => {
+            resolve()
+            await held
+          })
+        })
+        await acquired
+        return { status: 'started' }
+      }
+      async cancel() {}
+      async health() { return 'ok' }
+    }
+    const ctx = new Context()
+    const backend = new DirtyLockedBackend()
+    const service = new DevloopService(ctx, resolveConfig({
+      root,
+      tickIntervalMs: 60_000,
+      enabled: false,
+    }), backend)
+    services.push(service)
+    await service.tick()
+    let loaded = await loadState(root, Date.now())
+    expect(loaded.supervisor).toBeNull()
+    expect(loaded.lastAction).toEqual({ type: 'delegate', taskId: 'd1' })
+    backend.releaseLock()
+    await new Promise(resolve => setTimeout(resolve, 20))
+    await service.tick()
+    loaded = await loadState(root, Date.now())
+    expect(loaded.supervisor).toEqual({ taskId: 'd1', reason: 'parent_commit_failed' })
+  })
 })
