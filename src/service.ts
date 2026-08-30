@@ -42,6 +42,7 @@ export default class DevloopService extends Service {
   private busy = false
   private disposed = false
   private dispatchAbort: AbortController | null = null
+  private pendingCommitHold: string | null = null
 
   constructor(ctx: Context, rawConfig: Config, backend?: AgentBackend) {
     super(ctx, 'devloop')
@@ -86,7 +87,12 @@ export default class DevloopService extends Service {
         worktreeRoot: string | null
       } | undefined> => {
         if (this.disposed) return
-        const current = await loadState(this.config.root, now)
+        let current = await loadState(this.config.root, now)
+        if (this.pendingCommitHold && !current.killSwitch && !current.supervisor) {
+          current = holdTask(current, this.pendingCommitHold, 'parent_commit_failed')
+          await saveState(this.config.root, current)
+          this.pendingCommitHold = null
+        }
         if (current.supervisor?.reason === 'unreadable_state') {
           this.ctx.logger.error('[dsh-devloop] tick skipped: unreadable STATE.json')
           return
@@ -220,7 +226,8 @@ export default class DevloopService extends Service {
                 await commitDirtyTaskWorktree(outcome.value.worktreeRoot, action.taskId)
               } catch (error) {
                 this.ctx.logger.error('[dsh-devloop] parent commit failed', error)
-                await persistParentCommitHold(this.config.root, action.taskId, this.ctx.logger)
+                const held = await persistParentCommitHold(this.config.root, action.taskId, this.ctx.logger)
+                if (!held) this.pendingCommitHold = action.taskId
               }
             }
           } catch (error) {
@@ -311,7 +318,7 @@ async function persistParentCommitHold(
   root: string,
   taskId: string,
   log: { error(message: string, ...rest: unknown[]): void },
-): Promise<void> {
+): Promise<boolean> {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
       const folded = await withStateLock(root, async () => {
@@ -319,13 +326,14 @@ async function persistParentCommitHold(
         if (current.killSwitch || current.supervisor) return
         await saveState(root, holdTask(current, taskId, 'parent_commit_failed'))
       })
-      if (folded.ok) return
+      if (folded.ok) return true
     } catch (error) {
       log.error('[dsh-devloop] parent commit hold failed', error)
     }
     if (attempt === 0) await new Promise(resolve => setTimeout(resolve, 50))
   }
   log.error('[dsh-devloop] parent commit hold deferred: lock held')
+  return false
 }
 
 function mergeHoldReason(error: unknown): 'empty_task' | 'merge_wedged' | 'unknown_base' | null {
