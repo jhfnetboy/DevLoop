@@ -7,7 +7,7 @@ import { Context } from '@deepseek-ai/cordis'
 import { NoopBackend, runInputFor } from '../src/backend.ts'
 import type { HeadlessRun } from '../src/dsh.ts'
 import { DshHeadlessBackend, headlessPrompt } from '../src/dsh.ts'
-import { CLAUDE_DELEGATE_TOOLS, ClaudeCliBackend, CodexCliBackend } from '../src/cli.ts'
+import { ClaudeCliBackend, CodexCliBackend } from '../src/cli.ts'
 import { resolveConfig } from '../src/config.ts'
 import DevloopService from '../src/service.ts'
 import { baseState, makeTask } from './helpers.ts'
@@ -79,13 +79,11 @@ describe('ClaudeCliBackend', () => {
       '-p',
       '--permission-mode',
       'acceptEdits',
-      '--allowedTools',
-      CLAUDE_DELEGATE_TOOLS,
       '--',
       expect.stringContaining('Execute task d1'),
     ])
     expect(calls[0]?.argv.at(-1)).toContain('Do not run git')
-    expect(CLAUDE_DELEGATE_TOOLS).toBe('Bash(pnpm *)')
+    expect(calls[0]?.argv).not.toContain('--allowedTools')
   })
 
   it('uses permission-mode plan for plan ticks', async () => {

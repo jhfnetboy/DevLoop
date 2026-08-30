@@ -33,7 +33,7 @@
 | 0.2.3 | DSH headless 实现 `AgentBackend.run` | 覆盖 `createBackend()`（cordis 只传 ctx+config）；`agentBackend: dsh` 真派一次 `dsh --profile headless`；默认 `noop` 不 spawn；超时 abort；不改 Loop 纯函数 | **Done** (PR #7, tag v0.2.3) |
 | 0.2.4 | 机械 `/merge` 脚本 | 无 Review PASS 不能合；合完删 worktree | **Done** (PR #11) |
 | 0.2.5 | Codex / Claude CLI 作为 T3 最小接线 | 可选 adapter；生产默认仍是 `noop` / `dsh`，不经过 `RecordingBackend` | **Done** (PR #12) |
-| 0.2.6 | T3 harden (Codex RC on #12) | 宿主 commit、Claude `--` + 无 git、Codex gitdir 指针、空 stdout 清笔记 | **This slice** |
+| 0.2.6 | T3 harden (Codex RC on #12) | 宿主 commit、Claude `--` 无 Bash 通道、Codex gitdir 指针、空 stdout 清笔记 | **This slice** |
 
 **本阶段明确不做**：Web UI、OpenCode adapter、LiteLLM、日预算面板。
 

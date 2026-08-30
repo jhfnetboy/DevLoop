@@ -7,12 +7,6 @@ import { defaultRunner } from './spawn.js'
 
 const PLAN_TIMEOUT_MS = 45 * 60_000
 
-/**
- * Prefix match (https://code.claude.com/docs/en/headless): a space before *
- * matches that command plus args. Git stays with the host commit path.
- */
-export const CLAUDE_DELEGATE_TOOLS = 'Bash(pnpm *)'
-
 function runTimeoutMs(input: AgentRunInput): number {
   return input.contract ? input.contract.budget.maxMinutes * 60_000 : PLAN_TIMEOUT_MS
 }
@@ -22,7 +16,7 @@ function claudeArgv(input: AgentRunInput): string[] {
   if (input.action.type !== 'delegate') {
     return ['-p', '--permission-mode', mode, cliPrompt(input)]
   }
-  return ['-p', '--permission-mode', mode, '--allowedTools', CLAUDE_DELEGATE_TOOLS, '--', cliPrompt(input)]
+  return ['-p', '--permission-mode', mode, '--', cliPrompt(input)]
 }
 
 async function resolveLinkedGitDir(input: AgentRunInput): Promise<string | null> {
@@ -147,7 +141,7 @@ async function probeHelp(runner: HeadlessRunner, command: string): Promise<'ok' 
 /**
  * One-shot `claude -p --permission-mode … "<task>"` in a worktree.
  * Plan and review use `plan` (read-only). Delegate uses `acceptEdits`
- * plus `--allowedTools Bash(pnpm *)`; git stays on the host commit path.
+ * plus `--` before the prompt. No Bash auto-approve; git stays on the host.
  */
 export class ClaudeCliBackend implements AgentBackend {
   constructor(

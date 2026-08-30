@@ -220,15 +220,7 @@ export default class DevloopService extends Service {
                 await commitDirtyTaskWorktree(outcome.value.worktreeRoot, action.taskId)
               } catch (error) {
                 this.ctx.logger.error('[dsh-devloop] parent commit failed', error)
-                try {
-                  await withStateLock(this.config.root, async () => {
-                    const current = await loadState(this.config.root, Date.now())
-                    if (current.killSwitch || current.supervisor) return
-                    await saveState(this.config.root, holdTask(current, action.taskId, 'parent_commit_failed'))
-                  })
-                } catch (holdError) {
-                  this.ctx.logger.error('[dsh-devloop] parent commit hold failed', holdError)
-                }
+                await persistParentCommitHold(this.config.root, action.taskId, this.ctx.logger)
               }
             }
           } catch (error) {
@@ -313,6 +305,27 @@ async function awaitDispatch<T>(work: Promise<T>, signal: AbortSignal): Promise<
     throw failure instanceof Error ? failure : new Error(String(failure))
   }
   return value
+}
+
+async function persistParentCommitHold(
+  root: string,
+  taskId: string,
+  log: { error(message: string, ...rest: unknown[]): void },
+): Promise<void> {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const folded = await withStateLock(root, async () => {
+        const current = await loadState(root, Date.now())
+        if (current.killSwitch || current.supervisor) return
+        await saveState(root, holdTask(current, taskId, 'parent_commit_failed'))
+      })
+      if (folded.ok) return
+    } catch (error) {
+      log.error('[dsh-devloop] parent commit hold failed', error)
+    }
+    if (attempt === 0) await new Promise(resolve => setTimeout(resolve, 50))
+  }
+  log.error('[dsh-devloop] parent commit hold deferred: lock held')
 }
 
 function mergeHoldReason(error: unknown): 'empty_task' | 'merge_wedged' | 'unknown_base' | null {
