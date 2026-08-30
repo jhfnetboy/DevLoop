@@ -1,4 +1,5 @@
-import { lstat } from 'node:fs/promises'
+import { lstat, readFile, unlink, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { clearInterval, setInterval } from 'node:timers'
 import { Service, type Context } from '@deepseek-ai/cordis'
 import {
@@ -11,7 +12,7 @@ import {
 import { ConfigSchema, resolveConfig, type Config } from './config.js'
 import { ClaudeCliBackend, CodexCliBackend } from './cli.js'
 import { DshHeadlessBackend } from './dsh.js'
-import { loadState, saveState, withStateLock, workspaceArmed } from './persist.js'
+import { DEVLOOP_DIR, loadState, saveState, withStateLock, workspaceArmed } from './persist.js'
 import { runTick, type TickResult } from './tick.js'
 import type { LoopState } from './types.js'
 import { RUNNER_REAP_MS } from './spawn.js'
@@ -88,10 +89,12 @@ export default class DevloopService extends Service {
       } | undefined> => {
         if (this.disposed) return
         let current = await loadState(this.config.root, now)
+        this.pendingCommitHold = this.pendingCommitHold ?? await readCommitHoldMarker(this.config.root)
         if (this.pendingCommitHold && !current.killSwitch && !current.supervisor) {
           current = holdTask(current, this.pendingCommitHold, 'parent_commit_failed')
           await saveState(this.config.root, current)
           this.pendingCommitHold = null
+          await clearCommitHoldMarker(this.config.root)
         }
         if (current.supervisor?.reason === 'unreadable_state') {
           this.ctx.logger.error('[dsh-devloop] tick skipped: unreadable STATE.json')
@@ -227,7 +230,10 @@ export default class DevloopService extends Service {
               } catch (error) {
                 this.ctx.logger.error('[dsh-devloop] parent commit failed', error)
                 const held = await persistParentCommitHold(this.config.root, action.taskId, this.ctx.logger)
-                if (!held) this.pendingCommitHold = action.taskId
+                if (!held) {
+                  this.pendingCommitHold = action.taskId
+                  await writeCommitHoldMarker(this.config.root, action.taskId, this.ctx.logger)
+                }
               }
             }
           } catch (error) {
@@ -312,6 +318,41 @@ async function awaitDispatch<T>(work: Promise<T>, signal: AbortSignal): Promise<
     throw failure instanceof Error ? failure : new Error(String(failure))
   }
   return value
+}
+
+const COMMIT_HOLD_FILE = 'COMMIT_HOLD'
+
+function commitHoldPath(root: string): string {
+  return join(root, DEVLOOP_DIR, COMMIT_HOLD_FILE)
+}
+
+async function writeCommitHoldMarker(
+  root: string,
+  taskId: string,
+  log: { error(message: string, ...rest: unknown[]): void },
+): Promise<void> {
+  try {
+    await writeFile(commitHoldPath(root), `${taskId}\n`, 'utf8')
+  } catch (error) {
+    log.error('[dsh-devloop] parent commit hold marker write failed', error)
+  }
+}
+
+async function readCommitHoldMarker(root: string): Promise<string | null> {
+  try {
+    const raw = (await readFile(commitHoldPath(root), 'utf8')).trim()
+    return raw.length > 0 ? raw : null
+  } catch {
+    return null
+  }
+}
+
+async function clearCommitHoldMarker(root: string): Promise<void> {
+  try {
+    await unlink(commitHoldPath(root))
+  } catch {
+    // Missing marker is fine.
+  }
 }
 
 async function persistParentCommitHold(

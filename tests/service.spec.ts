@@ -636,9 +636,16 @@ describe('DevloopService', () => {
     let loaded = await loadState(root, Date.now())
     expect(loaded.supervisor).toBeNull()
     expect(loaded.lastAction).toEqual({ type: 'delegate', taskId: 'd1' })
+    await expect(readFile(join(root, '.devloop', 'COMMIT_HOLD'), 'utf8')).resolves.toBe('d1\n')
     backend.releaseLock()
     await new Promise(resolve => setTimeout(resolve, 20))
-    await service.tick()
+    const restarted = new DevloopService(new Context(), resolveConfig({
+      root,
+      tickIntervalMs: 60_000,
+      enabled: false,
+    }))
+    services.push(restarted)
+    await restarted.tick()
     loaded = await loadState(root, Date.now())
     expect(loaded.supervisor).toEqual({ taskId: 'd1', reason: 'parent_commit_failed' })
   })
