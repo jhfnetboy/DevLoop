@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, readFile } from 'node:fs/promises'
+import { access, chmod, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -79,9 +79,11 @@ describe('ClaudeCliBackend', () => {
       '-p',
       '--permission-mode',
       'acceptEdits',
+      '--',
       expect.stringContaining('Execute task d1'),
     ])
-    expect(calls[0]?.argv[3]).toContain('Commit validated changes')
+    expect(calls[0]?.argv.at(-1)).toContain('Do not run git')
+    expect(calls[0]?.argv).not.toContain('--allowedTools')
   })
 
   it('uses permission-mode plan for plan ticks', async () => {
@@ -137,6 +139,29 @@ describe('ClaudeCliBackend', () => {
       workspaceRoot: root,
     })).resolves.toEqual({ status: 'started' })
     await expect(readFile(join(root, '.devloop', 'REVIEW.md'), 'utf8')).resolves.toBe('PASS\n')
+  })
+
+  it('removes a stale PLAN.md when a later plan emits only whitespace', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'devloop-plan-empty-'))
+    await mkdir(join(root, '.devloop'))
+    await writeFile(join(root, '.devloop', 'PLAN.md'), '# old plan\n', 'utf8')
+    const backend = new ClaudeCliBackend(async () => ({ stdout: '  \n', stderr: '' }))
+    await expect(backend.run({
+      ...planInput(join(root, 'wt')),
+      workspaceRoot: root,
+    })).resolves.toEqual({ status: 'started' })
+    await expect(access(join(root, '.devloop', 'PLAN.md'))).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('leaves a missing PLAN.md missing when plan stdout is empty', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'devloop-plan-missing-'))
+    await mkdir(join(root, '.devloop'))
+    const backend = new ClaudeCliBackend(async () => ({ stdout: '', stderr: '' }))
+    await expect(backend.run({
+      ...planInput(join(root, 'wt')),
+      workspaceRoot: root,
+    })).resolves.toEqual({ status: 'started' })
+    await expect(access(join(root, '.devloop', 'PLAN.md'))).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   it('passes permission-mode and the prompt as separate argv entries', async () => {
@@ -213,9 +238,32 @@ describe('CodexCliBackend', () => {
       'exec',
       '--sandbox',
       'workspace-write',
+      '--add-dir',
+      '/repo/.git/worktrees/d1',
       expect.stringContaining('Execute task d1'),
     ])
-    expect(calls[0]?.argv[3]).toContain('Commit validated changes')
+    expect(calls[0]?.argv.at(-1)).toContain('Do not run git')
+  })
+
+  it('adds the gitdir from a linked worktree .git file', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'devloop-codex-gitdir-'))
+    const wt = join(root, 'wt')
+    await mkdir(wt)
+    await writeFile(join(wt, '.git'), 'gitdir: /abs/git/worktrees/custom-name\n', 'utf8')
+    const calls: HeadlessRun[] = []
+    const backend = new CodexCliBackend(fakeRunner(calls))
+    await backend.run({
+      ...delegateInput(wt),
+      workspaceRoot: root,
+    })
+    expect(calls[0]?.argv).toEqual([
+      'exec',
+      '--sandbox',
+      'workspace-write',
+      '--add-dir',
+      '/abs/git/worktrees/custom-name',
+      expect.stringContaining('Execute task d1'),
+    ])
   })
 
   it('uses read-only sandbox for plan ticks', async () => {

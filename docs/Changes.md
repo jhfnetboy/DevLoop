@@ -181,3 +181,22 @@ Optional Claude CLI / Codex CLI T3 adapters. Default stays `noop`. No unattended
 - Loop 纯函数未改
 
 Possible impact: hosts without `claude` / `codex` on PATH stay on `noop` or `dsh`. GitHub installs of this slice report `0.2.5`.
+
+## 0.2.6 — 2026-08-29
+
+T3 follow-up after Codex RC on merged #12. No unattended loop (that's 0.3).
+
+### 代码
+
+- Claude delegate: `--` before the prompt; no Bash auto-approve (no `pnpm *` tunnel)
+- Codex delegate: `--add-dir` from the worktree `.git` `gitdir:` pointer
+- Host `commitDirtyTaskWorktree` after a started delegate: registered worktree, `refs/heads/devloop/<taskId>` only, hooks disabled; list worktrees from the worktree itself (separate-git-dir); commit failure latches `parent_commit_failed`
+- Empty plan/review stdout unlinks stale `PLAN.md` / `REVIEW.md`
+
+### 可能影响
+
+- Delegates edit files; git commit is host-side
+- Whitespace-only plan/review output no longer leaves a stale note
+
+Possible impact: T3 hosts pick up safer argv and host commits. Package version stays **0.2.5** until 0.3.0.
+

@@ -269,6 +269,37 @@ async function stampBaseSha(worktreeRoot: string, contract: TaskContract): Promi
   return { ...contract, baseSha: previous ?? head.toLowerCase() }
 }
 
+/**
+ * Host-side commit after a T3 delegate. The sandbox must not write hooks,
+ * objects, or `refs/heads/main`; git metadata updates stay in this process.
+ */
+export async function commitDirtyTaskWorktree(worktreeRoot: string, taskId: string): Promise<void> {
+  const token = worktreeTaskToken(taskId)
+  if (!token) throw new Error(`unsafe task id for worktree: ${taskId}`)
+  const expected = `refs/heads/${WORKTREE_BRANCH_PREFIX}${token}`
+  if (await symbolicHead(worktreeRoot) !== expected) {
+    throw new Error(`refusing parent commit: worktree HEAD is not ${expected}`)
+  }
+  const dest = await realpath(worktreeRoot)
+  const listed = await listedWorktreePaths(worktreeRoot)
+  if (!await isRegisteredWorktree(listed, dest)) {
+    throw new Error('refusing parent commit: worktree is not registered')
+  }
+  const status = (await git(worktreeRoot, ['status', '--porcelain'])).trim()
+  if (status.length === 0) return
+  await git(worktreeRoot, ['add', '-A'])
+  const staged = (await git(worktreeRoot, ['diff', '--cached', '--name-only'])).trim()
+  if (staged.length === 0) {
+    const stillDirty = (await git(worktreeRoot, ['status', '--porcelain'])).trim()
+    if (stillDirty.length > 0) {
+      throw new Error('parent commit: dirty worktree could not be staged')
+    }
+    return
+  }
+  const hooksPath = process.platform === 'win32' ? 'NUL' : '/dev/null'
+  await git(worktreeRoot, ['-c', `core.hooksPath=${hooksPath}`, 'commit', '--no-verify', '-m', 'devloop: delegate'])
+}
+
 export async function readContractBaseSha(worktreeRoot: string): Promise<string | null> {
   try {
     const raw = await readFile(join(worktreeRoot, DEVLOOP_DIR, CONTRACT_FILE), 'utf8')

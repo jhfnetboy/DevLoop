@@ -1,4 +1,5 @@
-import { lstat } from 'node:fs/promises'
+import { lstat, readFile, unlink, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { clearInterval, setInterval } from 'node:timers'
 import { Service, type Context } from '@deepseek-ai/cordis'
 import {
@@ -11,11 +12,11 @@ import {
 import { ConfigSchema, resolveConfig, type Config } from './config.js'
 import { ClaudeCliBackend, CodexCliBackend } from './cli.js'
 import { DshHeadlessBackend } from './dsh.js'
-import { loadState, saveState, withStateLock, workspaceArmed } from './persist.js'
+import { DEVLOOP_DIR, loadState, saveState, withStateLock, workspaceArmed } from './persist.js'
 import { runTick, type TickResult } from './tick.js'
 import type { LoopState } from './types.js'
 import { RUNNER_REAP_MS } from './spawn.js'
-import { prepareDelegateWorktree, preparePlanWorktree, removePlanWorktree, mergeTaskWorktree, deleteMergedTaskBranch, worktreePath, readContractBaseSha } from './worktree.js'
+import { prepareDelegateWorktree, preparePlanWorktree, removePlanWorktree, mergeTaskWorktree, deleteMergedTaskBranch, worktreePath, readContractBaseSha, commitDirtyTaskWorktree } from './worktree.js'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -42,6 +43,7 @@ export default class DevloopService extends Service {
   private busy = false
   private disposed = false
   private dispatchAbort: AbortController | null = null
+  private pendingCommitHold: string | null = null
 
   constructor(ctx: Context, rawConfig: Config, backend?: AgentBackend) {
     super(ctx, 'devloop')
@@ -86,7 +88,14 @@ export default class DevloopService extends Service {
         worktreeRoot: string | null
       } | undefined> => {
         if (this.disposed) return
-        const current = await loadState(this.config.root, now)
+        let current = await loadState(this.config.root, now)
+        this.pendingCommitHold = this.pendingCommitHold ?? await readCommitHoldMarker(this.config.root)
+        if (this.pendingCommitHold && !current.killSwitch && !current.supervisor) {
+          current = holdTask(current, this.pendingCommitHold, 'parent_commit_failed')
+          await saveState(this.config.root, current)
+          this.pendingCommitHold = null
+          await clearCommitHoldMarker(this.config.root)
+        }
         if (current.supervisor?.reason === 'unreadable_state') {
           this.ctx.logger.error('[dsh-devloop] tick skipped: unreadable STATE.json')
           return
@@ -198,7 +207,7 @@ export default class DevloopService extends Service {
           const timer = setTimeout(() => abort.abort(), timeoutMs)
           const action = outcome.value.result.action
           try {
-            await awaitDispatch(
+            const dispatched = await awaitDispatch(
               dispatchTick(
                 this.backend,
                 this.config.root,
@@ -211,6 +220,22 @@ export default class DevloopService extends Service {
               ),
               abort.signal,
             )
+            if (
+              dispatched?.status === 'started'
+              && action.type === 'delegate'
+              && outcome.value.worktreeRoot
+            ) {
+              try {
+                await commitDirtyTaskWorktree(outcome.value.worktreeRoot, action.taskId)
+              } catch (error) {
+                this.ctx.logger.error('[dsh-devloop] parent commit failed', error)
+                const held = await persistParentCommitHold(this.config.root, action.taskId, this.ctx.logger)
+                if (!held) {
+                  this.pendingCommitHold = action.taskId
+                  await writeCommitHoldMarker(this.config.root, action.taskId, this.ctx.logger)
+                }
+              }
+            }
           } catch (error) {
             if (!this.disposed) {
               const timeout = error instanceof Error && error.message === 'backend timeout'
@@ -261,10 +286,13 @@ const DISPATCH_REAP_GRACE_MS = RUNNER_REAP_MS + 250
  * abort signal fires and the backend ignores it, cap the wait so `busy`
  * cannot stick forever.
  */
-async function awaitDispatch(work: Promise<unknown>, signal: AbortSignal): Promise<void> {
+async function awaitDispatch<T>(work: Promise<T>, signal: AbortSignal): Promise<T | undefined> {
+  let value: T | undefined
   let failure: unknown
   const settled = work.then(
-    () => undefined,
+    result => {
+      value = result
+    },
     error => {
       failure = error
     },
@@ -289,6 +317,64 @@ async function awaitDispatch(work: Promise<unknown>, signal: AbortSignal): Promi
   if (failure !== undefined) {
     throw failure instanceof Error ? failure : new Error(String(failure))
   }
+  return value
+}
+
+const COMMIT_HOLD_FILE = 'COMMIT_HOLD'
+
+function commitHoldPath(root: string): string {
+  return join(root, DEVLOOP_DIR, COMMIT_HOLD_FILE)
+}
+
+async function writeCommitHoldMarker(
+  root: string,
+  taskId: string,
+  log: { error(message: string, ...rest: unknown[]): void },
+): Promise<void> {
+  try {
+    await writeFile(commitHoldPath(root), `${taskId}\n`, 'utf8')
+  } catch (error) {
+    log.error('[dsh-devloop] parent commit hold marker write failed', error)
+  }
+}
+
+async function readCommitHoldMarker(root: string): Promise<string | null> {
+  try {
+    const raw = (await readFile(commitHoldPath(root), 'utf8')).trim()
+    return raw.length > 0 ? raw : null
+  } catch {
+    return null
+  }
+}
+
+async function clearCommitHoldMarker(root: string): Promise<void> {
+  try {
+    await unlink(commitHoldPath(root))
+  } catch {
+    // Missing marker is fine.
+  }
+}
+
+async function persistParentCommitHold(
+  root: string,
+  taskId: string,
+  log: { error(message: string, ...rest: unknown[]): void },
+): Promise<boolean> {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const folded = await withStateLock(root, async () => {
+        const current = await loadState(root, Date.now())
+        if (current.killSwitch || current.supervisor) return
+        await saveState(root, holdTask(current, taskId, 'parent_commit_failed'))
+      })
+      if (folded.ok) return true
+    } catch (error) {
+      log.error('[dsh-devloop] parent commit hold failed', error)
+    }
+    if (attempt === 0) await new Promise(resolve => setTimeout(resolve, 50))
+  }
+  log.error('[dsh-devloop] parent commit hold deferred: lock held')
+  return false
 }
 
 function mergeHoldReason(error: unknown): 'empty_task' | 'merge_wedged' | 'unknown_base' | null {
