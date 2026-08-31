@@ -6,7 +6,7 @@ Package version: **0.3.0**. This document is the release note, not a second semv
 
 ## What is in this version
 
-Merges already on `main` through 0.2.5 (PR #12), plus this slice:
+Merges already on `main` through 0.2.6 (PR #14), plus this slice:
 
 | Slice | PR | Ships |
 |---|---|---|
@@ -25,7 +25,8 @@ Host-side checks (`dsh plugin add`, `--dump-config`) are listed in [UserCaseTest
 
 ## Honest limits
 
-- This release advances plan → delegate → review → merge from validated `<devloop_result>` envelopes. Arbitrary prose and missing envelopes stop or retry safely; operators must not edit `STATE.json` to imitate model results.
+- This release advances plan → delegate → review → merge from validated `<devloop_result>` envelopes. Arbitrary prose and missing envelopes stop safely; operators must not edit `STATE.json` to imitate model results.
+- A provider result that contains a malformed envelope gets one protocol-only repair attempt. The repair prompt forbids additional edits; a second malformed result stops safely.
 - Merge does not push. Conflicted merges abort and retry next tick.
 - `agentBackend: routed` sends plan to `plannerRoute`, delegate to `routing[contract.tier]`, and review to an independent `reviewerRoute`; identical implementer/reviewer identities fail closed. The default remains `noop`.
 - Native Harness providers use `backend: subagent:<provider>` and require the Harness `agents`, agent-loop, and `subagents` services plus that named provider. Provider configuration chooses the actual model; the route `model` is descriptive and must match it.

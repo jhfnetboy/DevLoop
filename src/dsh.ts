@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AgentBackend, AgentRunInput, AgentRunResult } from './backend.js'
 import { defaultRunner, type HeadlessRun, type HeadlessRunner } from './spawn.js'
-import { parseDevloopResult, resultInstructions } from './result.js'
+import { parseDevloopResult, protocolRepairInstruction, resultInstructions } from './result.js'
 
 export type { HeadlessRun, HeadlessRunner }
 
@@ -56,15 +56,29 @@ export class DshHeadlessBackend implements AgentBackend {
         await writeFile(patchPath, dshRoutePatch(input.route.model), 'utf8')
         argv.push('--patch', patchPath)
       }
-      argv.push(headlessPrompt(input))
-      const { stdout } = await this.runner({
+      const prompt = headlessPrompt(input)
+      argv.push(prompt)
+      const request = {
         command: this.command,
         argv,
         cwd,
         timeoutMs,
         signal: input.signal,
-      })
-      const outcome = stdout.includes('<devloop_result>') ? parseDevloopResult(stdout) : undefined
+      }
+      let { stdout } = await this.runner(request)
+      let outcome
+      if (stdout.includes('<devloop_result>')) {
+        try {
+          outcome = parseDevloopResult(stdout)
+        } catch {
+          const repairArgv = [
+            ...argv.slice(0, -1),
+            `${prompt}\n${protocolRepairInstruction()}`,
+          ]
+          stdout = (await this.runner({ ...request, argv: repairArgv })).stdout
+          outcome = stdout.includes('<devloop_result>') ? parseDevloopResult(stdout) : undefined
+        }
+      }
       return {
         status: 'started',
         ...(outcome === undefined ? {} : { outcome }),

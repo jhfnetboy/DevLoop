@@ -4,7 +4,7 @@ import type { AgentBackend, AgentRunInput, AgentRunResult } from './backend.js'
 import { headlessPrompt, type HeadlessRunner } from './dsh.js'
 import { assertLocalDevloopDir, DEVLOOP_DIR } from './persist.js'
 import { defaultRunner } from './spawn.js'
-import { parseDevloopResult } from './result.js'
+import { parseDevloopResult, protocolRepairInstruction } from './result.js'
 
 const PLAN_TIMEOUT_MS = 45 * 60_000
 
@@ -122,13 +122,25 @@ async function runCli(
     return { status: 'failed', detail: 'refusing to run T3 CLI at workspace root' }
   }
   try {
-    const { stdout } = await runner({ command, argv, cwd, timeoutMs: runTimeoutMs(input), signal: input.signal })
+    const request = { command, argv, cwd, timeoutMs: runTimeoutMs(input), signal: input.signal }
+    let { stdout } = await runner(request)
+    let outcome
+    if (stdout.includes('<devloop_result>')) {
+      try {
+        outcome = parseDevloopResult(stdout)
+      } catch {
+        const repairArgv = [...argv]
+        const promptIndex = repairArgv.length - 1
+        repairArgv[promptIndex] = `${repairArgv[promptIndex] ?? ''}\n${protocolRepairInstruction()}`
+        stdout = (await runner({ ...request, argv: repairArgv })).stdout
+        outcome = stdout.includes('<devloop_result>') ? parseDevloopResult(stdout) : undefined
+      }
+    }
     if (input.action.type === 'plan') {
       await writeDevloopNote(input.workspaceRoot, 'PLAN.md', stdout)
     } else if (input.action.type === 'review') {
       await writeDevloopNote(input.workspaceRoot, 'REVIEW.md', stdout)
     }
-    const outcome = stdout.includes('<devloop_result>') ? parseDevloopResult(stdout) : undefined
     return {
       status: 'started',
       ...(outcome === undefined ? {} : { outcome }),

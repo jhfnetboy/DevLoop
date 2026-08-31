@@ -95,6 +95,19 @@ describe('DshHeadlessBackend', () => {
     })
   })
 
+  it('retries one malformed result without asking for more edits', async () => {
+    const calls: HeadlessRun[] = []
+    const valid = '<devloop_result>{"version":1,"kind":"plan","tasks":[{"id":"d1","title":"One","tier":"T1","risk":"low","allowedPaths":["hello.txt"],"acceptance":["exists"]}]}</devloop_result>'
+    const backend = new DshHeadlessBackend(async request => {
+      calls.push(request)
+      return { stdout: calls.length === 1 ? '<devloop_result>{broken}</devloop_result>' : valid, stderr: '' }
+    })
+    const result = await backend.run(runInputFor('/repo', { type: 'plan' }, baseState(), limits))
+    expect(result).toMatchObject({ status: 'started', outcome: { kind: 'plan' } })
+    expect(calls).toHaveLength(2)
+    expect(calls[1]?.argv.at(-1)).toContain('Do not make additional edits')
+  })
+
   it('forwards AbortSignal to the runner', async () => {
     const abort = new AbortController()
     let seen: AbortSignal | undefined

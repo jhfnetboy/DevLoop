@@ -223,6 +223,37 @@ describe('ClaudeCliBackend', () => {
     })
   })
 
+  it('retries one malformed result as a protocol-only repair', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'devloop-cli-repair-'))
+    await mkdir(join(root, '.devloop'))
+    const calls: HeadlessRun[] = []
+    const valid = '<devloop_result>{"version":1,"kind":"review","taskId":"d1","reviewedSha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","verdict":"PASS"}</devloop_result>'
+    const backend = new ClaudeCliBackend(async request => {
+      calls.push(request)
+      return { stdout: calls.length === 1 ? '<devloop_result>{broken}</devloop_result>' : valid, stderr: '' }
+    })
+    const result = await backend.run({
+      ...reviewInput(join(root, '.devloop', 'worktrees', 'd1')),
+      workspaceRoot: root,
+    })
+    expect(result).toMatchObject({ status: 'started', outcome: { kind: 'review', verdict: 'PASS' } })
+    expect(calls).toHaveLength(2)
+    expect(calls[1]?.argv.at(-1)).toContain('Do not make additional edits')
+  })
+
+  it('fails closed after two malformed protocol results', async () => {
+    const calls: HeadlessRun[] = []
+    const backend = new ClaudeCliBackend(async request => {
+      calls.push(request)
+      return { stdout: '<devloop_result>{broken}</devloop_result>', stderr: '' }
+    })
+    await expect(backend.run(reviewInput('/repo/.devloop/worktrees/d1'))).resolves.toEqual({
+      status: 'failed',
+      detail: 'invalid devloop_result JSON',
+    })
+    expect(calls).toHaveLength(2)
+  })
+
   it('forwards AbortSignal to the runner', async () => {
     const abort = new AbortController()
     let seen: AbortSignal | undefined

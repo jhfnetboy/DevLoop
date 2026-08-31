@@ -84,6 +84,10 @@ export function resultInstructions(kind: DevloopResult['kind'], taskId?: string,
   return `Review exactly commit ${reviewedSha ?? 'UNKNOWN'}. Finish with exactly one <devloop_result>{"version":1,"kind":"review","taskId":${JSON.stringify(taskId ?? '')},"reviewedSha":${JSON.stringify(reviewedSha ?? '')},"verdict":"PASS","notes":"..."}</devloop_result> envelope. Verdict is PASS, PASS_WITH_NOTES, REWORK, REPLAN, or BLOCKED.`
 }
 
+export function protocolRepairInstruction(): string {
+  return 'Your previous response had an invalid devloop_result. Do not make additional edits. Inspect the current state and return exactly one valid envelope with strict JSON.'
+}
+
 function validatePlan(value: Record<string, unknown>): PlanResult {
   if (!Array.isArray(value.tasks) || value.tasks.length === 0 || value.tasks.length > MAX_TASKS) {
     throw new Error(`plan tasks must contain 1-${MAX_TASKS} entries`)
