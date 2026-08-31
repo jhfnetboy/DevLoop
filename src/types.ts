@@ -32,6 +32,12 @@ export interface Task {
   readonly lastReviewVerdict?: ReviewVerdict
   /** Git SHA of the task branch at delegate. Merge refuses if the branch is still this. */
   readonly baseSha?: string
+  /** Host-created implementation commit that the independent review must bind to. */
+  readonly implementationSha?: string
+  /** Provider/model identity that produced the implementation. */
+  readonly implementer?: string
+  /** Provider/model identity that produced the accepted review. */
+  readonly reviewer?: string
 }
 
 export interface SupervisorHold {
@@ -62,6 +68,8 @@ export type LoopAction =
 
 export interface LoopState {
   readonly version: 1
+  /** Monotonic host revision; models never choose this value. */
+  readonly revision: number
   readonly goalCompleted: boolean
   readonly killSwitch: boolean
   readonly supervisor: SupervisorHold | null
@@ -85,6 +93,8 @@ export interface TaskContract {
   }
   /** Git SHA of the task branch at delegate time. Merge refuses if HEAD of the branch is still this. */
   readonly baseSha?: string
+  /** Exact implementation commit to inspect during review. */
+  readonly implementationSha?: string
 }
 
 export interface Route {

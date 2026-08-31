@@ -76,7 +76,10 @@ describe('DshHeadlessBackend', () => {
       ...runInputFor('/repo', { type: 'plan' }, baseState(), limits),
       route: { tier: 'T2' as const, backend: 'dsh', model: 'deepseek-v4-pro' },
     }
-    await expect(backend.run(input)).resolves.toEqual({ status: 'started' })
+    await expect(backend.run(input)).resolves.toEqual({
+      status: 'started',
+      agent: 'dsh/deepseek-v4-pro',
+    })
     expect(patch).toContain('provider: deepseek-official')
     expect(patch).toContain('model: "deepseek-v4-pro"')
   })

@@ -6,16 +6,16 @@ This repository is `dsh-devloop`. It is not another coding agent and it does not
 
 ## What 0.3.0 does
 
-- Keeps the scheduler heartbeat running unattended; it does not yet automate every state transition in the full engineering pipeline
+- Advances the bounded plan → delegate → review → local merge pipeline from validated, versioned model results
 - Adds a human snapshot at `.devloop/PROGRESS.md` after each tick (including latched idle, killSwitch, and unreadable STATE)
 - Each dispatch is a new one-shot CLI; at most one in flight (`busy`). The next tick waits.
 - Optional `tokens` / `costUsd` from the backend fold into budget usage when present; session cost resets when the plugin starts; daily cost resets at UTC midnight
 - Still no operator UI (**0.4**)
 - Installs into a DSH profile as a bundle plugin
-- On each tick, if the workspace has `.devloop/GOAL.md`, reads `STATE.json` and records the next loop action (plan / delegate / review / merge / stop)
+- On each tick, if the workspace has `.devloop/GOAL.md`, reads revisioned state and deterministically chooses plan / delegate / review / merge / stop
 - Enforces budget / circuit-breaker rules in-process
 - Does **not** spawn workers by default (`agentBackend: noop`). Opt in to one fixed CLI, or use `agentBackend: routed` for role/tier routing.
-- After writing STATE, plan / delegate / review is handed to `AgentBackend.run` (NoopBackend in production, outside the lock)
+- After writing STATE, plan / delegate / review is handed to `AgentBackend.run` outside the lock; validated results are committed in a second revision-checked transition
 - `delegate` creates `.devloop/worktrees/<taskId>` and writes `.devloop/CONTRACT.json` inside it
 - With `agentBackend: routed`, plan uses `plannerRoute`, delegate uses `routing[contract.tier]`, and review uses the independent `reviewerRoute`
 - `merge` is mechanical git: `merge_ready` plus Review `PASS` / `PASS_WITH_NOTES` merges `devloop/<taskId>` into workspace HEAD, deletes the worktree, marks the task `done`. No PASS → escalate. Does not push. Does not call AgentBackend.
@@ -143,12 +143,12 @@ The goal is: expensive models plan and review, cheap models implement, a program
 | DSH plugin, not a new runtime | Yes. Bundle + Cordis Service. |
 | Program loop, one transition per tick | Yes. Pure `decideNextAction` plus `runTick`, driven by `setInterval`. |
 | Hard budget / kill switch | Yes, in-process. Live token/cost only if the backend fills `AgentRunResult`. |
-| File-backed recoverability | `GOAL.md` + `STATE.json` + `LOCK` + `PROGRESS.md` + worktree `CONTRACT.json`. |
-| Cheap workers actually implement | Partial. Routed mode picks `routing[contract.tier]` and pins the configured model. Backend completion still does not advance task status automatically. |
-| Expensive models actually review | Partial. Plan and review have independent routes, and identical implementer/reviewer routes are rejected. PASS / REWORK is still operator-driven. |
-| Unattended milestone completion | **No.** The scheduler keeps ticking, but plan/task/review outcomes still need an operator or integration to update STATE. |
+| File-backed recoverability | `GOAL.md` + revisioned `STATE.json` + append-only `EVENTS.jsonl` + `LOCK` + `PROGRESS.md` + worktree `CONTRACT.json`. |
+| Cheap workers actually implement | Yes when opted in. Routed mode selects `routing[contract.tier]`; the host validates changed paths and creates the commit. |
+| Expensive models actually review | Yes when opted in. Review is bound to the implementation SHA and an independent provider/model identity. |
+| Unattended milestone completion | Yes for the bounded plan → delegate → review → local merge chain; push and release remain explicit operator actions. |
 
-0.3 can keep ticking unattended under budget and route work by role/tier. It cannot yet autonomously advance the full pipeline because it does not turn plan output into tasks or parse PASS/REWORK. The operator UI remains 0.4.
+0.3 advances the bounded pipeline from validated machine results under budget. The operator UI, general API broker, and pstack-style multi-candidate arena remain 0.4.
 
 ## Requirements
 
@@ -230,7 +230,7 @@ cp ~/.dsh/profiles/web/node_modules/dsh-devloop/templates/GOAL.md \
 # edit GOAL.md, then start dsh from that project (or set config.root)
 ```
 
-Each tick writes `.devloop/STATE.json` with `lastAction`. With `agentBackend: noop` (default) it still does not edit your source tree. `dsh` / `claude` / `codex` run that CLI in the worktree.
+Each tick writes `.devloop/STATE.json`, appends `.devloop/EVENTS.jsonl`, and updates `PROGRESS.md`. With `agentBackend: noop` (default) it does not edit source. `dsh` / `claude` / `codex` run that CLI in the worktree; `subagent:<provider>` reuses an installed Harness provider.
 
 ## Uninstall
 

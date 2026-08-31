@@ -58,6 +58,38 @@ describe('RoutedBackend', () => {
       detail: 'review route must differ from implementer route codex/gpt-5.4',
     })
   })
+
+  it('routes subagent:<provider> through the optional Harness adapter', async () => {
+    const subagent = new RecordingBackend()
+    const config = resolveConfig({
+      plannerRoute: { tier: 'T3', backend: 'subagent:codex', model: 'gpt-5.4' },
+    })
+    const backend = new RoutedBackend({
+      planner: config.plannerRoute,
+      reviewer: config.reviewerRoute,
+      workers: config.routing,
+    }, { subagent })
+    await backend.run(runInputFor('/repo', { type: 'plan' }, baseState(), limits))
+    expect(subagent.runs[0]?.route).toEqual(config.plannerRoute)
+  })
+
+  it('rejects the same native provider even when descriptive model labels differ', async () => {
+    const config = resolveConfig({
+      reviewerRoute: { tier: 'T3', backend: 'subagent:codex', model: 'review-label' },
+      routing: {
+        T3: { tier: 'T3', backend: 'subagent:codex', model: 'implement-label' },
+      },
+    })
+    const backend = new RoutedBackend({
+      planner: config.plannerRoute,
+      reviewer: config.reviewerRoute,
+      workers: config.routing,
+    }, { subagent: new RecordingBackend() })
+    const state = baseState({ tasks: [makeTask({ id: 'd1', tier: 'T3', status: 'review_pending' })] })
+    await expect(backend.run(
+      runInputFor('/repo', { type: 'review', taskId: 'd1' }, state, limits),
+    )).resolves.toMatchObject({ status: 'failed' })
+  })
 })
 
 describe('runInputFor', () => {

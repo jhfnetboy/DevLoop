@@ -3,15 +3,22 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AgentBackend, AgentRunInput, AgentRunResult } from './backend.js'
 import { defaultRunner, type HeadlessRun, type HeadlessRunner } from './spawn.js'
+import { parseDevloopResult, resultInstructions } from './result.js'
 
 export type { HeadlessRun, HeadlessRunner }
 
 export function headlessPrompt(input: AgentRunInput): string {
   if (input.action.type === 'plan') {
-    return 'Read .devloop/GOAL.md and produce a bounded task list. Do not edit business source files.'
+    return [
+      'Read .devloop/GOAL.md and produce a bounded task list. Do not edit business source files.',
+      resultInstructions('plan'),
+    ].join('\n')
   }
   if (input.action.type === 'review' && input.contract) {
-    return `Review task ${input.contract.taskId} (${input.contract.title}). Verdict must be PASS, REWORK, or BLOCKED. Acceptance: ${input.contract.acceptance.join('; ')}`
+    return [
+      `Review task ${input.contract.taskId} (${input.contract.title}) at exact commit ${input.contract.implementationSha ?? 'UNKNOWN'}. Acceptance: ${input.contract.acceptance.join('; ')}`,
+      resultInstructions('review', input.contract.taskId, input.contract.implementationSha),
+    ].join('\n')
   }
   if (input.contract) {
     return [
@@ -20,6 +27,7 @@ export function headlessPrompt(input: AgentRunInput): string {
       `Forbidden: ${input.contract.forbidden.join(', ')}.`,
       `Acceptance: ${input.contract.acceptance.join('; ')}.`,
       'Read .devloop/CONTRACT.json. Do not modify .devloop/.',
+      resultInstructions('implementation', input.contract.taskId),
     ].join(' ')
   }
   return 'Follow the DevLoop task contract in this workspace.'
@@ -49,14 +57,19 @@ export class DshHeadlessBackend implements AgentBackend {
         argv.push('--patch', patchPath)
       }
       argv.push(headlessPrompt(input))
-      await this.runner({
+      const { stdout } = await this.runner({
         command: this.command,
         argv,
         cwd,
         timeoutMs,
         signal: input.signal,
       })
-      return { status: 'started' }
+      const outcome = stdout.includes('<devloop_result>') ? parseDevloopResult(stdout) : undefined
+      return {
+        status: 'started',
+        ...(outcome === undefined ? {} : { outcome }),
+        ...(input.route ? { agent: `${input.route.backend}/${input.route.model}` } : {}),
+      }
     } catch (error) {
       const detail = error instanceof Error ? error.message : 'dsh headless failed'
       return { status: 'failed', detail }

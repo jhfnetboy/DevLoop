@@ -1,6 +1,6 @@
 # Release 0.3.0
 
-Unattended scheduler heartbeat with role/tier routing: continuous tick, one-shot dispatch, PROGRESS.md, and optional cost signals. Tag `v0.3.0` and the GitHub Release are created **after** this commit is on `main`; steps: [Deploy.md](./Deploy.md).
+Bounded autonomous engineering loop: structured model results, deterministic state transitions, host-enforced write scope, SHA-bound independent review, durable recovery, and role/tier routing. Tag `v0.3.0` and the GitHub Release are created **after** this commit is on `main`; steps: [Deploy.md](./Deploy.md).
 
 Package version: **0.3.0**. This document is the release note, not a second semver.
 
@@ -19,16 +19,19 @@ Merges already on `main` through 0.2.5 (PR #12), plus this slice:
 | 0.2.4 merge | #11 | Review PASS → `git merge` task branch, delete worktree, mark `done` |
 | 0.2.5 T3 CLI | #12 | Optional `agentBackend: claude` / `codex`; default stays `noop` |
 | 0.2.6 hardening | #14 | Host-side task commits, safer CLI argv, durable commit-failure hold |
-| 0.3 unattended | this | PROGRESS.md, role/tier routing, one-shot dispatch, optional token/cost signals |
+| 0.3 autonomous | this | Structured results, automatic transitions, host scope/SHA gates, event recovery, named-provider routing |
 
 Host-side checks (`dsh plugin add`, `--dump-config`) are listed in [UserCaseTest.md](./UserCaseTest.md).
 
 ## Honest limits
 
-- This release keeps the scheduler alive unattended, but does not autonomously complete the whole plan → delegate → review → merge chain. Plan output is not converted into tasks, and CLI adapters do not parse PASS / REWORK from stdout; task transitions remain operator- or integration-driven through STATE.
+- This release advances plan → delegate → review → merge from validated `<devloop_result>` envelopes. Arbitrary prose and missing envelopes stop or retry safely; operators must not edit `STATE.json` to imitate model results.
 - Merge does not push. Conflicted merges abort and retry next tick.
-- `agentBackend: routed` sends plan to `plannerRoute`, delegate to `routing[contract.tier]`, and review to an independent `reviewerRoute`; identical implementer/reviewer routes fail closed. The default remains `noop`.
+- `agentBackend: routed` sends plan to `plannerRoute`, delegate to `routing[contract.tier]`, and review to an independent `reviewerRoute`; identical implementer/reviewer identities fail closed. The default remains `noop`.
+- Native Harness providers use `backend: subagent:<provider>` and require the Harness `agents`, agent-loop, and `subagents` services plus that named provider. Provider configuration chooses the actual model; the route `model` is descriptive and must match it.
 - T3 CLIs refuse to run at the workspace root (null cwd **or** cwd equal to the workspace). `plan` and `review` use read-only / plan permission flags; only `delegate` gets write access (Claude prompt after `--`; Codex `--add-dir` points at the linked gitdir). After a started delegate, the **host** commits dirty task files on `devloop/<taskId>` only, with hooks disabled. `plan` uses a reserved detached `_loop-plan` worktree (does not create or delete `devloop/_loop-plan`). Plan stdout is copied to `.devloop/PLAN.md`; review stdout to `.devloop/REVIEW.md`; whitespace-only stdout removes a stale note.
+- `STATE.json` is an atomic snapshot; `EVENTS.jsonl` is the append-only, monotonic recovery authority after a torn or missing snapshot.
 - Token/cost melt the circuit only when the backend fills `AgentRunResult`; otherwise the loop uses wall-clock `lastProgressAt`. Session cost resets after the first successful STATE persist of this process; daily cost resets at UTC midnight.
+- The automated E2E uses a scripted provider. A clean-profile run against real credentials remains a release-candidate/manual gate.
 - No operator UI (**0.4**).
 - npm registry: not published in this cut unless `npm whoami` works. Install from GitHub or the Release tarball. See [Install.md](./Install.md).

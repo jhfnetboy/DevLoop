@@ -5,7 +5,11 @@
 - 新增 opt-in `agentBackend: routed`：plan → `plannerRoute`，delegate → `routing[contract.tier]`，review → `reviewerRoute`
 - Routed CLI 显式传递模型；DSH 用隔离的临时 patch 固定 DeepSeek model；相同 backend+model 自审会 fail closed
 - 默认仍为 `noop`；固定 `dsh` / `claude` / `codex` 模式保持兼容
-- 无人值守 tick、PROGRESS、成本信号与 parent-commit hold 持久化；PLAN/REVIEW 尚未自动推进 STATE
+- 版本化 `plan` / `implementation` / `review` 结果 envelope；校验后由纯代码自动推进 STATE
+- 宿主以真实 Git changed paths 强制 `allowedPaths`/forbidden，拒绝越界与 symlink；提交 SHA 绑定独立 review
+- 新增可选 Harness `ctx.subagents` bridge（`subagent:<provider>`），每条 run/parent 生命周期全路径 dispose
+- `EVENTS.jsonl` 追加完整状态事件、单调 revision/CAS；STATE 损坏时从最后完整事件恢复
+- 新增无人工改 STATE 的 plan → delegate → review → merge → complete E2E
 
 ## 0.1.0 — 2026-08-25
 

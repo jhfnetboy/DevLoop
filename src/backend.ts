@@ -1,6 +1,7 @@
 import type { BudgetLimits, RoutingTable } from './config.js'
 import { contractForTask } from './router.js'
 import type { LoopAction, LoopState, Route, TaskContract } from './types.js'
+import type { DevloopResult } from './result.js'
 
 export type AgentAction = Extract<LoopAction, { type: 'plan' } | { type: 'delegate' } | { type: 'review' }>
 
@@ -19,6 +20,10 @@ export interface AgentRunResult {
   readonly detail?: string
   readonly tokens?: number
   readonly costUsd?: number
+  /** Validated machine result. Required for autonomous state advancement. */
+  readonly outcome?: DevloopResult
+  /** Concrete provider/model identity used for independent-review checks. */
+  readonly agent?: string
 }
 
 /**
@@ -50,13 +55,15 @@ export class RoutedBackend implements AgentBackend {
     const selected = this.routeFor(input)
     if (!selected.ok) return { status: 'failed', detail: selected.detail }
     const backend = this.backends[selected.route.backend]
+      ?? (selected.route.backend.startsWith('subagent:') ? this.backends.subagent : undefined)
     if (!backend) {
       return {
         status: 'failed',
         detail: `no backend adapter registered for ${selected.route.backend}`,
       }
     }
-    return backend.run({ ...input, route: selected.route })
+    const result = await backend.run({ ...input, route: selected.route })
+    return { ...result, agent: result.agent ?? `${selected.route.backend}/${selected.route.model}` }
   }
 
   async cancel(taskId: string): Promise<void> {
@@ -89,6 +96,7 @@ export class RoutedBackend implements AgentBackend {
 }
 
 function sameAgentRoute(left: Route, right: Route): boolean {
+  if (left.backend.startsWith('subagent:') && left.backend === right.backend) return true
   return left.backend === right.backend && left.model === right.model
 }
 
@@ -119,6 +127,8 @@ export function runInputFor(
       task.acceptance,
       limits.taskTimeoutMinutes,
       limits.maxTaskAttempts,
+      task.baseSha,
+      task.implementationSha,
     ),
     workspaceRoot,
     worktreeRoot: null,

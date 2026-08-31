@@ -12,7 +12,7 @@ import { emptyUsage } from '../src/budget.ts'
 import { emptyState, loadState, saveState, statePath, withStateLock, workspaceArmed } from '../src/persist.ts'
 import { contractForTask } from '../src/router.ts'
 import DevloopService from '../src/service.ts'
-import { planWorktreePath, prepareDelegateWorktree, readContractBaseSha, worktreePath } from '../src/worktree.ts'
+import { planWorktreePath, prepareDelegateWorktree, readContractBaseSha, taskWorktreeHeadSha, worktreePath } from '../src/worktree.ts'
 import { initGitRepo, makeTask, mkdtempInRepo } from './helpers.ts'
 
 async function waitForAction(root: string, type: string, timeoutMs = 10_000): Promise<void> {
@@ -246,6 +246,14 @@ describe('DevloopService', () => {
     const execFileAsync = promisify(execFile)
     await execFileAsync('git', ['-C', dest, 'add', 'src.txt'])
     await execFileAsync('git', ['-C', dest, 'commit', '-m', 'worker'])
+    const beforeMerge = await loadState(root, Date.now())
+    const implementationSha = await taskWorktreeHeadSha(dest)
+    await saveState(root, {
+      ...beforeMerge,
+      tasks: beforeMerge.tasks.map(task => task.id === 'm1'
+        ? { ...task, implementationSha }
+        : task),
+    })
 
     await service.tick()
     const loaded = await loadState(root, Date.now())
@@ -284,6 +292,7 @@ describe('DevloopService', () => {
         status: 'merge_ready',
         lastReviewVerdict: 'PASS_WITH_NOTES',
         baseSha: (await readContractBaseSha(dest)) ?? undefined,
+        implementationSha: await taskWorktreeHeadSha(dest),
       })],
     })
     const backend = new RecordingBackend()
@@ -887,7 +896,7 @@ describe('DevloopService', () => {
     await initGitRepo(root)
     await saveState(root, {
       ...emptyState(Date.now()),
-      tasks: [makeTask({ id: 'd1', status: 'ready', title: 'Add persist' })],
+      tasks: [makeTask({ id: 'd1', status: 'ready', title: 'Add persist', allowedPaths: ['src.txt'] })],
     })
     class DirtyStartedBackend implements AgentBackend {
       async run(input: AgentRunInput): Promise<AgentRunResult> {
@@ -898,7 +907,12 @@ describe('DevloopService', () => {
         if (!match?.[1]) throw new Error('missing gitdir')
         const gitDir = isAbsolute(match[1]) ? match[1] : join(input.worktreeRoot, match[1])
         await writeFile(join(gitDir, 'index.lock'), '', 'utf8')
-        return { status: 'started' }
+        return {
+          status: 'started',
+          outcome: {
+            version: 1, kind: 'implementation', taskId: 'd1', outcome: 'completed', summary: 'done',
+          },
+        }
       }
       async cancel() {}
       async health() { return 'ok' }
@@ -923,7 +937,7 @@ describe('DevloopService', () => {
     await initGitRepo(root)
     await saveState(root, {
       ...emptyState(Date.now()),
-      tasks: [makeTask({ id: 'd1', status: 'ready', title: 'Add persist' })],
+      tasks: [makeTask({ id: 'd1', status: 'ready', title: 'Add persist', allowedPaths: ['src.txt'] })],
     })
     const holdVictim = join(root, 'hold-victim.txt')
     await writeFile(holdVictim, 'keep\n', 'utf8')
@@ -948,7 +962,12 @@ describe('DevloopService', () => {
           })
         })
         await acquired
-        return { status: 'started' }
+        return {
+          status: 'started',
+          outcome: {
+            version: 1, kind: 'implementation', taskId: 'd1', outcome: 'completed', summary: 'done',
+          },
+        }
       }
       async cancel() {}
       async health() { return 'ok' }

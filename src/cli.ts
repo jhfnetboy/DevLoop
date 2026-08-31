@@ -4,6 +4,7 @@ import type { AgentBackend, AgentRunInput, AgentRunResult } from './backend.js'
 import { headlessPrompt, type HeadlessRunner } from './dsh.js'
 import { DEVLOOP_DIR } from './persist.js'
 import { defaultRunner } from './spawn.js'
+import { parseDevloopResult } from './result.js'
 
 const PLAN_TIMEOUT_MS = 45 * 60_000
 
@@ -120,7 +121,12 @@ async function runCli(
     } else if (input.action.type === 'review') {
       await writeDevloopNote(input.workspaceRoot, 'REVIEW.md', stdout)
     }
-    return { status: 'started' }
+    const outcome = stdout.includes('<devloop_result>') ? parseDevloopResult(stdout) : undefined
+    return {
+      status: 'started',
+      ...(outcome === undefined ? {} : { outcome }),
+      ...(input.route ? { agent: `${input.route.backend}/${input.route.model}` } : {}),
+    }
   } catch (error) {
     const detail = error instanceof Error ? error.message : failLabel
     return { status: 'failed', detail }

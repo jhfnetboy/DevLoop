@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { resolveConfig } from '../src/config.ts'
-import { emptyState, loadState, LOCK_STALE_MS, lockPath, saveState, withStateLock, workspaceArmed } from '../src/persist.ts'
+import { emptyState, eventsPath, loadState, LOCK_STALE_MS, lockPath, saveState, statePath, withStateLock, workspaceArmed } from '../src/persist.ts'
 import { runTick } from '../src/tick.ts'
 import type { Task } from '../src/types.ts'
 
@@ -261,6 +261,65 @@ describe('persist and tick', () => {
     await saveState(root, state)
     const loaded = await loadState(root, 2)
     expect(loaded.tasks[0]?.baseSha).toBe(baseSha)
+  })
+
+  it('appends monotonic full-state events and increments revisions', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'devloop-'))
+    await mkdir(join(root, '.devloop'))
+    await saveState(root, emptyState(1), { expectedRevision: 0, action: 'boot' })
+    const first = await loadState(root, 2)
+    expect(first.revision).toBe(1)
+    await saveState(root, { ...first, updatedAt: new Date(2).toISOString() }, {
+      expectedRevision: 1,
+      action: 'tick',
+    })
+    const second = await loadState(root, 3)
+    expect(second.revision).toBe(2)
+    const events = (await readFile(eventsPath(root), 'utf8')).trim().split('\n').map(line => JSON.parse(line))
+    expect(events.map(event => event.revision)).toEqual([1, 2])
+    expect(events[1].state.revision).toBe(2)
+  })
+
+  it('recovers the last complete event after a torn STATE snapshot and journal tail', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'devloop-'))
+    await mkdir(join(root, '.devloop'))
+    await saveState(root, {
+      ...emptyState(1),
+      tasks: [sampleTask('ready')],
+    })
+    await writeFile(statePath(root), '{torn', 'utf8')
+    await writeFile(eventsPath(root), '{also-torn', { encoding: 'utf8', flag: 'a' })
+    const recovered = await loadState(root, 2)
+    expect(recovered.killSwitch).toBe(false)
+    expect(recovered.revision).toBe(1)
+    expect(recovered.tasks[0]?.id).toBe('t-1')
+  })
+
+  it('rejects a stale expected revision without appending', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'devloop-'))
+    await mkdir(join(root, '.devloop'))
+    const first = await saveState(root, emptyState(1))
+    await expect(saveState(root, first, { expectedRevision: 0 })).rejects.toThrow('state_revision_conflict')
+    const lines = (await readFile(eventsPath(root), 'utf8')).trim().split('\n')
+    expect(lines).toHaveLength(1)
+  })
+
+  it('refuses recovery from a divergent journal revision', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'devloop-'))
+    await mkdir(join(root, '.devloop'))
+    const first = await saveState(root, emptyState(1))
+    const forged = {
+      version: 1,
+      revision: 9,
+      at: new Date().toISOString(),
+      action: 'forged',
+      state: { ...first, revision: 9 },
+    }
+    await writeFile(eventsPath(root), `${JSON.stringify(forged)}\n`, { encoding: 'utf8', flag: 'a' })
+    await writeFile(statePath(root), '{torn', 'utf8')
+    const loaded = await loadState(root, 2)
+    expect(loaded.killSwitch).toBe(true)
+    expect(loaded.supervisor?.reason).toBe('invalid_state')
   })
 
   it('halts when task baseSha is not a 40-hex git SHA', async () => {

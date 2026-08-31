@@ -59,6 +59,8 @@ export function contractForTask(
   acceptance: readonly string[],
   maxMinutes: number,
   maxAttempts: number,
+  baseSha?: string,
+  implementationSha?: string,
 ): TaskContract {
   return {
     taskId,
@@ -68,6 +70,8 @@ export function contractForTask(
     forbidden: ['package.json', '.devloop/GOAL.md', '.devloop/'],
     acceptance,
     budget: { maxMinutes, maxAttempts },
+    ...(baseSha === undefined ? {} : { baseSha }),
+    ...(implementationSha === undefined ? {} : { implementationSha }),
   }
 }
 

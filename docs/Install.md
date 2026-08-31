@@ -115,6 +115,15 @@ Optional overrides in `~/.dsh/profiles/web/cordis.patch.yml`:
 
 `agentBackend` defaults to `noop` (no spawn). `routed` selects plan/review routes independently and workers from `routing.T0`–`T3`. Fixed `dsh` / `claude` / `codex` modes remain available.
 
+To reuse installed Harness providers rather than spawning their CLIs directly:
+
+```yaml
+plannerRoute: { tier: T3, backend: "subagent:codex", model: gpt-5.4 }
+reviewerRoute: { tier: T3, backend: "subagent:claude-code", model: opus }
+```
+
+The profile must load Harness `agents`, an agent-loop, `subagents`, and both named providers. Provider configuration is authoritative for the actual model; keep the route's descriptive `model` value consistent. DevLoop creates a temporary idle parent Agent at the exact worktree cwd and disposes both parent and child after the one-shot run.
+
 ## Arm a project
 
 The plugin is idle until the target workspace contains `.devloop/GOAL.md` (a regular file, not a symlink). A bare `.devloop/` directory does not arm it.
@@ -135,9 +144,9 @@ curl -fsSL https://raw.githubusercontent.com/jhfnetboy/DevLoop/v0.3.0/templates/
   -o /path/to/your/project/.devloop/GOAL.md
 ```
 
-Edit `GOAL.md`, then start DSH from that project (or set `config.root`). Each tick writes `.devloop/STATE.json` with `lastAction`.
+Edit `GOAL.md`, then start DSH from that project (or set `config.root`). Each tick writes `.devloop/STATE.json`, appends `.devloop/EVENTS.jsonl`, and updates `PROGRESS.md`.
 
-CLI adapters do not parse PASS/REWORK from stdout. Until something writes `lastReviewVerdict` on the task, PASS/REWORK is still operator-driven. After Review `PASS` / `PASS_WITH_NOTES`, the next tick git-merges `devloop/<taskId>` into the workspace HEAD, deletes the worktree, and marks the task `done`. It does not push. `merge_ready` without PASS escalates. If STATE shows `supervisor.reason: merge_wedged`, the workspace is stuck mid-merge: run `git merge --abort` in the project root, confirm a clean tree, then clear the supervisor hold.
+Backends must finish with the exact machine envelope included in their prompt. Valid plans create tasks; completed implementations are path-checked and host-committed; reviews must echo that exact commit SHA. `PASS` / `PASS_WITH_NOTES` enables the next mechanical merge. It does not push. If STATE shows `supervisor.reason: merge_wedged`, run `git merge --abort`, confirm a clean tree, then clear the hold deliberately.
 
 ## Uninstall
 

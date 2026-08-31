@@ -1,5 +1,7 @@
 # Plan
 
+The active, testable 0.3 release checklist is [`V0.3-TODO.md`](./V0.3-TODO.md).
+
 按阶段推进。每阶段一个分支、一个 PR，不把前一阶段自行合进 main。新阶段从最新阶段分支拉出。
 
 **当前分支是 0.3（无人值守循环），stacked on 0.2.6（PR #14）。**
@@ -47,7 +49,7 @@
 - 熔断接入真实 token / 成本信号（能拿到多少算多少，拿不到用墙钟）
 - 进度汇总写入 PROGRESS.md
 
-**边界**：本阶段不把 PLAN 输出解析为任务，也不把 Review stdout 解析为 PASS / REWORK。没有外部集成更新 STATE 时，0.3 只保证调度器持续、安全地运行，不承诺端到端自动完成里程碑。
+**0.3 最终边界**：PLAN、implementation 与 Review 只通过版本化 machine envelope 进入纯代码状态机；宿主强制路径和提交 SHA 门禁。自动 push、发布、UI、通用 API broker 与多候选 arena 留到 0.4。
 
 ## Milestone 0.4 — Operator surface
 
