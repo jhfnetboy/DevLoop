@@ -1,5 +1,12 @@
 # Changes
 
+## 0.3.0 — 2026-08-31
+
+- 新增 opt-in `agentBackend: routed`：plan → `plannerRoute`，delegate → `routing[contract.tier]`，review → `reviewerRoute`
+- Routed CLI 显式传递模型；DSH 用隔离的临时 patch 固定 DeepSeek model；相同 backend+model 自审会 fail closed
+- 默认仍为 `noop`；固定 `dsh` / `claude` / `codex` 模式保持兼容
+- 无人值守 tick、PROGRESS、成本信号与 parent-commit hold 持久化；PLAN/REVIEW 尚未自动推进 STATE
+
 ## 0.1.0 — 2026-08-25
 
 文档与 ADR。范围仅限 0.1 的架构记录；插件代码在后续 stacked PR 落地。
@@ -202,7 +209,7 @@ Possible impact: T3 hosts pick up safer argv and host commits. Package version s
 
 ## 0.3.0 — 2026-08-29
 
-Unattended loop: continuous tick, one-shot auto-pump, PROGRESS.md, optional cost/token signals. T3 argv/host-commit lives in 0.2.6 (PR #14).
+Unattended scheduler heartbeat: continuous tick, one-shot dispatch, PROGRESS.md, optional cost/token signals. T3 argv/host-commit lives in 0.2.6 (PR #14).
 
 ### 代码
 
@@ -212,6 +219,7 @@ Unattended loop: continuous tick, one-shot auto-pump, PROGRESS.md, optional cost
 - 折费用时若 STATE 已 killSwitch / supervisor，不覆盖任务列表
 - 费用信号 retry/defer（含写失败），`saveState` 成功后才清 `pendingSignals`；skipped ticks 仍持久化 UTC 日费用 rollover
 - Loop 纯函数未改
+- PLAN → tasks 与 Review → verdict 仍需外部集成或操作员更新 STATE；本版本不声称端到端自动完成里程碑
 
 ### 可能影响
 
@@ -220,4 +228,3 @@ Unattended loop: continuous tick, one-shot auto-pump, PROGRESS.md, optional cost
 - 无 UI（**0.4**）
 
 Possible impact: GitHub installs of this slice report `0.3.0`.
-

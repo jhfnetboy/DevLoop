@@ -86,6 +86,18 @@ describe('ClaudeCliBackend', () => {
     expect(calls[0]?.argv).not.toContain('--allowedTools')
   })
 
+  it('passes a routed model to Claude CLI', async () => {
+    const calls: HeadlessRun[] = []
+    const backend = new ClaudeCliBackend(fakeRunner(calls))
+    await backend.run({
+      ...reviewInput('/repo/.devloop/worktrees/d1'),
+      route: { tier: 'T3', backend: 'claude', model: 'opus' },
+    })
+    expect(calls[0]?.argv.slice(0, 5)).toEqual([
+      '-p', '--model', 'opus', '--permission-mode', 'plan',
+    ])
+  })
+
   it('uses permission-mode plan for plan ticks', async () => {
     const calls: HeadlessRun[] = []
     const backend = new ClaudeCliBackend(fakeRunner(calls))
@@ -243,6 +255,19 @@ describe('CodexCliBackend', () => {
       expect.stringContaining('Execute task d1'),
     ])
     expect(calls[0]?.argv.at(-1)).toContain('Do not run git')
+  })
+
+  it('passes a routed model to Codex CLI', async () => {
+    const calls: HeadlessRun[] = []
+    const backend = new CodexCliBackend(fakeRunner(calls))
+    await backend.run({
+      ...reviewInput('/repo/.devloop/worktrees/d1'),
+      route: { tier: 'T3', backend: 'codex', model: 'gpt-5.4' },
+    })
+    expect(calls[0]?.argv.slice(0, 6)).toEqual([
+      'exec', '--sandbox', 'read-only', '--model', 'gpt-5.4',
+      expect.stringContaining('Review task d1'),
+    ])
   })
 
   it('adds the gitdir from a linked worktree .git file', async () => {

@@ -1,6 +1,9 @@
 # Accidental nested clone of this repo
 /DevLoop/
 
+# Local reference copy of cursor/plugins/pstack
+/pstack/
+
 # Agent / test scratch git repos
 .tmp/
 
@@ -47,6 +50,7 @@ lib/
 
 # Dependency directories
 node_modules/
+/node_modules
 jspm_packages/
 
 # Snowpack dependency directory (https://snowpack.dev/)

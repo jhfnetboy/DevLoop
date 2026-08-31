@@ -1,8 +1,10 @@
-import { lstat } from 'node:fs/promises'
+import { constants, lstat, open, rename, unlink } from 'node:fs/promises'
+import { join } from 'node:path'
 import { clearInterval, setInterval } from 'node:timers'
 import { Service, type Context } from '@deepseek-ai/cordis'
 import {
   NoopBackend,
+  RoutedBackend,
   dispatchTick,
   isAgentAction,
   runInputFor,
@@ -11,13 +13,13 @@ import {
 import { ConfigSchema, resolveConfig, type Config } from './config.js'
 import { ClaudeCliBackend, CodexCliBackend } from './cli.js'
 import { DshHeadlessBackend } from './dsh.js'
-import { loadState, saveState, withStateLock, workspaceArmed, type LockResult } from './persist.js'
+import { DEVLOOP_DIR, loadState, saveState, withStateLock, workspaceArmed, type LockResult } from './persist.js'
 import { writeProgress } from './progress.js'
 import { applyRunSignals, rollCostWindows } from './budget.js'
 import { runTick, type TickResult } from './tick.js'
 import type { LoopState } from './types.js'
 import { RUNNER_REAP_MS } from './spawn.js'
-import { prepareDelegateWorktree, preparePlanWorktree, removePlanWorktree, mergeTaskWorktree, deleteMergedTaskBranch, worktreePath, readContractBaseSha, commitDirtyTaskWorktree } from './worktree.js'
+import { prepareDelegateWorktree, preparePlanWorktree, removePlanWorktree, mergeTaskWorktree, deleteMergedTaskBranch, worktreePath, worktreeTaskToken, readContractBaseSha, commitDirtyTaskWorktree } from './worktree.js'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -92,10 +94,12 @@ export default class DevloopService extends Service {
       } | undefined> => {
         if (this.disposed) return
         let current = await loadState(this.config.root, now)
+        this.pendingCommitHold = this.pendingCommitHold ?? await readCommitHoldMarker(this.config.root)
         if (this.pendingCommitHold && !current.killSwitch && !current.supervisor) {
           current = holdTask(current, this.pendingCommitHold, 'parent_commit_failed')
           await saveState(this.config.root, current)
           this.pendingCommitHold = null
+          await clearCommitHoldMarker(this.config.root)
         }
         let sessionRolled = false
         let pendingApplied = false
@@ -268,7 +272,10 @@ export default class DevloopService extends Service {
               } catch (error) {
                 this.ctx.logger.error('[dsh-devloop] parent commit failed', error)
                 const held = await persistParentCommitHold(this.config.root, action.taskId, this.ctx.logger)
-                if (!held) this.pendingCommitHold = action.taskId
+                if (!held) {
+                  this.pendingCommitHold = action.taskId
+                  await writeCommitHoldMarker(this.config.root, action.taskId, this.ctx.logger)
+                }
               }
             }
             const hasSignals = dispatched
@@ -328,6 +335,17 @@ export default class DevloopService extends Service {
    * constructor arg do not spawn. RecordingBackend is tests-only.
    */
   protected createBackend(): AgentBackend {
+    if (this.config.agentBackend === 'routed') {
+      return new RoutedBackend({
+        planner: this.config.plannerRoute,
+        reviewer: this.config.reviewerRoute,
+        workers: this.config.routing,
+      }, {
+        dsh: new DshHeadlessBackend(),
+        claude: new ClaudeCliBackend(),
+        codex: new CodexCliBackend(),
+      })
+    }
     if (this.config.agentBackend === 'dsh') return new DshHeadlessBackend()
     if (this.config.agentBackend === 'claude') return new ClaudeCliBackend()
     if (this.config.agentBackend === 'codex') return new CodexCliBackend()
@@ -336,7 +354,7 @@ export default class DevloopService extends Service {
 }
 
 function isolatedPlan(agentBackend: Config['agentBackend']): boolean {
-  return agentBackend === 'claude' || agentBackend === 'codex'
+  return agentBackend === 'routed' || agentBackend === 'claude' || agentBackend === 'codex'
 }
 
 const SYNTHETIC_STATE_HALTS = new Set(['unreadable_state', 'invalid_state', 'escaped_devloop'])
@@ -425,6 +443,57 @@ async function awaitDispatch<T>(work: Promise<T>, signal: AbortSignal): Promise<
     throw failure instanceof Error ? failure : new Error(String(failure))
   }
   return value
+}
+
+const COMMIT_HOLD_FILE = 'COMMIT_HOLD'
+
+function commitHoldPath(root: string): string {
+  return join(root, DEVLOOP_DIR, COMMIT_HOLD_FILE)
+}
+
+async function writeCommitHoldMarker(
+  root: string,
+  taskId: string,
+  log: { error(message: string, ...rest: unknown[]): void },
+): Promise<void> {
+  const file = commitHoldPath(root)
+  const temp = `${file}.${String(process.pid)}.${String(Date.now())}.tmp`
+  try {
+    const flags = constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW
+    const handle = await open(temp, flags, 0o600)
+    try {
+      await handle.writeFile(`${taskId}\n`, 'utf8')
+    } finally {
+      await handle.close()
+    }
+    await rename(temp, file)
+  } catch (error) {
+    await unlink(temp).catch(() => undefined)
+    log.error('[dsh-devloop] parent commit hold marker write failed', error)
+  }
+}
+
+async function readCommitHoldMarker(root: string): Promise<string | null> {
+  let handle
+  try {
+    handle = await open(commitHoldPath(root), constants.O_RDONLY | constants.O_NOFOLLOW)
+    const meta = await handle.stat()
+    if (!meta.isFile()) return null
+    const raw = (await handle.readFile('utf8')).trim()
+    return worktreeTaskToken(raw) ? raw : null
+  } catch {
+    return null
+  } finally {
+    await handle?.close().catch(() => undefined)
+  }
+}
+
+async function clearCommitHoldMarker(root: string): Promise<void> {
+  try {
+    await unlink(commitHoldPath(root))
+  } catch {
+    // Missing marker is fine.
+  }
 }
 
 async function persistParentCommitHold(

@@ -9,7 +9,7 @@ import type { HeadlessRun } from '../src/dsh.ts'
 import { DshHeadlessBackend, headlessPrompt } from '../src/dsh.ts'
 import { resolveConfig } from '../src/config.ts'
 import DevloopService from '../src/service.ts'
-import { NoopBackend } from '../src/backend.ts'
+import { NoopBackend, RoutedBackend } from '../src/backend.ts'
 import { baseState, makeTask } from './helpers.ts'
 
 const limits = resolveConfig({}).budget
@@ -64,6 +64,23 @@ describe('DshHeadlessBackend', () => {
     expect(headlessPrompt(input)).toContain('GOAL.md')
   })
 
+  it('pins the routed DeepSeek model with an isolated DSH patch', async () => {
+    let patch = ''
+    const backend = new DshHeadlessBackend(async request => {
+      const patchIndex = request.argv.indexOf('--patch')
+      expect(patchIndex).toBeGreaterThan(0)
+      patch = await readFile(request.argv[patchIndex + 1]!, 'utf8')
+      return { stdout: '', stderr: '' }
+    })
+    const input = {
+      ...runInputFor('/repo', { type: 'plan' }, baseState(), limits),
+      route: { tier: 'T2' as const, backend: 'dsh', model: 'deepseek-v4-pro' },
+    }
+    await expect(backend.run(input)).resolves.toEqual({ status: 'started' })
+    expect(patch).toContain('provider: deepseek-official')
+    expect(patch).toContain('model: "deepseek-v4-pro"')
+  })
+
   it('returns failed when the runner throws', async () => {
     const backend = new DshHeadlessBackend(async () => {
       throw new Error('spawn ENOENT')
@@ -114,5 +131,15 @@ describe('createBackend from config', () => {
       agentBackend: 'dsh',
     }))
     expect(service.backend).toBeInstanceOf(DshHeadlessBackend)
+  })
+
+  it('returns RoutedBackend when cordis passes agentBackend=routed', () => {
+    const ctx = new Context()
+    const service = new DevloopService(ctx, resolveConfig({
+      root: '/tmp',
+      enabled: false,
+      agentBackend: 'routed',
+    }))
+    expect(service.backend).toBeInstanceOf(RoutedBackend)
   })
 })

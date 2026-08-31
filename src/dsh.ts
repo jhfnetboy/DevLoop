@@ -1,3 +1,6 @@
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import type { AgentBackend, AgentRunInput, AgentRunResult } from './backend.js'
 import { defaultRunner, type HeadlessRun, type HeadlessRunner } from './spawn.js'
 
@@ -36,10 +39,19 @@ export class DshHeadlessBackend implements AgentBackend {
     const timeoutMs = input.contract
       ? input.contract.budget.maxMinutes * 60_000
       : 45 * 60_000
+    let patchDir: string | null = null
     try {
+      const argv = ['--profile', 'headless']
+      if (input.route) {
+        patchDir = await mkdtemp(join(tmpdir(), 'devloop-dsh-route-'))
+        const patchPath = join(patchDir, 'route.patch.yml')
+        await writeFile(patchPath, dshRoutePatch(input.route.model), 'utf8')
+        argv.push('--patch', patchPath)
+      }
+      argv.push(headlessPrompt(input))
       await this.runner({
         command: this.command,
-        argv: ['--profile', 'headless', headlessPrompt(input)],
+        argv,
         cwd,
         timeoutMs,
         signal: input.signal,
@@ -48,6 +60,8 @@ export class DshHeadlessBackend implements AgentBackend {
     } catch (error) {
       const detail = error instanceof Error ? error.message : 'dsh headless failed'
       return { status: 'failed', detail }
+    } finally {
+      if (patchDir) await rm(patchDir, { recursive: true, force: true }).catch(() => undefined)
     }
   }
 
@@ -66,4 +80,14 @@ export class DshHeadlessBackend implements AgentBackend {
       return 'down'
     }
   }
+}
+
+function dshRoutePatch(model: string): string {
+  return [
+    '- id: agent-default-model',
+    '  config:',
+    '    provider: deepseek-official',
+    `    model: ${JSON.stringify(model)}`,
+    '',
+  ].join('\n')
 }

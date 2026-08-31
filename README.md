@@ -6,20 +6,22 @@ This repository is `dsh-devloop`. It is not another coding agent and it does not
 
 ## What 0.3.0 does
 
-- Same loop as 0.2.5, plus a human snapshot at `.devloop/PROGRESS.md` after each tick (including latched idle, killSwitch, and unreadable STATE)
+- Keeps the scheduler heartbeat running unattended; it does not yet automate every state transition in the full engineering pipeline
+- Adds a human snapshot at `.devloop/PROGRESS.md` after each tick (including latched idle, killSwitch, and unreadable STATE)
 - Each dispatch is a new one-shot CLI; at most one in flight (`busy`). The next tick waits.
 - Optional `tokens` / `costUsd` from the backend fold into budget usage when present; session cost resets when the plugin starts; daily cost resets at UTC midnight
 - Still no operator UI (**0.4**)
 - Installs into a DSH profile as a bundle plugin
 - On each tick, if the workspace has `.devloop/GOAL.md`, reads `STATE.json` and records the next loop action (plan / delegate / review / merge / stop)
 - Enforces budget / circuit-breaker rules in-process
-- Does **not** spawn workers by default (`agentBackend: noop`). Opt-in: `dsh` (`dsh --profile headless`), `claude` (`claude -p`), `codex` (`codex exec`).
+- Does **not** spawn workers by default (`agentBackend: noop`). Opt in to one fixed CLI, or use `agentBackend: routed` for role/tier routing.
 - After writing STATE, plan / delegate / review is handed to `AgentBackend.run` (NoopBackend in production, outside the lock)
 - `delegate` creates `.devloop/worktrees/<taskId>` and writes `.devloop/CONTRACT.json` inside it
-- Set `agentBackend: dsh` / `claude` / `codex` to spawn that CLI in the worktree (or workspace)
+- With `agentBackend: routed`, plan uses `plannerRoute`, delegate uses `routing[contract.tier]`, and review uses the independent `reviewerRoute`
 - `merge` is mechanical git: `merge_ready` plus Review `PASS` / `PASS_WITH_NOTES` merges `devloop/<taskId>` into workspace HEAD, deletes the worktree, marks the task `done`. No PASS → escalate. Does not push. Does not call AgentBackend.
 
 Install: [`docs/Install.md`](./docs/Install.md). This cut: [`docs/Release.md`](./docs/Release.md).
+Multi-model architecture choices and the recommended Harness-native path: [`docs/OrchestrationOptions.md`](./docs/OrchestrationOptions.md).
 
 ## Product target (not all shipped)
 
@@ -27,19 +29,19 @@ The expensive-vs-cheap split is from [`docs/Solution.md`](./docs/Solution.md). T
 
 | Role | Who | Job | When |
 |---|---|---|---|
-| T3 Supervisor / plan / challenge review | Codex CLI (`codex exec`) | `/plan`, scheduling, adversarial and planning-doc review, PR review | **0.2.5** (opt-in `agentBackend: codex`; **one `agentBackend` per host**) |
-| T3 architecture / key review / acceptance | Claude Code CLI (`claude -p`) | Architecture, design, key review, acceptance | **0.2.5** (opt-in `agentBackend: claude`; **one `agentBackend` per host**) |
-| T1 / T2 implement | DSH + DeepSeek Flash / V4 Pro | Diffs, tools, bounded code changes **from** the T3 plan | spawn exists in 0.2.3; **no** `contract.tier` routing yet |
+| T3 Supervisor / plan | Codex CLI (`codex exec`) | `/plan`, scheduling, adversarial planning | **0.3** (`plannerRoute`) |
+| T3 architecture / key review / acceptance | Claude Code CLI (`claude -p`) | Architecture, key review, acceptance | **0.3** (`reviewerRoute`) |
+| T1 / T2 implement | DSH + DeepSeek Flash / V4 Pro | Diffs, tools, bounded code changes **from** the T3 plan | **0.3** (`routing[contract.tier]`) |
 | Optional T2 stand-ins | GLM / Kimi / other APIs already in DSH | Same worker tier, not a new runtime | config later |
 | Outer loop | This plugin | 24h tick, budget, self-iteration — not one unbounded chat | **0.3** |
 
-`Config` has a routing table (including a T3 `codex` default) but **dispatch does not read it** yet.
+Routing is opt-in. The safe default remains `noop`; fixed `dsh` / `claude` / `codex` modes remain for compatibility.
 
 **Secondary development:** DSH tree-outside plugin (do not fork Harness). Ideas from community `dsh-devflow`; this repo is a rebuild, not a copy.
 
 ## Progress vs that target
 
-**0.3 is this slice.** Unattended tick, auto-pump, PROGRESS.md. Stacked on 0.2.6 (PR #14); 0.2.5 is on `main` (PR #12). T3 git/host-commit is not in this diff.
+**0.3 is this slice.** Unattended scheduler heartbeat, one-shot dispatch, and PROGRESS.md. Stacked on 0.2.6 (PR #14); 0.2.5 is on `main` (PR #12). T3 git/host-commit is not in this diff.
 
 | Slice | Status | Meaning |
 |---|---|---|
@@ -50,7 +52,7 @@ The expensive-vs-cheap split is from [`docs/Solution.md`](./docs/Solution.md). T
 | **0.2.4** | **Done** (PR #11 on `main`) | Mechanical merge only after Review PASS; then delete worktree |
 | **0.2.5** | **Done** (PR #12 on `main`) | Spawn `claude` / `codex` as T3; DSH Flash/Pro remain T1/T2 |
 | **0.2.6** | **Open** (PR #14) | Host commit, Claude `--`, Codex gitdir |
-| **0.3** | **This slice** | Unattended 24h loop, auto-pump, PROGRESS.md |
+| **0.3** | **This slice** | Continuous scheduler ticks, role/tier routing, one-shot dispatch, budget signals, PROGRESS.md |
 | **0.4** | **Not started** | Operator UI / human queue / budget panel — **not** required for the autonomous loop |
 
 Path to the goal you described:
@@ -60,7 +62,7 @@ v0.2.3
   → 0.2.4 mechanical merge          # on main (PR #11)
   → 0.2.5 Claude + Codex T3 CLIs    # on main (PR #12)
   → 0.2.6 T3 harden                 # host commit (PR #14)
-  → 0.3 unattended loop             # this slice: 24h self-iteration under budget
+  → 0.3 unattended scheduler        # this slice: continuous bounded ticks
 ```
 
 Each slice is its own stacked PR. 0.2.4 (PR #11) and 0.2.5 (PR #12) are on `main`; this 0.3 PR stacks on 0.2.6 (PR #14). **0.4 is a later operator surface**, after the loop can already run.
@@ -130,7 +132,7 @@ flowchart TB
     Progress --> SM
 ```
 
-Plan / delegate / review still share the same CLI on one host (`agentBackend`). Merge lands git locally and does not push.
+In routed mode, plan / delegate / review use independent configured routes. Merge lands git locally and does not push.
 
 ## Can 0.3 meet the product goal?
 
@@ -142,11 +144,11 @@ The goal is: expensive models plan and review, cheap models implement, a program
 | Program loop, one transition per tick | Yes. Pure `decideNextAction` plus `runTick`, driven by `setInterval`. |
 | Hard budget / kill switch | Yes, in-process. Live token/cost only if the backend fills `AgentRunResult`. |
 | File-backed recoverability | `GOAL.md` + `STATE.json` + `LOCK` + `PROGRESS.md` + worktree `CONTRACT.json`. |
-| Cheap workers actually implement | Partial. Opt-in `dsh` / `claude` / `codex` spawn that CLI; it does not pick a worker via `contract.tier`. Merge lands local git after Review PASS; it does not push. |
-| Expensive models actually review | Partial. Same CLI for plan/delegate/review; PASS / REWORK is still operator-driven. |
-| Unattended milestone completion | **This slice**: continuous tick + auto-pump. Goal-complete still depends on tasks reaching `done`. |
+| Cheap workers actually implement | Partial. Routed mode picks `routing[contract.tier]` and pins the configured model. Backend completion still does not advance task status automatically. |
+| Expensive models actually review | Partial. Plan and review have independent routes, and identical implementer/reviewer routes are rejected. PASS / REWORK is still operator-driven. |
+| Unattended milestone completion | **No.** The scheduler keeps ticking, but plan/task/review outcomes still need an operator or integration to update STATE. |
 
-0.3 can keep ticking unattended under budget. It still does not route by `contract.tier`, parse PASS/REWORK, or ship an operator UI (**0.4**).
+0.3 can keep ticking unattended under budget and route work by role/tier. It cannot yet autonomously advance the full pipeline because it does not turn plan output into tasks or parse PASS/REWORK. The operator UI remains 0.4.
 
 ## Requirements
 
@@ -167,12 +169,12 @@ Git installs run `prepare` → `pnpm build`, so the published entry is `lib/`.
 
 ## Install into DSH
 
-Pinned GitHub tag (needs git tag `v0.2.3`; until then `github:jhfnetboy/DevLoop`). Git install runs `prepare` → `pnpm build`. pnpm ≥10 may ignore that build and still exit 0 — if it prints `Ignored build scripts`, approve `dsh-devloop` (`onlyBuiltDependencies` on pnpm 10.1–10.25, `allowBuilds` on ≥10.26, or `pnpm approve-builds`) and re-run `add` (not `pnpm rebuild`), even when `add` succeeded:
+Pinned GitHub tag (needs git tag `v0.3.0`; until then `github:jhfnetboy/DevLoop`). Git install runs `prepare` → `pnpm build`. pnpm ≥10 may ignore that build and still exit 0 — if it prints `Ignored build scripts`, approve `dsh-devloop` (`onlyBuiltDependencies` on pnpm 10.1–10.25, `allowBuilds` on ≥10.26, or `pnpm approve-builds`) and re-run `add` (not `pnpm rebuild`), even when `add` succeeded:
 
 Quote the spec: zsh treats `#` as a glob (`no matches found`).
 
 ```bash
-dsh plugin --profile web add 'github:jhfnetboy/DevLoop#v0.2.3'
+dsh plugin --profile web add 'github:jhfnetboy/DevLoop#v0.3.0'
 ```
 
 From this checkout (after `pnpm build`):
@@ -204,16 +206,16 @@ Optional overrides in `~/.dsh/profiles/web/cordis.patch.yml`:
   config:
     root: /path/to/your/project
     tickIntervalMs: 2000
-    agentBackend: dsh
-    # agentBackend: claude   # claude -p
-    # agentBackend: codex    # codex exec
+    agentBackend: routed
+    plannerRoute: { tier: T3, backend: codex, model: gpt-5.4 }
+    reviewerRoute: { tier: T3, backend: claude, model: opus }
     budget:
       maxCostUsdPerDay: 20
       taskTimeoutMinutes: 45
       taskLifetimeMinutes: 135
 ```
 
-`agentBackend` defaults to `noop` (no spawn). Set `dsh`, `claude`, or `codex` only when that CLI is on PATH.
+`agentBackend` defaults to `noop` (no spawn). Routed defaults require `dsh`, `claude`, and `codex` on PATH; override routes to match the installed adapters.
 
 ## Arm a project
 

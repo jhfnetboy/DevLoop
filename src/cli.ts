@@ -13,10 +13,11 @@ function runTimeoutMs(input: AgentRunInput): number {
 
 function claudeArgv(input: AgentRunInput): string[] {
   const mode = input.action.type === 'delegate' ? 'acceptEdits' : 'plan'
+  const model = input.route ? ['--model', input.route.model] : []
   if (input.action.type !== 'delegate') {
-    return ['-p', '--permission-mode', mode, cliPrompt(input)]
+    return ['-p', ...model, '--permission-mode', mode, cliPrompt(input)]
   }
-  return ['-p', '--permission-mode', mode, '--', cliPrompt(input)]
+  return ['-p', ...model, '--permission-mode', mode, '--', cliPrompt(input)]
 }
 
 async function resolveLinkedGitDir(input: AgentRunInput): Promise<string | null> {
@@ -36,11 +37,13 @@ async function resolveLinkedGitDir(input: AgentRunInput): Promise<string | null>
 
 async function codexArgv(input: AgentRunInput): Promise<string[]> {
   const sandbox = input.action.type === 'delegate' ? 'workspace-write' : 'read-only'
+  const argv = ['exec', '--sandbox', sandbox]
+  if (input.route) argv.push('--model', input.route.model)
   if (input.action.type !== 'delegate') {
-    return ['exec', '--sandbox', sandbox, cliPrompt(input)]
+    argv.push(cliPrompt(input))
+    return argv
   }
   const gitDir = await resolveLinkedGitDir(input)
-  const argv = ['exec', '--sandbox', sandbox]
   if (gitDir) argv.push('--add-dir', gitDir)
   argv.push(cliPrompt(input))
   return argv

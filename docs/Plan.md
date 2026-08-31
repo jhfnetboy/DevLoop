@@ -37,14 +37,17 @@
 
 **本阶段明确不做**：Web UI、OpenCode adapter、LiteLLM、日预算面板。
 
-## Milestone 0.3 — Unattended loop
+## Milestone 0.3 — Unattended scheduler
 
-**This slice.** Continuous `setInterval` tick (already in 0.2), one-shot dispatch (next tick waits; at most one in flight), optional token/cost signals, `.devloop/PROGRESS.md`.
+**This slice.** Continuous `setInterval` tick (already in 0.2), role/tier routing, one-shot dispatch (next tick waits; at most one in flight), optional token/cost signals, `.devloop/PROGRESS.md`.
 
 - `devloop run` 式持续 tick（程序循环）
-- 自动泵：一任务一 fresh agent
+- 一次派发一名 fresh agent；STATE 有新阶段时下一拍继续调度
+- plan / review 独立路由；delegate 按 `contract.tier` 选 worker，禁止同一 backend+model 自审
 - 熔断接入真实 token / 成本信号（能拿到多少算多少，拿不到用墙钟）
 - 进度汇总写入 PROGRESS.md
+
+**边界**：本阶段不把 PLAN 输出解析为任务，也不把 Review stdout 解析为 PASS / REWORK。没有外部集成更新 STATE 时，0.3 只保证调度器持续、安全地运行，不承诺端到端自动完成里程碑。
 
 ## Milestone 0.4 — Operator surface
 

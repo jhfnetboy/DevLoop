@@ -289,7 +289,13 @@ export async function commitDirtyTaskWorktree(worktreeRoot: string, taskId: stri
   if (status.length === 0) return
   await git(worktreeRoot, ['add', '-A'])
   const staged = (await git(worktreeRoot, ['diff', '--cached', '--name-only'])).trim()
-  if (staged.length === 0) return
+  if (staged.length === 0) {
+    const stillDirty = (await git(worktreeRoot, ['status', '--porcelain'])).trim()
+    if (stillDirty.length > 0) {
+      throw new Error('parent commit: dirty worktree could not be staged')
+    }
+    return
+  }
   const hooksPath = process.platform === 'win32' ? 'NUL' : '/dev/null'
   await git(worktreeRoot, ['-c', `core.hooksPath=${hooksPath}`, 'commit', '--no-verify', '-m', 'devloop: delegate'])
 }
