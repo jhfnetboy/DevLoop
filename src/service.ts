@@ -638,6 +638,7 @@ async function persistBackendFailure(
   const folded = await withStateLock(root, async () => {
     const now = Date.now()
     const current = await loadState(root, now)
+    if (current.killSwitch || current.supervisor) return
     const tasks = current.tasks.map(task => task.id === action.taskId
       ? { ...task, status: 'rework' as const, attempts: current.usage.taskAttempts[action.taskId] ?? task.attempts }
       : task)

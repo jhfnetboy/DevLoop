@@ -70,7 +70,8 @@ export class DshHeadlessBackend implements AgentBackend {
       if (stdout.includes('<devloop_result>')) {
         try {
           outcome = parseDevloopResult(stdout)
-        } catch {
+        } catch (error) {
+          if (input.action.type === 'delegate') throw error
           const repairArgv = [
             ...argv.slice(0, -1),
             `${prompt}\n${protocolRepairInstruction()}`,

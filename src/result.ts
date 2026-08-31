@@ -48,11 +48,11 @@ const MAX_TEXT = 8_192
 
 /** Parse the single machine envelope emitted by a CLI or provider. */
 export function parseDevloopResult(output: string): DevloopResult {
-  const start = output.lastIndexOf(RESULT_START)
+  const start = output.indexOf(RESULT_START)
+  const nextStart = output.indexOf(RESULT_START, start + RESULT_START.length)
+  if (nextStart >= 0) throw new Error('multiple devloop_result envelopes')
   const end = output.indexOf(RESULT_END, start + RESULT_START.length)
   if (start < 0 || end < 0) throw new Error('missing devloop_result envelope')
-  const trailing = output.slice(end + RESULT_END.length).trim()
-  if (trailing.includes(RESULT_START)) throw new Error('multiple devloop_result envelopes')
   const raw = output.slice(start + RESULT_START.length, end).trim()
   let value: unknown
   try {

@@ -461,6 +461,46 @@ describe('DevloopService', () => {
     expect(loaded.killSwitch).toBe(false)
   })
 
+  it('does not overwrite a kill switch with a late delegate failure', async () => {
+    const root = await mkdtempInRepo('devloop-svc-late-failure-')
+    await mkdir(join(root, '.devloop'))
+    await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
+    await initGitRepo(root)
+    await saveState(root, {
+      ...emptyState(Date.now()),
+      tasks: [makeTask({ id: 'd1', status: 'ready', title: 'Late failure' })],
+    })
+    let release!: () => void
+    let started!: () => void
+    const running = new Promise<void>(resolve => { started = resolve })
+    const backend: AgentBackend = {
+      async run() {
+        started()
+        await new Promise<void>(resolve => { release = resolve })
+        return { status: 'failed', detail: 'late failure' }
+      },
+      async cancel() {},
+      async health() { return 'ok' },
+    }
+    const service = new DevloopService(new Context(), resolveConfig({
+      root,
+      enabled: false,
+      tickIntervalMs: 60_000,
+    }), backend)
+    services.push(service)
+    const tick = service.tick()
+    await running
+    const latched = await loadState(root, Date.now())
+    const stopped = await saveState(root, { ...latched, killSwitch: true }, {
+      expectedRevision: latched.revision,
+      action: 'test:kill-switch',
+    })
+    release()
+    await tick
+    const final = await loadState(root, Date.now())
+    expect(final).toEqual(stopped)
+  })
+
   it('releases the STATE lock before AgentBackend.run', async () => {
     const root = await mkdtemp(join(tmpdir(), 'devloop-svc-'))
     await mkdir(join(root, '.devloop'))

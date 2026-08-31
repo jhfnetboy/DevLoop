@@ -299,6 +299,25 @@ describe('mergeTaskWorktree', () => {
     await expect(execFileAsync('git', ['-C', root, 'rev-parse', '--verify', 'devloop/d1'])).rejects.toThrow()
   }, 30_000)
 
+  it('host merge does not run hooks from the shared git directory', async () => {
+    const root = await gitWorkspace()
+    const dest = await prepareDelegateWorktree(root, contractFor('d1'))
+    await writeFile(join(dest, 'src.txt'), 'from-worker\n', 'utf8')
+    await execFileAsync('git', ['-C', dest, 'add', 'src.txt'])
+    await execFileAsync('git', ['-C', dest, 'commit', '-m', 'worker'])
+    const { stdout: commonDir } = await execFileAsync('git', [
+      '-C', dest, 'rev-parse', '--path-format=absolute', '--git-common-dir',
+    ], { encoding: 'utf8' })
+    const hooks = join(commonDir.trim(), 'hooks')
+    const marker = join(root, 'post-merge-ran')
+    await mkdir(hooks, { recursive: true })
+    const hook = join(hooks, 'post-merge')
+    await writeFile(hook, `#!/bin/sh\nprintf ran > ${JSON.stringify(marker)}\n`, 'utf8')
+    await chmod(hook, 0o755)
+    await mergeTaskWorktree(root, 'd1', await readContractBaseSha(dest), await taskWorktreeHeadSha(dest))
+    await expect(lstat(marker)).rejects.toMatchObject({ code: 'ENOENT' })
+  }, 30_000)
+
   it('refuses merge when the workspace has tracked changes', async () => {
     const root = await gitWorkspace()
     const dest = await prepareDelegateWorktree(root, contractFor('d1'))

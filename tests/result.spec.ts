@@ -36,6 +36,16 @@ describe('DevLoop result envelope', () => {
     })).toThrow('unsafe')
   })
 
+  it('rejects multiple result envelopes instead of accepting the last one', () => {
+    const result = (id: string) => `<devloop_result>${JSON.stringify({
+      version: 1,
+      kind: 'plan',
+      tasks: [{ id, title: id, tier: 'T1', risk: 'low', allowedPaths: ['src/**'], acceptance: ['ok'] }],
+    })}</devloop_result>`
+    expect(() => parseDevloopResult(`${result('T-1')} middle ${result('T-2')}`)).toThrow('multiple')
+    expect(parseDevloopResult(result('T-1'))).toMatchObject({ kind: 'plan', tasks: [{ id: 'T-1' }] })
+  })
+
   it('requires a full SHA and known review verdict', () => {
     expect(() => validateDevloopResult({
       version: 1,

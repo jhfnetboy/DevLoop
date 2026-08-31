@@ -114,6 +114,7 @@ async function runCli(
   runner: HeadlessRunner,
   command: string,
   argv: readonly string[],
+  repairArgv: readonly string[],
   input: AgentRunInput,
   failLabel: string,
 ): Promise<AgentRunResult> {
@@ -129,10 +130,10 @@ async function runCli(
       try {
         outcome = parseDevloopResult(stdout)
       } catch {
-        const repairArgv = [...argv]
-        const promptIndex = repairArgv.length - 1
-        repairArgv[promptIndex] = `${repairArgv[promptIndex] ?? ''}\n${protocolRepairInstruction()}`
-        stdout = (await runner({ ...request, argv: repairArgv })).stdout
+        const repaired = [...repairArgv]
+        const promptIndex = repaired.length - 1
+        repaired[promptIndex] = `${repaired[promptIndex] ?? ''}\n${protocolRepairInstruction()}`
+        stdout = (await runner({ ...request, argv: repaired })).stdout
         outcome = stdout.includes('<devloop_result>') ? parseDevloopResult(stdout) : undefined
       }
     }
@@ -178,7 +179,8 @@ export class ClaudeCliBackend implements AgentBackend {
   ) {}
 
   async run(input: AgentRunInput): Promise<AgentRunResult> {
-    return runCli(this.runner, this.command, claudeArgv(input), input, 'claude cli failed')
+    const argv = claudeArgv(input)
+    return runCli(this.runner, this.command, argv, claudeRepairArgv(argv), input, 'claude cli failed')
   }
 
   async cancel(_taskId: string): Promise<void> {}
@@ -201,7 +203,8 @@ export class CodexCliBackend implements AgentBackend {
   ) {}
 
   async run(input: AgentRunInput): Promise<AgentRunResult> {
-    return runCli(this.runner, this.command, await codexArgv(input), input, 'codex exec failed')
+    const argv = await codexArgv(input)
+    return runCli(this.runner, this.command, argv, codexRepairArgv(argv), input, 'codex exec failed')
   }
 
   async cancel(_taskId: string): Promise<void> {}
@@ -209,4 +212,28 @@ export class CodexCliBackend implements AgentBackend {
   async health(): Promise<'ok' | 'down'> {
     return probeHelp(this.runner, this.command)
   }
+}
+
+function claudeRepairArgv(argv: readonly string[]): string[] {
+  const repaired = [...argv]
+  const mode = repaired.indexOf('--permission-mode')
+  if (mode >= 0) repaired[mode + 1] = 'plan'
+  return repaired
+}
+
+function codexRepairArgv(argv: readonly string[]): string[] {
+  const repaired: string[] = []
+  for (let index = 0; index < argv.length; index += 1) {
+    if (argv[index] === '--add-dir') {
+      index += 1
+      continue
+    }
+    if (argv[index] === '--sandbox') {
+      repaired.push('--sandbox', 'read-only')
+      index += 1
+      continue
+    }
+    repaired.push(argv[index]!)
+  }
+  return repaired
 }

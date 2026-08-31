@@ -241,6 +241,20 @@ describe('ClaudeCliBackend', () => {
     expect(calls[1]?.argv.at(-1)).toContain('Do not make additional edits')
   })
 
+  it('downgrades a Claude delegate protocol repair to plan permission', async () => {
+    const calls: HeadlessRun[] = []
+    const valid = '<devloop_result>{"version":1,"kind":"implementation","taskId":"d1","outcome":"completed","summary":"done"}</devloop_result>'
+    const backend = new ClaudeCliBackend(async request => {
+      calls.push(request)
+      return { stdout: calls.length === 1 ? '<devloop_result>{broken}</devloop_result>' : valid, stderr: '' }
+    })
+    await expect(backend.run(delegateInput('/repo/.devloop/worktrees/d1')))
+      .resolves.toMatchObject({ status: 'started', outcome: { kind: 'implementation' } })
+    expect(calls[0]?.argv).toContain('acceptEdits')
+    expect(calls[1]?.argv).toContain('plan')
+    expect(calls[1]?.argv).not.toContain('acceptEdits')
+  })
+
   it('fails closed after two malformed protocol results', async () => {
     const calls: HeadlessRun[] = []
     const backend = new ClaudeCliBackend(async request => {
@@ -312,6 +326,21 @@ describe('CodexCliBackend', () => {
       expect.stringContaining('Execute task d1'),
     ])
     expect(calls[0]?.argv.at(-1)).toContain('Do not run git')
+  })
+
+  it('downgrades a Codex delegate protocol repair to read-only without an added gitdir', async () => {
+    const calls: HeadlessRun[] = []
+    const valid = '<devloop_result>{"version":1,"kind":"implementation","taskId":"d1","outcome":"completed","summary":"done"}</devloop_result>'
+    const backend = new CodexCliBackend(async request => {
+      calls.push(request)
+      return { stdout: calls.length === 1 ? '<devloop_result>{broken}</devloop_result>' : valid, stderr: '' }
+    })
+    await expect(backend.run(delegateInput('/repo/.devloop/worktrees/d1')))
+      .resolves.toMatchObject({ status: 'started', outcome: { kind: 'implementation' } })
+    expect(calls[0]?.argv).toContain('workspace-write')
+    expect(calls[1]?.argv).toContain('read-only')
+    expect(calls[1]?.argv).not.toContain('workspace-write')
+    expect(calls[1]?.argv).not.toContain('--add-dir')
   })
 
   it('passes a routed model to Codex CLI', async () => {

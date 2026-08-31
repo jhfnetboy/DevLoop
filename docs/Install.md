@@ -146,7 +146,7 @@ curl -fsSL https://raw.githubusercontent.com/jhfnetboy/DevLoop/v0.3.0/templates/
 
 Edit `GOAL.md`, then start DSH from that project (or set `config.root`). Each tick writes `.devloop/STATE.json`, appends `.devloop/EVENTS.jsonl`, and updates `PROGRESS.md`.
 
-Backends must finish with the exact machine envelope included in their prompt. Valid plans create tasks; completed implementations are path-checked and host-committed; reviews must echo that exact commit SHA. `PASS` / `PASS_WITH_NOTES` enables the next mechanical merge. It does not push. If STATE shows `supervisor.reason: merge_wedged`, run `git merge --abort`, confirm a clean tree, then clear the hold deliberately.
+Backends must finish with the exact machine envelope included in their prompt. Valid plans create tasks; completed implementations are path-checked and host-committed; reviews must echo that exact commit SHA. `PASS` / `PASS_WITH_NOTES` enables the next mechanical merge. It does not push. If STATE shows `supervisor.reason: merge_wedged`, stop the plugin and run `git merge --abort` if needed. Version 0.3 has no supported command to clear this terminal hold; do not hand-edit `STATE.json`.
 
 ## Uninstall
 

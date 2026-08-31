@@ -301,8 +301,7 @@ export async function commitDirtyTaskWorktree(worktreeRoot: string, taskId: stri
     }
     return
   }
-  const hooksPath = process.platform === 'win32' ? 'NUL' : '/dev/null'
-  await git(worktreeRoot, ['-c', `core.hooksPath=${hooksPath}`, 'commit', '--no-verify', '-m', 'devloop: delegate'])
+  await git(worktreeRoot, ['commit', '--no-verify', '-m', 'devloop: delegate'])
 }
 
 /**
@@ -570,7 +569,8 @@ function isNotFound(error: unknown): boolean {
 }
 
 async function git(root: string, args: readonly string[]): Promise<string> {
-  const { stdout } = await execFileAsync('git', ['-C', root, ...args], {
+  const hooksPath = process.platform === 'win32' ? 'NUL' : '/dev/null'
+  const { stdout } = await execFileAsync('git', ['-C', root, '-c', `core.hooksPath=${hooksPath}`, ...args], {
     encoding: 'utf8',
     timeout: 30_000,
     env: {

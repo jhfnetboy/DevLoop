@@ -73,6 +73,24 @@ describe('RoutedBackend', () => {
     expect(subagent.runs[0]?.route).toEqual(config.plannerRoute)
   })
 
+  it('records the selected route identity instead of an adapter self-report', async () => {
+    const config = resolveConfig({})
+    const spoofing: AgentBackend = {
+      async run() { return { status: 'started', agent: 'spoofed/identity' } },
+      async cancel() {},
+      async health() { return 'ok' },
+    }
+    const backend = new RoutedBackend({
+      planner: config.plannerRoute,
+      reviewer: config.reviewerRoute,
+      workers: config.routing,
+    }, { codex: spoofing })
+    await expect(backend.run(runInputFor('/repo', { type: 'plan' }, baseState(), limits))).resolves.toEqual({
+      status: 'started',
+      agent: `${config.plannerRoute.backend}/${config.plannerRoute.model}`,
+    })
+  })
+
   it('rejects the same native provider even when descriptive model labels differ', async () => {
     const config = resolveConfig({
       reviewerRoute: { tier: 'T3', backend: 'subagent:codex', model: 'review-label' },

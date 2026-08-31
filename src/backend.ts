@@ -63,7 +63,7 @@ export class RoutedBackend implements AgentBackend {
       }
     }
     const result = await backend.run({ ...input, route: selected.route })
-    return { ...result, agent: result.agent ?? `${selected.route.backend}/${selected.route.model}` }
+    return { ...result, agent: `${selected.route.backend}/${selected.route.model}` }
   }
 
   async cancel(taskId: string): Promise<void> {

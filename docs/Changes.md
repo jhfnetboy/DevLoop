@@ -211,7 +211,7 @@ T3 follow-up after Codex RC on merged #12. No unattended loop (that's 0.3).
 
 Possible impact: T3 hosts pick up safer argv and host commits. Package version stays **0.2.5** until 0.3.0.
 
-## 0.3.0 — 2026-08-29
+## 0.3.0 — 2026-08-31
 
 Bounded autonomous development loop: continuous ticks, role-aware one-shot
 dispatch, host-enforced changes, SHA-bound independent review, durable state
@@ -220,18 +220,19 @@ prerequisite shipped in 0.2.6.
 
 ### 代码
 
-- 每个 tick（含 latched / idle / killSwitch）都写 `.devloop/PROGRESS.md`（给人看；STATE 仍是权威）。temp+rename，拒绝 symlink；unreadable/invalid/escaped STATE 不覆盖上次快照
-- 一拍最多一个 dispatch（`busy`）；下一拍等上一拍结束。每个 dispatch 仍是新的 one-shot AbortController
-- `AgentRunResult.tokens` / `costUsd` 可选；有有限正数才折进 usage。进程启动清零 `costUsdSession`（成功写入 STATE 之后才记一次，unreadable STATE 不烧掉这次机会）；UTC 日期变了清零 `costUsdDay`
-- 折费用时若 STATE 已 killSwitch / supervisor，不覆盖任务列表
-- 费用信号 retry/defer（含写失败），`saveState` 成功后才清 `pendingSignals`；skipped ticks 仍持久化 UTC 日费用 rollover
-- Loop 纯函数未改
-- PLAN → tasks 与 Review → verdict 仍需外部集成或操作员更新 STATE；本版本不声称端到端自动完成里程碑
+- 版本化 `plan` / `implementation` / `review` 结果信封驱动确定性状态迁移；非法、多重或错类型结果不能推进状态
+- 按角色和 tier 路由 DSH、Claude、Codex 或 Harness `subagent:<provider>`；路由器选择的身份是持久化权威，implementation 与 review 必须独立
+- 宿主从真实 Git diff 强制执行 `allowedPaths` / forbidden，提交任务分支并把 review 绑定到完整实现 SHA；merge 前复核分支未移动
+- DevLoop 发起的所有 Git 命令统一禁用仓库 hooks；CLI delegate 的协议修复强制只读，DSH delegate 在无法强制只读时不重试
+- `STATE.json` 原子快照配合单调 revision 的 `EVENTS.jsonl`；快照缺失或截断时从最后一条完整事件恢复
+- 每个 tick 更新 `.devloop/PROGRESS.md`；费用信号支持锁竞争与写失败后的 defer，killSwitch / supervisor 不会被迟到结果覆盖
+- 临时真实 Git 仓库 E2E 覆盖 plan → delegate → host commit → review → merge → goal complete，并完成真实 DeepSeek/Codex provider 验证
 
 ### 可能影响
 
-- PROGRESS.md 写失败只打日志，不回滚 STATE
-- CLI 默认仍不解析 stdout 里的费用；要进熔断需 backend 自己填 `costUsd` / `tokens`
-- 无 UI（**0.4**）
+- 默认 `agentBackend: noop`；生产 provider 必须显式配置
+- Merge 不 push；0.3 没有 terminal supervisor hold 的受支持清除命令
+- CLI 默认仍不解析 stdout 里的费用；精确熔断需 backend 填 `costUsd` / `tokens`
+- 无 operator UI、API broker 或 arena/cross-judge（**0.4**）
 
 Possible impact: GitHub installs of this slice report `0.3.0`.

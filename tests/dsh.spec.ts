@@ -108,6 +108,28 @@ describe('DshHeadlessBackend', () => {
     expect(calls[1]?.argv.at(-1)).toContain('Do not make additional edits')
   })
 
+  it('does not retry a malformed delegate result without a read-only mode', async () => {
+    const calls: HeadlessRun[] = []
+    const backend = new DshHeadlessBackend(async request => {
+      calls.push(request)
+      return { stdout: '<devloop_result>{broken}</devloop_result>', stderr: '' }
+    })
+    const input = {
+      ...runInputFor(
+        '/repo',
+        { type: 'delegate', taskId: 'd1' },
+        baseState({ tasks: [makeTask({ id: 'd1', status: 'ready' })] }),
+        limits,
+      ),
+      worktreeRoot: '/repo/.devloop/worktrees/d1',
+    }
+    await expect(backend.run(input)).resolves.toEqual({
+      status: 'failed',
+      detail: 'invalid devloop_result JSON',
+    })
+    expect(calls).toHaveLength(1)
+  })
+
   it('forwards AbortSignal to the runner', async () => {
     const abort = new AbortController()
     let seen: AbortSignal | undefined
