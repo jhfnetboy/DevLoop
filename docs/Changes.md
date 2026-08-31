@@ -213,7 +213,10 @@ Possible impact: T3 hosts pick up safer argv and host commits. Package version s
 
 ## 0.3.0 — 2026-08-29
 
-Unattended scheduler heartbeat: continuous tick, one-shot dispatch, PROGRESS.md, optional cost/token signals. T3 argv/host-commit lives in 0.2.6 (PR #14).
+Bounded autonomous development loop: continuous ticks, role-aware one-shot
+dispatch, host-enforced changes, SHA-bound independent review, durable state
+recovery, PROGRESS.md, and optional cost/token signals. The T3 host-commit
+prerequisite shipped in 0.2.6.
 
 ### 代码
 

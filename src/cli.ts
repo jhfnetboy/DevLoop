@@ -1,8 +1,8 @@
-import { lstat, readFile, realpath, unlink, writeFile } from 'node:fs/promises'
+import { constants, lstat, open, readFile, realpath, rename, unlink } from 'node:fs/promises'
 import { basename, isAbsolute, join } from 'node:path'
 import type { AgentBackend, AgentRunInput, AgentRunResult } from './backend.js'
 import { headlessPrompt, type HeadlessRunner } from './dsh.js'
-import { DEVLOOP_DIR } from './persist.js'
+import { assertLocalDevloopDir, DEVLOOP_DIR } from './persist.js'
 import { defaultRunner } from './spawn.js'
 import { parseDevloopResult } from './result.js'
 
@@ -76,12 +76,9 @@ function isEnoent(error: unknown): boolean {
 async function writeDevloopNote(workspaceRoot: string, filename: 'PLAN.md' | 'REVIEW.md', stdout: string): Promise<void> {
   const dir = join(workspaceRoot, DEVLOOP_DIR)
   const file = join(dir, filename)
+  await assertLocalDevloopDir(workspaceRoot)
   if (stdout.trim().length === 0) {
     try {
-      const dirMeta = await lstat(dir)
-      if (dirMeta.isSymbolicLink() || !dirMeta.isDirectory()) {
-        throw new Error('refusing symlink .devloop')
-      }
       const fileMeta = await lstat(file)
       if (fileMeta.isSymbolicLink()) throw new Error(`refusing symlink ${filename}`)
       await unlink(file)
@@ -90,17 +87,27 @@ async function writeDevloopNote(workspaceRoot: string, filename: 'PLAN.md' | 'RE
     }
     return
   }
-  const dirMeta = await lstat(dir)
-  if (dirMeta.isSymbolicLink() || !dirMeta.isDirectory()) {
-    throw new Error('refusing symlink .devloop')
-  }
   try {
     const fileMeta = await lstat(file)
     if (fileMeta.isSymbolicLink()) throw new Error(`refusing symlink ${filename}`)
   } catch (error) {
     if (!isEnoent(error)) throw error
   }
-  await writeFile(file, stdout.endsWith('\n') ? stdout : `${stdout}\n`, 'utf8')
+  const temp = join(dir, `.${filename}.${String(process.pid)}.${String(Date.now())}.tmp`)
+  try {
+    const flags = constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW
+    const handle = await open(temp, flags, 0o600)
+    try {
+      await handle.writeFile(stdout.endsWith('\n') ? stdout : `${stdout}\n`, 'utf8')
+      await handle.sync()
+    } finally {
+      await handle.close()
+    }
+    await rename(temp, file)
+  } catch (error) {
+    await unlink(temp).catch(() => undefined)
+    throw error
+  }
 }
 
 async function runCli(

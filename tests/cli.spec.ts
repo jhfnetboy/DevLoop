@@ -1,4 +1,4 @@
-import { access, chmod, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { access, chmod, mkdir, mkdtemp, readFile, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -151,6 +151,32 @@ describe('ClaudeCliBackend', () => {
       workspaceRoot: root,
     })).resolves.toEqual({ status: 'started' })
     await expect(readFile(join(root, '.devloop', 'REVIEW.md'), 'utf8')).resolves.toBe('PASS\n')
+  })
+
+  it('atomically replaces an existing regular PLAN.md', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'devloop-plan-replace-'))
+    await mkdir(join(root, '.devloop'))
+    await writeFile(join(root, '.devloop', 'PLAN.md'), '# old\n', 'utf8')
+    const backend = new ClaudeCliBackend(async () => ({ stdout: '# new', stderr: '' }))
+    await expect(backend.run({
+      ...planInput(join(root, 'wt')),
+      workspaceRoot: root,
+    })).resolves.toEqual({ status: 'started' })
+    await expect(readFile(join(root, '.devloop', 'PLAN.md'), 'utf8')).resolves.toBe('# new\n')
+  })
+
+  it('refuses a symlink PLAN.md without changing its target', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'devloop-plan-symlink-'))
+    await mkdir(join(root, '.devloop'))
+    const victim = join(root, 'victim.txt')
+    await writeFile(victim, 'keep\n', 'utf8')
+    await symlink(victim, join(root, '.devloop', 'PLAN.md'))
+    const backend = new ClaudeCliBackend(async () => ({ stdout: '# unsafe\n', stderr: '' }))
+    await expect(backend.run({
+      ...planInput(join(root, 'wt')),
+      workspaceRoot: root,
+    })).resolves.toEqual({ status: 'failed', detail: 'refusing symlink PLAN.md' })
+    await expect(readFile(victim, 'utf8')).resolves.toBe('keep\n')
   })
 
   it('removes a stale PLAN.md when a later plan emits only whitespace', async () => {

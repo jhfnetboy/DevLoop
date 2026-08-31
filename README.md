@@ -41,7 +41,9 @@ Routing is opt-in. The safe default remains `noop`; fixed `dsh` / `claude` / `co
 
 ## Progress vs that target
 
-**0.3 is this slice.** Unattended scheduler heartbeat, one-shot dispatch, and PROGRESS.md. Stacked on 0.2.6 (PR #14); 0.2.5 is on `main` (PR #12). T3 git/host-commit is not in this diff.
+**0.3 is the current release candidate.** It combines the unattended scheduler,
+role-aware one-shot dispatch, host-enforced task boundaries, SHA-bound review,
+durable recovery, and human-readable progress snapshots.
 
 | Slice | Status | Meaning |
 |---|---|---|
@@ -51,7 +53,7 @@ Routing is opt-in. The safe default remains `noop`; fixed `dsh` / `claude` / `co
 | 0.2.3 | **Done** (tag `v0.2.3`) | Opt-in `dsh --profile headless`; same command for plan/delegate/review; no tier split |
 | **0.2.4** | **Done** (PR #11 on `main`) | Mechanical merge only after Review PASS; then delete worktree |
 | **0.2.5** | **Done** (PR #12 on `main`) | Spawn `claude` / `codex` as T3; DSH Flash/Pro remain T1/T2 |
-| **0.2.6** | **Open** (PR #14) | Host commit, Claude `--`, Codex gitdir |
+| **0.2.6** | **Done** (on `main`) | Host commit, Claude `--`, Codex gitdir |
 | **0.3** | **This slice** | Continuous scheduler ticks, role/tier routing, one-shot dispatch, budget signals, PROGRESS.md |
 | **0.4** | **Not started** | Operator UI / human queue / budget panel — **not** required for the autonomous loop |
 
@@ -61,11 +63,12 @@ Path to the goal you described:
 v0.2.3
   → 0.2.4 mechanical merge          # on main (PR #11)
   → 0.2.5 Claude + Codex T3 CLIs    # on main (PR #12)
-  → 0.2.6 T3 harden                 # host commit (PR #14)
+  → 0.2.6 T3 harden                 # host commit
   → 0.3 unattended scheduler        # this slice: continuous bounded ticks
 ```
 
-Each slice is its own stacked PR. 0.2.4 (PR #11) and 0.2.5 (PR #12) are on `main`; this 0.3 PR stacks on 0.2.6 (PR #14). **0.4 is a later operator surface**, after the loop can already run.
+The prerequisite slices are on `main`. **0.4 is a later operator surface**,
+after the bounded autonomous loop is released and observed in real projects.
 
 ## How it fits
 
