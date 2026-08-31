@@ -67,6 +67,9 @@ function persistAction(
   const usage = recordAction(state.usage, action, now)
   const next: LoopState = {
     ...state,
+    goalCompleted: action.type === 'stop' && action.reason === 'goal_complete'
+      ? true
+      : state.goalCompleted,
     usage,
     lastAction: action,
     lastDispatchStatus: isWorkAction(action) ? dispatchStatus(state, action) : state.lastDispatchStatus,

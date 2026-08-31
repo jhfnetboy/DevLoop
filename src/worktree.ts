@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { copyFile, lstat, mkdir, readFile, realpath, unlink, writeFile } from 'node:fs/promises'
-import { basename, join, sep } from 'node:path'
+import { basename, isAbsolute, join, matchesGlob, normalize, sep } from 'node:path'
 import { promisify } from 'node:util'
 import { DEVLOOP_DIR, devloopDir } from './persist.js'
 import type { TaskContract } from './types.js'
@@ -154,14 +154,16 @@ export async function removePlanWorktree(root: string): Promise<void> {
 /**
  * Merge `devloop/<taskId>` into the workspace HEAD, then remove the worktree
  * and delete the task branch. Caller must already have enforced Review PASS.
- * Does not push. `recordedBaseSha` is the delegate SHA from STATE: missing is
- * `unknown_base`, unchanged branch is `empty_task`. Throws without mutating STATE.
+ * Does not push. `recordedBaseSha` is the delegate SHA; `reviewedHeadSha` is
+ * the exact implementation commit accepted by review. Missing or moved SHAs
+ * fail closed; an unchanged branch is `empty_task`. Throws without mutating STATE.
  * Idempotent if a previous attempt already merged and removed the worktree.
  */
 export async function mergeTaskWorktree(
   root: string,
   taskId: string,
   recordedBaseSha: string | null,
+  reviewedHeadSha: string | null = null,
 ): Promise<void> {
   const token = worktreeTaskToken(taskId)
   if (!token) throw new Error(`unsafe task id for worktree: ${taskId}`)
@@ -214,6 +216,9 @@ export async function mergeTaskWorktree(
   if (branchSha === expected) {
     throw new Error('empty_task')
   }
+  const reviewed = normalizeSha(reviewedHeadSha)
+  if (reviewed === null) throw new Error('unknown_review_sha')
+  if (branchSha !== reviewed) throw new Error('stale_review_sha')
 
   try {
     await git(resolvedRoot, ['merge', '--no-edit', '-m', `devloop: merge ${token}`, branch])
@@ -296,8 +301,54 @@ export async function commitDirtyTaskWorktree(worktreeRoot: string, taskId: stri
     }
     return
   }
-  const hooksPath = process.platform === 'win32' ? 'NUL' : '/dev/null'
-  await git(worktreeRoot, ['-c', `core.hooksPath=${hooksPath}`, 'commit', '--no-verify', '-m', 'devloop: delegate'])
+  await git(worktreeRoot, ['commit', '--no-verify', '-m', 'devloop: delegate'])
+}
+
+/**
+ * Enforce a frozen task contract against Git's actual changed-path set. This is
+ * a host boundary: prompts and sandbox hints are not treated as authorization.
+ */
+export async function assertTaskChangesAllowed(
+  worktreeRoot: string,
+  contract: TaskContract,
+): Promise<readonly string[]> {
+  const expectedBase = normalizeSha(contract.baseSha)
+  if (expectedBase === null) throw new Error('scope_check: contract has no valid baseSha')
+  const actualBase = (await git(worktreeRoot, ['merge-base', 'HEAD', expectedBase])).trim().toLowerCase()
+  if (actualBase !== expectedBase) throw new Error('scope_check: task branch does not descend from baseSha')
+
+  const tracked = splitNul(await git(worktreeRoot, [
+    'diff', '--name-only', '--diff-filter=ACDMRTUXB', '-z', expectedBase, '--',
+  ]))
+  const untracked = splitNul(await git(worktreeRoot, [
+    'ls-files', '--others', '--exclude-standard', '-z', '--',
+  ]))
+  const changed = [...new Set([...tracked, ...untracked])].sort()
+  for (const pattern of contract.allowedPaths) assertSafePattern(pattern)
+  for (const path of changed) {
+    assertSafeChangedPath(path)
+    if (contract.forbidden.some(pattern => forbiddenMatch(path, pattern))) {
+      throw new Error(`scope_violation: forbidden path ${path}`)
+    }
+    if (!contract.allowedPaths.some(pattern => matchesGlob(path, pattern))) {
+      throw new Error(`scope_violation: path outside allowedPaths ${path}`)
+    }
+    try {
+      const meta = await lstat(join(worktreeRoot, path))
+      if (meta.isSymbolicLink()) throw new Error(`scope_violation: symlink change ${path}`)
+    } catch (error) {
+      if (!isNotFound(error)) throw error
+      // A deleted path has no inode to inspect.
+    }
+  }
+  return changed
+}
+
+/** Full task-branch commit identity used to bind review and merge. */
+export async function taskWorktreeHeadSha(worktreeRoot: string): Promise<string> {
+  const sha = (await git(worktreeRoot, ['rev-parse', 'HEAD'])).trim().toLowerCase()
+  if (normalizeSha(sha) === null) throw new Error('invalid task worktree HEAD')
+  return sha
 }
 
 export async function readContractBaseSha(worktreeRoot: string): Promise<string | null> {
@@ -315,6 +366,46 @@ export async function readContractBaseSha(worktreeRoot: string): Promise<string 
 function normalizeSha(value: string | null | undefined): string | null {
   if (typeof value !== 'string') return null
   return /^[0-9a-f]{40}$/i.test(value) ? value.toLowerCase() : null
+}
+
+function splitNul(value: string): string[] {
+  return value.split('\0').filter(Boolean)
+}
+
+function assertSafeChangedPath(path: string): void {
+  const portable = path.replaceAll('\\', '/')
+  if (path.length === 0 || path.includes('\0') || isAbsolute(path) || portable.startsWith('/')) {
+    throw new Error(`scope_violation: unsafe path ${path}`)
+  }
+  const normalized = normalize(portable).replaceAll('\\', '/')
+  if (normalized !== portable || portable === '..' || portable.startsWith('../')) {
+    throw new Error(`scope_violation: unsafe path ${path}`)
+  }
+  if (portable === '.git' || portable.startsWith('.git/') || portable === DEVLOOP_DIR || portable.startsWith(`${DEVLOOP_DIR}/`)) {
+    throw new Error(`scope_violation: protected path ${path}`)
+  }
+}
+
+function assertSafePattern(pattern: string): void {
+  const portable = pattern.replaceAll('\\', '/')
+  if (
+    portable.length === 0
+    || portable.startsWith('!')
+    || isAbsolute(pattern)
+    || portable.startsWith('/')
+    || portable.split('/').includes('..')
+  ) {
+    throw new Error(`scope_check: unsafe allowedPaths pattern ${pattern}`)
+  }
+}
+
+function forbiddenMatch(path: string, pattern: string): boolean {
+  const portable = pattern.replaceAll('\\', '/').replace(/\/+$/, '')
+  if (portable.length === 0) return false
+  if (portable.includes('*') || portable.includes('?') || portable.includes('[')) {
+    return matchesGlob(path, portable)
+  }
+  return path === portable || path.startsWith(`${portable}/`)
 }
 
 async function copyWorkspaceGoal(srcGoal: string, destLoop: string): Promise<void> {
@@ -478,7 +569,8 @@ function isNotFound(error: unknown): boolean {
 }
 
 async function git(root: string, args: readonly string[]): Promise<string> {
-  const { stdout } = await execFileAsync('git', ['-C', root, ...args], {
+  const hooksPath = process.platform === 'win32' ? 'NUL' : '/dev/null'
+  const { stdout } = await execFileAsync('git', ['-C', root, '-c', `core.hooksPath=${hooksPath}`, ...args], {
     encoding: 'utf8',
     timeout: 30_000,
     env: {

@@ -1,4 +1,4 @@
-import { access, chmod, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { access, chmod, mkdir, mkdtemp, readFile, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -86,6 +86,18 @@ describe('ClaudeCliBackend', () => {
     expect(calls[0]?.argv).not.toContain('--allowedTools')
   })
 
+  it('passes a routed model to Claude CLI', async () => {
+    const calls: HeadlessRun[] = []
+    const backend = new ClaudeCliBackend(fakeRunner(calls))
+    await backend.run({
+      ...reviewInput('/repo/.devloop/worktrees/d1'),
+      route: { tier: 'T3', backend: 'claude', model: 'opus' },
+    })
+    expect(calls[0]?.argv.slice(0, 5)).toEqual([
+      '-p', '--model', 'opus', '--permission-mode', 'plan',
+    ])
+  })
+
   it('uses permission-mode plan for plan ticks', async () => {
     const calls: HeadlessRun[] = []
     const backend = new ClaudeCliBackend(fakeRunner(calls))
@@ -141,6 +153,32 @@ describe('ClaudeCliBackend', () => {
     await expect(readFile(join(root, '.devloop', 'REVIEW.md'), 'utf8')).resolves.toBe('PASS\n')
   })
 
+  it('atomically replaces an existing regular PLAN.md', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'devloop-plan-replace-'))
+    await mkdir(join(root, '.devloop'))
+    await writeFile(join(root, '.devloop', 'PLAN.md'), '# old\n', 'utf8')
+    const backend = new ClaudeCliBackend(async () => ({ stdout: '# new', stderr: '' }))
+    await expect(backend.run({
+      ...planInput(join(root, 'wt')),
+      workspaceRoot: root,
+    })).resolves.toEqual({ status: 'started' })
+    await expect(readFile(join(root, '.devloop', 'PLAN.md'), 'utf8')).resolves.toBe('# new\n')
+  })
+
+  it('refuses a symlink PLAN.md without changing its target', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'devloop-plan-symlink-'))
+    await mkdir(join(root, '.devloop'))
+    const victim = join(root, 'victim.txt')
+    await writeFile(victim, 'keep\n', 'utf8')
+    await symlink(victim, join(root, '.devloop', 'PLAN.md'))
+    const backend = new ClaudeCliBackend(async () => ({ stdout: '# unsafe\n', stderr: '' }))
+    await expect(backend.run({
+      ...planInput(join(root, 'wt')),
+      workspaceRoot: root,
+    })).resolves.toEqual({ status: 'failed', detail: 'refusing symlink PLAN.md' })
+    await expect(readFile(victim, 'utf8')).resolves.toBe('keep\n')
+  })
+
   it('removes a stale PLAN.md when a later plan emits only whitespace', async () => {
     const root = await mkdtemp(join(tmpdir(), 'devloop-plan-empty-'))
     await mkdir(join(root, '.devloop'))
@@ -183,6 +221,51 @@ describe('ClaudeCliBackend', () => {
       status: 'failed',
       detail: 'spawn ENOENT',
     })
+  })
+
+  it('retries one malformed result as a protocol-only repair', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'devloop-cli-repair-'))
+    await mkdir(join(root, '.devloop'))
+    const calls: HeadlessRun[] = []
+    const valid = '<devloop_result>{"version":1,"kind":"review","taskId":"d1","reviewedSha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","verdict":"PASS"}</devloop_result>'
+    const backend = new ClaudeCliBackend(async request => {
+      calls.push(request)
+      return { stdout: calls.length === 1 ? '<devloop_result>{broken}</devloop_result>' : valid, stderr: '' }
+    })
+    const result = await backend.run({
+      ...reviewInput(join(root, '.devloop', 'worktrees', 'd1')),
+      workspaceRoot: root,
+    })
+    expect(result).toMatchObject({ status: 'started', outcome: { kind: 'review', verdict: 'PASS' } })
+    expect(calls).toHaveLength(2)
+    expect(calls[1]?.argv.at(-1)).toContain('Do not make additional edits')
+  })
+
+  it('downgrades a Claude delegate protocol repair to plan permission', async () => {
+    const calls: HeadlessRun[] = []
+    const valid = '<devloop_result>{"version":1,"kind":"implementation","taskId":"d1","outcome":"completed","summary":"done"}</devloop_result>'
+    const backend = new ClaudeCliBackend(async request => {
+      calls.push(request)
+      return { stdout: calls.length === 1 ? '<devloop_result>{broken}</devloop_result>' : valid, stderr: '' }
+    })
+    await expect(backend.run(delegateInput('/repo/.devloop/worktrees/d1')))
+      .resolves.toMatchObject({ status: 'started', outcome: { kind: 'implementation' } })
+    expect(calls[0]?.argv).toContain('acceptEdits')
+    expect(calls[1]?.argv).toContain('plan')
+    expect(calls[1]?.argv).not.toContain('acceptEdits')
+  })
+
+  it('fails closed after two malformed protocol results', async () => {
+    const calls: HeadlessRun[] = []
+    const backend = new ClaudeCliBackend(async request => {
+      calls.push(request)
+      return { stdout: '<devloop_result>{broken}</devloop_result>', stderr: '' }
+    })
+    await expect(backend.run(reviewInput('/repo/.devloop/worktrees/d1'))).resolves.toEqual({
+      status: 'failed',
+      detail: 'invalid devloop_result JSON',
+    })
+    expect(calls).toHaveLength(2)
   })
 
   it('forwards AbortSignal to the runner', async () => {
@@ -243,6 +326,34 @@ describe('CodexCliBackend', () => {
       expect.stringContaining('Execute task d1'),
     ])
     expect(calls[0]?.argv.at(-1)).toContain('Do not run git')
+  })
+
+  it('downgrades a Codex delegate protocol repair to read-only without an added gitdir', async () => {
+    const calls: HeadlessRun[] = []
+    const valid = '<devloop_result>{"version":1,"kind":"implementation","taskId":"d1","outcome":"completed","summary":"done"}</devloop_result>'
+    const backend = new CodexCliBackend(async request => {
+      calls.push(request)
+      return { stdout: calls.length === 1 ? '<devloop_result>{broken}</devloop_result>' : valid, stderr: '' }
+    })
+    await expect(backend.run(delegateInput('/repo/.devloop/worktrees/d1')))
+      .resolves.toMatchObject({ status: 'started', outcome: { kind: 'implementation' } })
+    expect(calls[0]?.argv).toContain('workspace-write')
+    expect(calls[1]?.argv).toContain('read-only')
+    expect(calls[1]?.argv).not.toContain('workspace-write')
+    expect(calls[1]?.argv).not.toContain('--add-dir')
+  })
+
+  it('passes a routed model to Codex CLI', async () => {
+    const calls: HeadlessRun[] = []
+    const backend = new CodexCliBackend(fakeRunner(calls))
+    await backend.run({
+      ...reviewInput('/repo/.devloop/worktrees/d1'),
+      route: { tier: 'T3', backend: 'codex', model: 'gpt-5.4' },
+    })
+    expect(calls[0]?.argv.slice(0, 6)).toEqual([
+      'exec', '--sandbox', 'read-only', '--model', 'gpt-5.4',
+      expect.stringContaining('Review task d1'),
+    ])
   })
 
   it('adds the gitdir from a linked worktree .git file', async () => {

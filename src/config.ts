@@ -25,8 +25,10 @@ export interface Config {
   readonly root: string
   readonly enabled: boolean
   readonly tickIntervalMs: number
-  readonly agentBackend: 'noop' | 'dsh' | 'claude' | 'codex'
+  readonly agentBackend: 'noop' | 'routed' | 'dsh' | 'claude' | 'codex'
   readonly budget: BudgetLimits
+  readonly plannerRoute: Route
+  readonly reviewerRoute: Route
   readonly routing: RoutingTable
 }
 
@@ -43,10 +45,17 @@ export const ConfigSchema: s<Config> = s.object({
   tickIntervalMs: s.number().step(1).min(500).default(2000),
   agentBackend: s.union([
     s.const('noop'),
+    s.const('routed'),
     s.const('dsh'),
     s.const('claude'),
     s.const('codex'),
   ]).default('noop'),
+  plannerRoute: routeSchema('T3', 'codex', 'gpt-5.4').default({
+    tier: 'T3', backend: 'codex', model: 'gpt-5.4',
+  }),
+  reviewerRoute: routeSchema('T3', 'claude', 'opus').default({
+    tier: 'T3', backend: 'claude', model: 'opus',
+  }),
   budget: s.object({
     maxTaskAttempts: s.number().step(1).min(1).default(3),
     maxReviewCycles: s.number().step(1).min(1).default(2),

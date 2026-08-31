@@ -1,4 +1,4 @@
-import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { isAbsolute, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -8,10 +8,11 @@ import type { AgentBackend, AgentRunInput, AgentRunResult } from '../src/backend
 import { ClaudeCliBackend } from '../src/cli.ts'
 import type { HeadlessRun } from '../src/dsh.ts'
 import { resolveConfig } from '../src/config.ts'
-import { emptyState, loadState, saveState, withStateLock, workspaceArmed } from '../src/persist.ts'
+import { emptyUsage } from '../src/budget.ts'
+import { emptyState, loadState, saveState, statePath, withStateLock, workspaceArmed } from '../src/persist.ts'
 import { contractForTask } from '../src/router.ts'
 import DevloopService from '../src/service.ts'
-import { planWorktreePath, prepareDelegateWorktree, readContractBaseSha, worktreePath } from '../src/worktree.ts'
+import { planWorktreePath, prepareDelegateWorktree, readContractBaseSha, taskWorktreeHeadSha, worktreePath } from '../src/worktree.ts'
 import { initGitRepo, makeTask, mkdtempInRepo } from './helpers.ts'
 
 async function waitForAction(root: string, type: string, timeoutMs = 10_000): Promise<void> {
@@ -245,6 +246,14 @@ describe('DevloopService', () => {
     const execFileAsync = promisify(execFile)
     await execFileAsync('git', ['-C', dest, 'add', 'src.txt'])
     await execFileAsync('git', ['-C', dest, 'commit', '-m', 'worker'])
+    const beforeMerge = await loadState(root, Date.now())
+    const implementationSha = await taskWorktreeHeadSha(dest)
+    await saveState(root, {
+      ...beforeMerge,
+      tasks: beforeMerge.tasks.map(task => task.id === 'm1'
+        ? { ...task, implementationSha }
+        : task),
+    })
 
     await service.tick()
     const loaded = await loadState(root, Date.now())
@@ -283,6 +292,7 @@ describe('DevloopService', () => {
         status: 'merge_ready',
         lastReviewVerdict: 'PASS_WITH_NOTES',
         baseSha: (await readContractBaseSha(dest)) ?? undefined,
+        implementationSha: await taskWorktreeHeadSha(dest),
       })],
     })
     const backend = new RecordingBackend()
@@ -451,6 +461,46 @@ describe('DevloopService', () => {
     expect(loaded.killSwitch).toBe(false)
   })
 
+  it('does not overwrite a kill switch with a late delegate failure', async () => {
+    const root = await mkdtempInRepo('devloop-svc-late-failure-')
+    await mkdir(join(root, '.devloop'))
+    await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
+    await initGitRepo(root)
+    await saveState(root, {
+      ...emptyState(Date.now()),
+      tasks: [makeTask({ id: 'd1', status: 'ready', title: 'Late failure' })],
+    })
+    let release!: () => void
+    let started!: () => void
+    const running = new Promise<void>(resolve => { started = resolve })
+    const backend: AgentBackend = {
+      async run() {
+        started()
+        await new Promise<void>(resolve => { release = resolve })
+        return { status: 'failed', detail: 'late failure' }
+      },
+      async cancel() {},
+      async health() { return 'ok' },
+    }
+    const service = new DevloopService(new Context(), resolveConfig({
+      root,
+      enabled: false,
+      tickIntervalMs: 60_000,
+    }), backend)
+    services.push(service)
+    const tick = service.tick()
+    await running
+    const latched = await loadState(root, Date.now())
+    const stopped = await saveState(root, { ...latched, killSwitch: true }, {
+      expectedRevision: latched.revision,
+      action: 'test:kill-switch',
+    })
+    release()
+    await tick
+    const final = await loadState(root, Date.now())
+    expect(final).toEqual(stopped)
+  })
+
   it('releases the STATE lock before AgentBackend.run', async () => {
     const root = await mkdtemp(join(tmpdir(), 'devloop-svc-'))
     await mkdir(join(root, '.devloop'))
@@ -554,6 +604,331 @@ describe('DevloopService', () => {
     await expect(lstat(planWorktreePath(root))).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
+  it('writes PROGRESS.md after a plan tick and refreshes it on the latched follow-up', async () => {
+    const root = await armWorkspace()
+    const ctx = new Context()
+    const service = new DevloopService(ctx, resolveConfig({
+      root,
+      tickIntervalMs: 60_000,
+      enabled: false,
+    }))
+    services.push(service)
+    await service.tick()
+    const first = await readFile(join(root, '.devloop', 'PROGRESS.md'), 'utf8')
+    expect(first).toContain('# DevLoop progress')
+    expect(first).toContain('lastAction: plan')
+    await new Promise(resolve => setTimeout(resolve, 5))
+    await service.tick()
+    const second = await readFile(join(root, '.devloop', 'PROGRESS.md'), 'utf8')
+    expect(second).toContain('lastAction: plan')
+    const firstUpdated = /Updated: (.+)/.exec(first)?.[1]
+    const secondUpdated = /Updated: (.+)/.exec(second)?.[1]
+    expect(secondUpdated).not.toBe(firstUpdated)
+  })
+
+  it('overwrites PROGRESS.md on a killSwitch tick', async () => {
+    const root = await armWorkspace()
+    const now = Date.now()
+    await saveState(root, { ...emptyState(now), killSwitch: true })
+    await writeFile(join(root, '.devloop', 'PROGRESS.md'), '- killSwitch: false\n', 'utf8')
+    const ctx = new Context()
+    const service = new DevloopService(ctx, resolveConfig({
+      root,
+      tickIntervalMs: 60_000,
+      enabled: false,
+    }))
+    services.push(service)
+    await service.tick()
+    const progress = await readFile(join(root, '.devloop', 'PROGRESS.md'), 'utf8')
+    expect(progress).toContain('killSwitch: true')
+    expect(progress).not.toContain('killSwitch: false')
+  })
+
+  it('folds backend cost and tokens into STATE after dispatch', async () => {
+    const root = await mkdtempInRepo('devloop-svc-cost-')
+    await mkdir(join(root, '.devloop'))
+    await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
+    await initGitRepo(root)
+    await saveState(root, {
+      ...emptyState(Date.now()),
+      tasks: [makeTask({ id: 'd1', status: 'ready', title: 'Add persist' })],
+    })
+    class CostBackend extends RecordingBackend {
+      override async run(input: Parameters<RecordingBackend['run']>[0]) {
+        await super.run(input)
+        return { status: 'recorded' as const, tokens: 12, costUsd: 0.4 }
+      }
+    }
+    const backend = new CostBackend()
+    const ctx = new Context()
+    const service = new DevloopService(ctx, resolveConfig({
+      root,
+      tickIntervalMs: 60_000,
+      enabled: false,
+    }), backend)
+    services.push(service)
+    await service.tick()
+    const loaded = await loadState(root, Date.now())
+    expect(loaded.usage.tokens.d1).toBe(12)
+    expect(loaded.usage.costUsdSession).toBe(0.4)
+    expect(loaded.tasks.map(task => task.id)).toEqual(['d1'])
+    expect(loaded.lastAction).toEqual({ type: 'delegate', taskId: 'd1' })
+    expect(loaded.killSwitch).toBe(false)
+    expect(loaded.supervisor).toBeNull()
+    const md = await readFile(join(root, '.devloop', 'PROGRESS.md'), 'utf8')
+    expect(md).toContain('costUsdSession: 0.4')
+  })
+
+  it('zeros leftover session cost once and does not re-zero in-session spend', async () => {
+    const root = await mkdtempInRepo('devloop-svc-session-')
+    await mkdir(join(root, '.devloop'))
+    await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
+    await initGitRepo(root)
+    const now = Date.now()
+    await saveState(root, {
+      ...emptyState(now),
+      usage: { ...emptyUsage(now), costUsdSession: 5, costUsdDay: 9, lastProgressAt: now },
+      tasks: [makeTask({ id: 'd1', status: 'ready', title: 'Add persist' })],
+    })
+    class CostBackend extends RecordingBackend {
+      override async run(input: Parameters<RecordingBackend['run']>[0]) {
+        await super.run(input)
+        return { status: 'recorded' as const, tokens: 12, costUsd: 0.4 }
+      }
+    }
+    const ctx = new Context()
+    const service = new DevloopService(ctx, resolveConfig({
+      root,
+      tickIntervalMs: 60_000,
+      enabled: false,
+    }), new CostBackend())
+    services.push(service)
+    await service.tick()
+    let loaded = await loadState(root, Date.now())
+    expect(loaded.usage.costUsdSession).toBe(0.4)
+    expect(loaded.usage.costUsdDay).toBe(9.4)
+    expect(loaded.tasks.map(task => task.id)).toEqual(['d1'])
+    expect(loaded.killSwitch).toBe(false)
+    expect(loaded.supervisor).toBeNull()
+    await service.tick()
+    loaded = await loadState(root, Date.now())
+    expect(loaded.usage.costUsdSession).toBe(0.4)
+  })
+
+  it('defers cost signals when the fold lock is held and applies them next tick', async () => {
+    const root = await mkdtempInRepo('devloop-svc-cost-defer-')
+    await mkdir(join(root, '.devloop'))
+    await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
+    await initGitRepo(root)
+    await saveState(root, {
+      ...emptyState(Date.now()),
+      tasks: [makeTask({ id: 'd1', status: 'ready', title: 'Add persist' })],
+    })
+    class DeferBackend extends RecordingBackend {
+      releaseLock!: () => void
+      override async run(input: Parameters<RecordingBackend['run']>[0]) {
+        await super.run(input)
+        const held = new Promise<void>(resolve => {
+          this.releaseLock = resolve
+        })
+        const acquired = new Promise<void>(resolve => {
+          void withStateLock(root, async () => {
+            resolve()
+            await held
+          })
+        })
+        await acquired
+        return { status: 'recorded' as const, tokens: 12, costUsd: 0.4 }
+      }
+    }
+    const ctx = new Context()
+    const backend = new DeferBackend()
+    const service = new DevloopService(ctx, resolveConfig({
+      root,
+      tickIntervalMs: 60_000,
+      enabled: false,
+    }), backend)
+    services.push(service)
+    await service.tick()
+    let loaded = await loadState(root, Date.now())
+    expect(loaded.usage.costUsdSession).toBe(0)
+    backend.releaseLock()
+    await new Promise(resolve => setTimeout(resolve, 20))
+    await service.tick()
+    loaded = await loadState(root, Date.now())
+    expect(loaded.usage.costUsdSession).toBe(0.4)
+    expect(loaded.usage.tokens.d1).toBe(12)
+  })
+
+  it('persists UTC daily cost rollover on a latched skipped tick', async () => {
+    const root = await armWorkspace()
+    const ctx = new Context()
+    const service = new DevloopService(ctx, resolveConfig({
+      root,
+      tickIntervalMs: 60_000,
+      enabled: false,
+    }))
+    services.push(service)
+    const day1 = Date.UTC(2020, 0, 1, 12)
+    await service.tick(day1)
+    const afterPlan = await loadState(root, day1)
+    expect(afterPlan.lastAction).toEqual({ type: 'plan' })
+    await saveState(root, {
+      ...afterPlan,
+      usage: {
+        ...afterPlan.usage,
+        costUsdDay: 9,
+        lastProgressAt: Date.UTC(2020, 0, 1, 23, 59, 0),
+      },
+    })
+    const justAfterMidnight = Date.UTC(2020, 0, 2, 0, 0, 30)
+    await service.tick(justAfterMidnight)
+    const loaded = await loadState(root, justAfterMidnight)
+    expect(loaded.lastAction).toEqual({ type: 'plan' })
+    expect(loaded.usage.costUsdDay).toBe(0)
+  })
+
+  it('still zeros session cost after an unreadable first tick', async () => {
+    const root = await mkdtempInRepo('devloop-svc-unread-')
+    await mkdir(join(root, '.devloop'))
+    await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
+    await initGitRepo(root)
+    const now = Date.now()
+    const unreadState = {
+      ...emptyState(now),
+      usage: { ...emptyUsage(now), costUsdSession: 5, lastProgressAt: now },
+    }
+    await saveState(root, unreadState)
+    await writeFile(join(root, '.devloop', 'PROGRESS.md'), [
+      '# DevLoop progress',
+      '',
+      '- costUsdDay: 12',
+      '- tasks: 1 (ready 1)',
+      '',
+      '## Tasks',
+      '',
+      '- t-1 ready Real work',
+      '',
+    ].join('\n'))
+    const ctx = new Context()
+    const service = new DevloopService(ctx, resolveConfig({
+      root,
+      tickIntervalMs: 60_000,
+      enabled: false,
+    }))
+    services.push(service)
+    await chmod(statePath(root), 0)
+    await service.tick()
+    await chmod(statePath(root), 0o644)
+    const unread = await loadState(root, Date.now())
+    expect(unread.usage.costUsdSession).toBe(5)
+    expect(unread.lastAction).toEqual({ type: 'idle' })
+    expect(unread.supervisor).toBeNull()
+    const afterUnread = await readFile(join(root, '.devloop', 'PROGRESS.md'), 'utf8')
+    expect(afterUnread).toContain('- t-1')
+    expect(afterUnread).toContain('costUsdDay: 12')
+    expect(afterUnread).not.toContain('unreadable_state')
+    await service.tick()
+    const loaded = await loadState(root, Date.now())
+    expect(loaded.usage.costUsdSession).toBe(0)
+    expect(loaded.lastAction).toEqual({ type: 'plan' })
+  })
+
+  it('does not fold cost into STATE that tripped killSwitch during dispatch', async () => {
+    const root = await mkdtempInRepo('devloop-svc-fold-kill-')
+    await mkdir(join(root, '.devloop'))
+    await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
+    await initGitRepo(root)
+    await saveState(root, {
+      ...emptyState(Date.now()),
+      tasks: [makeTask({ id: 'd1', status: 'ready', title: 'Add persist' })],
+    })
+    class FlipBackend extends RecordingBackend {
+      override async run(input: Parameters<RecordingBackend['run']>[0]) {
+        await super.run(input)
+        const current = await loadState(root, Date.now())
+        await saveState(root, { ...current, killSwitch: true })
+        return { status: 'recorded' as const, tokens: 12, costUsd: 0.4 }
+      }
+    }
+    const ctx = new Context()
+    const service = new DevloopService(ctx, resolveConfig({
+      root,
+      tickIntervalMs: 60_000,
+      enabled: false,
+    }), new FlipBackend())
+    services.push(service)
+    await service.tick()
+    const loaded = await loadState(root, Date.now())
+    expect(loaded.killSwitch).toBe(true)
+    expect(loaded.usage.costUsdSession).toBe(0)
+    expect(loaded.usage.tokens.d1).toBeUndefined()
+  })
+
+  it('stops on the next tick after folded cost exceeds the session cap', async () => {
+    const root = await mkdtempInRepo('devloop-svc-cap-')
+    await mkdir(join(root, '.devloop'))
+    await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
+    await initGitRepo(root)
+    await saveState(root, {
+      ...emptyState(Date.now()),
+      tasks: [makeTask({ id: 'd1', status: 'ready', title: 'Add persist' })],
+    })
+    class CostBackend extends RecordingBackend {
+      override async run(input: Parameters<RecordingBackend['run']>[0]) {
+        await super.run(input)
+        return { status: 'recorded' as const, costUsd: 0.4 }
+      }
+    }
+    const ctx = new Context()
+    const service = new DevloopService(ctx, resolveConfig({
+      root,
+      tickIntervalMs: 60_000,
+      enabled: false,
+      budget: { maxCostUsdPerSession: 0.3 },
+    }), new CostBackend())
+    services.push(service)
+    await service.tick()
+    expect((await loadState(root, Date.now())).usage.costUsdSession).toBe(0.4)
+    await service.tick()
+    const loaded = await loadState(root, Date.now())
+    expect(loaded.killSwitch).toBe(true)
+    expect(loaded.lastAction).toEqual({ type: 'stop', reason: 'budget' })
+  })
+
+  it('defers cost signals when the fold write fails and applies them next tick', async () => {
+    const root = await mkdtempInRepo('devloop-svc-cost-io-')
+    await mkdir(join(root, '.devloop'))
+    await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
+    await initGitRepo(root)
+    await saveState(root, {
+      ...emptyState(Date.now()),
+      tasks: [makeTask({ id: 'd1', status: 'ready', title: 'Add persist' })],
+    })
+    class WriteFailBackend extends RecordingBackend {
+      override async run(input: Parameters<RecordingBackend['run']>[0]) {
+        await super.run(input)
+        await chmod(join(root, '.devloop'), 0o500)
+        return { status: 'recorded' as const, tokens: 12, costUsd: 0.4 }
+      }
+    }
+    const ctx = new Context()
+    const service = new DevloopService(ctx, resolveConfig({
+      root,
+      tickIntervalMs: 60_000,
+      enabled: false,
+    }), new WriteFailBackend())
+    services.push(service)
+    await service.tick()
+    await chmod(join(root, '.devloop'), 0o755)
+    let loaded = await loadState(root, Date.now())
+    expect(loaded.usage.costUsdSession).toBe(0)
+    await service.tick()
+    loaded = await loadState(root, Date.now())
+    expect(loaded.usage.costUsdSession).toBe(0.4)
+    expect(loaded.usage.tokens.d1).toBe(12)
+  })
+
   it('holds the task when the host commit fails after a started delegate', async () => {
     const root = await mkdtempInRepo('devloop-svc-commit-hold-')
     await mkdir(join(root, '.devloop'))
@@ -561,7 +936,7 @@ describe('DevloopService', () => {
     await initGitRepo(root)
     await saveState(root, {
       ...emptyState(Date.now()),
-      tasks: [makeTask({ id: 'd1', status: 'ready', title: 'Add persist' })],
+      tasks: [makeTask({ id: 'd1', status: 'ready', title: 'Add persist', allowedPaths: ['src.txt'] })],
     })
     class DirtyStartedBackend implements AgentBackend {
       async run(input: AgentRunInput): Promise<AgentRunResult> {
@@ -572,7 +947,12 @@ describe('DevloopService', () => {
         if (!match?.[1]) throw new Error('missing gitdir')
         const gitDir = isAbsolute(match[1]) ? match[1] : join(input.worktreeRoot, match[1])
         await writeFile(join(gitDir, 'index.lock'), '', 'utf8')
-        return { status: 'started' }
+        return {
+          status: 'started',
+          outcome: {
+            version: 1, kind: 'implementation', taskId: 'd1', outcome: 'completed', summary: 'done',
+          },
+        }
       }
       async cancel() {}
       async health() { return 'ok' }
@@ -597,8 +977,11 @@ describe('DevloopService', () => {
     await initGitRepo(root)
     await saveState(root, {
       ...emptyState(Date.now()),
-      tasks: [makeTask({ id: 'd1', status: 'ready', title: 'Add persist' })],
+      tasks: [makeTask({ id: 'd1', status: 'ready', title: 'Add persist', allowedPaths: ['src.txt'] })],
     })
+    const holdVictim = join(root, 'hold-victim.txt')
+    await writeFile(holdVictim, 'keep\n', 'utf8')
+    await symlink(holdVictim, join(root, '.devloop', 'COMMIT_HOLD'))
     class DirtyLockedBackend implements AgentBackend {
       releaseLock!: () => void
       async run(input: AgentRunInput): Promise<AgentRunResult> {
@@ -619,7 +1002,12 @@ describe('DevloopService', () => {
           })
         })
         await acquired
-        return { status: 'started' }
+        return {
+          status: 'started',
+          outcome: {
+            version: 1, kind: 'implementation', taskId: 'd1', outcome: 'completed', summary: 'done',
+          },
+        }
       }
       async cancel() {}
       async health() { return 'ok' }
@@ -637,6 +1025,8 @@ describe('DevloopService', () => {
     expect(loaded.supervisor).toBeNull()
     expect(loaded.lastAction).toEqual({ type: 'delegate', taskId: 'd1' })
     await expect(readFile(join(root, '.devloop', 'COMMIT_HOLD'), 'utf8')).resolves.toBe('d1\n')
+    await expect(readFile(holdVictim, 'utf8')).resolves.toBe('keep\n')
+    expect((await lstat(join(root, '.devloop', 'COMMIT_HOLD'))).isSymbolicLink()).toBe(false)
     backend.releaseLock()
     await new Promise(resolve => setTimeout(resolve, 20))
     const restarted = new DevloopService(new Context(), resolveConfig({

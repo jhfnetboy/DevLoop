@@ -1,5 +1,16 @@
 # Changes
 
+## 0.3.0 — 2026-08-31
+
+- 新增 opt-in `agentBackend: routed`：plan → `plannerRoute`，delegate → `routing[contract.tier]`，review → `reviewerRoute`
+- Routed CLI 显式传递模型；DSH 用隔离的临时 patch 固定 DeepSeek model；相同 backend+model 自审会 fail closed
+- 默认仍为 `noop`；固定 `dsh` / `claude` / `codex` 模式保持兼容
+- 版本化 `plan` / `implementation` / `review` 结果 envelope；校验后由纯代码自动推进 STATE
+- 宿主以真实 Git changed paths 强制 `allowedPaths`/forbidden，拒绝越界与 symlink；提交 SHA 绑定独立 review
+- 新增可选 Harness `ctx.subagents` bridge（`subagent:<provider>`），每条 run/parent 生命周期全路径 dispose
+- `EVENTS.jsonl` 追加完整状态事件、单调 revision/CAS；STATE 损坏时从最后完整事件恢复
+- 新增无人工改 STATE 的 plan → delegate → review → merge → complete E2E
+
 ## 0.1.0 — 2026-08-25
 
 文档与 ADR。范围仅限 0.1 的架构记录；插件代码在后续 stacked PR 落地。
@@ -200,3 +211,28 @@ T3 follow-up after Codex RC on merged #12. No unattended loop (that's 0.3).
 
 Possible impact: T3 hosts pick up safer argv and host commits. Package version stays **0.2.5** until 0.3.0.
 
+## 0.3.0 — 2026-08-31
+
+Bounded autonomous development loop: continuous ticks, role-aware one-shot
+dispatch, host-enforced changes, SHA-bound independent review, durable state
+recovery, PROGRESS.md, and optional cost/token signals. The T3 host-commit
+prerequisite shipped in 0.2.6.
+
+### 代码
+
+- 版本化 `plan` / `implementation` / `review` 结果信封驱动确定性状态迁移；非法、多重或错类型结果不能推进状态
+- 按角色和 tier 路由 DSH、Claude、Codex 或 Harness `subagent:<provider>`；路由器选择的身份是持久化权威，implementation 与 review 必须独立
+- 宿主从真实 Git diff 强制执行 `allowedPaths` / forbidden，提交任务分支并把 review 绑定到完整实现 SHA；merge 前复核分支未移动
+- DevLoop 发起的所有 Git 命令统一禁用仓库 hooks；CLI delegate 的协议修复强制只读，DSH delegate 在无法强制只读时不重试
+- `STATE.json` 原子快照配合单调 revision 的 `EVENTS.jsonl`；快照缺失或截断时从最后一条完整事件恢复
+- 每个 tick 更新 `.devloop/PROGRESS.md`；费用信号支持锁竞争与写失败后的 defer，killSwitch / supervisor 不会被迟到结果覆盖
+- 临时真实 Git 仓库 E2E 覆盖 plan → delegate → host commit → review → merge → goal complete，并完成真实 DeepSeek/Codex provider 验证
+
+### 可能影响
+
+- 默认 `agentBackend: noop`；生产 provider 必须显式配置
+- Merge 不 push；0.3 没有 terminal supervisor hold 的受支持清除命令
+- CLI 默认仍不解析 stdout 里的费用；精确熔断需 backend 填 `costUsd` / `tokens`
+- 无 operator UI、API broker 或 arena/cross-judge（**0.4**）
+
+Possible impact: GitHub installs of this slice report `0.3.0`.

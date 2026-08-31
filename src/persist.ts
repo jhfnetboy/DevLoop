@@ -1,4 +1,4 @@
-import { link, lstat, mkdir, readFile, realpath, rename, rm, unlink, utimes, writeFile } from 'node:fs/promises'
+import { constants, link, lstat, mkdir, open, readFile, realpath, rename, rm, unlink, utimes, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { emptyUsage } from './budget.js'
 import type { LoopState, ModelTier, ReviewVerdict, Risk, TaskStatus } from './types.js'
@@ -8,6 +8,17 @@ export const DEVLOOP_DIR = '.devloop'
 export const STATE_FILE = 'STATE.json'
 export const GOAL_FILE = 'GOAL.md'
 export const LOCK_FILE = 'LOCK'
+export const EVENTS_FILE = 'EVENTS.jsonl'
+const EVENT_VERSION = 1 as const
+const JOURNAL_TAIL_BYTES = 8 * 1024 * 1024
+
+interface StateEvent {
+  readonly version: typeof EVENT_VERSION
+  readonly revision: number
+  readonly at: string
+  readonly action: string
+  readonly state: LoopState
+}
 
 export function devloopDir(root: string): string {
   return join(root, DEVLOOP_DIR)
@@ -19,6 +30,10 @@ export function statePath(root: string): string {
 
 export function goalPath(root: string): string {
   return join(devloopDir(root), GOAL_FILE)
+}
+
+export function eventsPath(root: string): string {
+  return join(devloopDir(root), EVENTS_FILE)
 }
 
 export async function workspaceArmed(root: string): Promise<boolean> {
@@ -34,6 +49,7 @@ export async function workspaceArmed(root: string): Promise<boolean> {
 export function emptyState(now: number): LoopState {
   return {
     version: STATE_VERSION,
+    revision: 0,
     goalCompleted: false,
     killSwitch: false,
     supervisor: null,
@@ -52,11 +68,13 @@ export async function loadState(root: string, now: number): Promise<LoopState> {
   try {
     const raw = await readFile(statePath(root), 'utf8')
     const parsed: unknown = JSON.parse(raw)
-    if (!isLoopState(parsed)) return haltState(now, 'invalid_state')
-    return parsed
+    if (!isLoopState(parsed)) {
+      return await recoverState(root) ?? haltState(now, 'invalid_state')
+    }
+    return normalizeLoadedState(parsed)
   } catch (error) {
-    if (isNotFound(error)) return emptyState(now)
-    if (error instanceof SyntaxError) return haltState(now, 'invalid_state')
+    if (isNotFound(error)) return await recoverState(root) ?? emptyState(now)
+    if (error instanceof SyntaxError) return await recoverState(root) ?? haltState(now, 'invalid_state')
     return haltState(now, 'unreadable_state', { permanent: false })
   }
 }
@@ -84,7 +102,7 @@ async function isLocalDevloopDir(root: string, options: { allowMissing?: boolean
   return resolvedDir === join(resolvedRoot, DEVLOOP_DIR)
 }
 
-async function assertLocalDevloopDir(root: string): Promise<void> {
+export async function assertLocalDevloopDir(root: string): Promise<void> {
   if (!await isLocalDevloopDir(root, { allowMissing: true })) {
     throw new Error('devloop directory must be a real directory inside the workspace')
   }
@@ -262,13 +280,112 @@ async function releaseLock(file: string): Promise<void> {
   }
 }
 
-export async function saveState(root: string, state: LoopState): Promise<void> {
+export async function saveState(
+  root: string,
+  state: LoopState,
+  options: { readonly expectedRevision?: number; readonly action?: string } = {},
+): Promise<LoopState> {
   await assertLocalDevloopDir(root)
   const file = statePath(root)
   await mkdir(dirname(file), { recursive: true })
+  const currentRevision = await persistedRevision(root)
+  if (options.expectedRevision !== undefined && currentRevision !== options.expectedRevision) {
+    throw new Error(`state_revision_conflict: expected ${options.expectedRevision}, found ${currentRevision}`)
+  }
+  const persisted: LoopState = { ...state, revision: currentRevision + 1 }
+  await appendStateEvent(root, persisted, options.action ?? actionLabel(persisted))
   const temp = `${file}.${String(process.pid)}.${String(Date.now())}.tmp`
-  await writeFile(temp, `${JSON.stringify(state, null, 2)}\n`, 'utf8')
+  await writeFile(temp, `${JSON.stringify(persisted, null, 2)}\n`, 'utf8')
   await rename(temp, file)
+  return persisted
+}
+
+async function persistedRevision(root: string): Promise<number> {
+  try {
+    const parsed: unknown = JSON.parse(await readFile(statePath(root), 'utf8'))
+    if (isLoopState(parsed)) return normalizeLoadedState(parsed).revision
+  } catch {
+    // Fall through to the durable journal.
+  }
+  return (await recoverState(root))?.revision ?? 0
+}
+
+async function appendStateEvent(root: string, state: LoopState, action: string): Promise<void> {
+  const file = eventsPath(root)
+  const event: StateEvent = {
+    version: EVENT_VERSION,
+    revision: state.revision,
+    at: new Date().toISOString(),
+    action,
+    state,
+  }
+  const flags = constants.O_WRONLY | constants.O_CREAT | constants.O_APPEND | constants.O_NOFOLLOW
+  const handle = await open(file, flags, 0o600)
+  try {
+    await handle.writeFile(`${JSON.stringify(event)}\n`, 'utf8')
+    await handle.sync()
+  } finally {
+    await handle.close()
+  }
+}
+
+async function recoverState(root: string): Promise<LoopState | null> {
+  let handle
+  try {
+    handle = await open(eventsPath(root), constants.O_RDONLY | constants.O_NOFOLLOW)
+    const stat = await handle.stat()
+    if (!stat.isFile() || stat.size === 0) return null
+    const length = Math.min(stat.size, JOURNAL_TAIL_BYTES)
+    const offset = stat.size - length
+    const buffer = Buffer.alloc(length)
+    await handle.read(buffer, 0, length, offset)
+    let text = buffer.toString('utf8')
+    if (offset > 0) text = text.slice(text.indexOf('\n') + 1)
+    const rawLines = text.split('\n')
+    const endedWithNewline = text.endsWith('\n')
+    const lines = rawLines.filter(Boolean)
+    let latest: LoopState | null = null
+    let priorRevision: number | null = null
+    for (let index = 0; index < lines.length; index += 1) {
+      try {
+        const parsed: unknown = JSON.parse(lines[index]!)
+        if (!isStateEvent(parsed)) return null
+        if (priorRevision !== null && parsed.revision !== priorRevision + 1) return null
+        priorRevision = parsed.revision
+        latest = normalizeLoadedState(parsed.state)
+      } catch {
+        // Only a non-newline-terminated final append may be torn.
+        if (index !== lines.length - 1 || endedWithNewline) return null
+      }
+    }
+    return latest
+  } catch (error) {
+    if (isNotFound(error)) return null
+    return null
+  } finally {
+    await handle?.close().catch(() => undefined)
+  }
+}
+
+function isStateEvent(value: unknown): value is StateEvent {
+  if (typeof value !== 'object' || value === null) return false
+  const event = value as Partial<StateEvent>
+  return event.version === EVENT_VERSION
+    && isNonNegInt(event.revision)
+    && typeof event.at === 'string'
+    && typeof event.action === 'string'
+    && isLoopState(event.state)
+    && normalizeLoadedState(event.state).revision === event.revision
+}
+
+function actionLabel(state: LoopState): string {
+  const action = state.lastAction
+  if (action.type === 'delegate' || action.type === 'review' || action.type === 'merge') {
+    return `${action.type}:${action.taskId}`
+  }
+  if (action.type === 'stop') return `stop:${action.reason}`
+  if (action.type === 'escalate') return `escalate:${action.taskId ?? '_'}:${action.reason}`
+  return action.type
 }
 
 function haltState(now: number, reason: string, options: { permanent?: boolean } = {}): LoopState {
@@ -286,6 +403,7 @@ function isLoopState(value: unknown): value is LoopState {
   if (typeof value !== 'object' || value === null) return false
   const record = value as Partial<LoopState>
   if (record.version !== STATE_VERSION) return false
+  if (record.revision !== undefined && !isNonNegInt(record.revision)) return false
   if (typeof record.goalCompleted !== 'boolean') return false
   if (typeof record.killSwitch !== 'boolean') return false
   if (!Array.isArray(record.tasks)) return false
@@ -308,6 +426,10 @@ function isLoopState(value: unknown): value is LoopState {
     return false
   }
   return true
+}
+
+function normalizeLoadedState(state: LoopState): LoopState {
+  return { ...state, revision: state.revision ?? 0 }
 }
 
 const TASK_STATUSES = new Set<TaskStatus>([
@@ -345,6 +467,9 @@ function isTaskShape(value: unknown): boolean {
     && isStringArray(task.acceptance)
     && (task.lastReviewVerdict === undefined || REVIEW_VERDICTS.has(task.lastReviewVerdict as ReviewVerdict))
     && (task.baseSha === undefined || (typeof task.baseSha === 'string' && /^[0-9a-f]{40}$/i.test(task.baseSha)))
+    && (task.implementationSha === undefined || (typeof task.implementationSha === 'string' && /^[0-9a-f]{40}$/i.test(task.implementationSha)))
+    && (task.implementer === undefined || (typeof task.implementer === 'string' && task.implementer.length > 0))
+    && (task.reviewer === undefined || (typeof task.reviewer === 'string' && task.reviewer.length > 0))
 }
 
 function isUsageShape(value: unknown): boolean {

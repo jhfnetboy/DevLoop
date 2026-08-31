@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { RecordingBackend, dispatchTick, isAgentAction, runInputFor } from '../src/backend.ts'
+import { RecordingBackend, RoutedBackend, dispatchTick, isAgentAction, runInputFor } from '../src/backend.ts'
 import type { AgentBackend, AgentRunInput, AgentRunResult } from '../src/backend.ts'
 import { resolveConfig } from '../src/config.ts'
 import { makeTask, baseState } from './helpers.ts'
@@ -15,6 +15,98 @@ describe('RecordingBackend', () => {
     await expect(backend.health()).resolves.toBe('ok')
     expect(backend.runs).toEqual([input])
     expect(backend.cancelled).toEqual(['task-1'])
+  })
+})
+
+describe('RoutedBackend', () => {
+  it('uses distinct planner, worker-tier, and reviewer routes', async () => {
+    const config = resolveConfig({})
+    const dsh = new RecordingBackend()
+    const codex = new RecordingBackend()
+    const claude = new RecordingBackend()
+    const backend = new RoutedBackend({
+      planner: config.plannerRoute,
+      reviewer: config.reviewerRoute,
+      workers: config.routing,
+    }, { dsh, codex, claude })
+    const state = baseState({ tasks: [makeTask({ id: 'd1', tier: 'T1', status: 'ready' })] })
+
+    await backend.run(runInputFor('/repo', { type: 'plan' }, state, limits))
+    await backend.run(runInputFor('/repo', { type: 'delegate', taskId: 'd1' }, state, limits))
+    await backend.run(runInputFor('/repo', { type: 'review', taskId: 'd1' }, state, limits))
+
+    expect(codex.runs[0]?.route).toEqual(config.plannerRoute)
+    expect(dsh.runs[0]?.route).toEqual(config.routing.T1)
+    expect(claude.runs[0]?.route).toEqual(config.reviewerRoute)
+  })
+
+  it('fails closed when reviewer and implementer are the same agent route', async () => {
+    const config = resolveConfig({ reviewerRoute: {
+      tier: 'T3', backend: 'codex', model: 'gpt-5.4',
+    } })
+    const backend = new RoutedBackend({
+      planner: config.plannerRoute,
+      reviewer: config.reviewerRoute,
+      workers: config.routing,
+    }, { codex: new RecordingBackend() })
+    const state = baseState({ tasks: [makeTask({ id: 'd1', tier: 'T3', status: 'review_pending' })] })
+
+    await expect(backend.run(
+      runInputFor('/repo', { type: 'review', taskId: 'd1' }, state, limits),
+    )).resolves.toEqual({
+      status: 'failed',
+      detail: 'review route must differ from implementer route codex/gpt-5.4',
+    })
+  })
+
+  it('routes subagent:<provider> through the optional Harness adapter', async () => {
+    const subagent = new RecordingBackend()
+    const config = resolveConfig({
+      plannerRoute: { tier: 'T3', backend: 'subagent:codex', model: 'gpt-5.4' },
+    })
+    const backend = new RoutedBackend({
+      planner: config.plannerRoute,
+      reviewer: config.reviewerRoute,
+      workers: config.routing,
+    }, { subagent })
+    await backend.run(runInputFor('/repo', { type: 'plan' }, baseState(), limits))
+    expect(subagent.runs[0]?.route).toEqual(config.plannerRoute)
+  })
+
+  it('records the selected route identity instead of an adapter self-report', async () => {
+    const config = resolveConfig({})
+    const spoofing: AgentBackend = {
+      async run() { return { status: 'started', agent: 'spoofed/identity' } },
+      async cancel() {},
+      async health() { return 'ok' },
+    }
+    const backend = new RoutedBackend({
+      planner: config.plannerRoute,
+      reviewer: config.reviewerRoute,
+      workers: config.routing,
+    }, { codex: spoofing })
+    await expect(backend.run(runInputFor('/repo', { type: 'plan' }, baseState(), limits))).resolves.toEqual({
+      status: 'started',
+      agent: `${config.plannerRoute.backend}/${config.plannerRoute.model}`,
+    })
+  })
+
+  it('rejects the same native provider even when descriptive model labels differ', async () => {
+    const config = resolveConfig({
+      reviewerRoute: { tier: 'T3', backend: 'subagent:codex', model: 'review-label' },
+      routing: {
+        T3: { tier: 'T3', backend: 'subagent:codex', model: 'implement-label' },
+      },
+    })
+    const backend = new RoutedBackend({
+      planner: config.plannerRoute,
+      reviewer: config.reviewerRoute,
+      workers: config.routing,
+    }, { subagent: new RecordingBackend() })
+    const state = baseState({ tasks: [makeTask({ id: 'd1', tier: 'T3', status: 'review_pending' })] })
+    await expect(backend.run(
+      runInputFor('/repo', { type: 'review', taskId: 'd1' }, state, limits),
+    )).resolves.toMatchObject({ status: 'failed' })
   })
 })
 

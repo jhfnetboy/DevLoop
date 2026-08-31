@@ -1,22 +1,29 @@
-import { lstat, readFile, unlink, writeFile } from 'node:fs/promises'
+import { constants, lstat, open, rename, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { clearInterval, setInterval } from 'node:timers'
 import { Service, type Context } from '@deepseek-ai/cordis'
 import {
   NoopBackend,
+  RoutedBackend,
   dispatchTick,
   isAgentAction,
   runInputFor,
   type AgentBackend,
+  type AgentAction,
+  type AgentRunResult,
 } from './backend.js'
 import { ConfigSchema, resolveConfig, type Config } from './config.js'
 import { ClaudeCliBackend, CodexCliBackend } from './cli.js'
 import { DshHeadlessBackend } from './dsh.js'
-import { DEVLOOP_DIR, loadState, saveState, withStateLock, workspaceArmed } from './persist.js'
+import { CordisHarnessHost, HarnessSubagentBackend } from './harness.js'
+import { DEVLOOP_DIR, loadState, saveState, withStateLock, workspaceArmed, type LockResult } from './persist.js'
+import { writeProgress } from './progress.js'
+import { applyRunSignals, rollCostWindows } from './budget.js'
 import { runTick, type TickResult } from './tick.js'
 import type { LoopState } from './types.js'
 import { RUNNER_REAP_MS } from './spawn.js'
-import { prepareDelegateWorktree, preparePlanWorktree, removePlanWorktree, mergeTaskWorktree, deleteMergedTaskBranch, worktreePath, readContractBaseSha, commitDirtyTaskWorktree } from './worktree.js'
+import { applyAgentResult } from './transition.js'
+import { prepareDelegateWorktree, preparePlanWorktree, removePlanWorktree, mergeTaskWorktree, deleteMergedTaskBranch, worktreePath, worktreeTaskToken, readContractBaseSha, commitDirtyTaskWorktree, assertTaskChangesAllowed, taskWorktreeHeadSha } from './worktree.js'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -41,9 +48,11 @@ export default class DevloopService extends Service {
   readonly backend: AgentBackend
   private timer: ReturnType<typeof setInterval> | null = null
   private busy = false
+  private sessionCostReset = false
   private disposed = false
   private dispatchAbort: AbortController | null = null
   private pendingCommitHold: string | null = null
+  private pendingSignals: { taskId: string | null; tokens?: number; costUsd?: number } | null = null
 
   constructor(ctx: Context, rawConfig: Config, backend?: AgentBackend) {
     super(ctx, 'devloop')
@@ -92,15 +101,36 @@ export default class DevloopService extends Service {
         this.pendingCommitHold = this.pendingCommitHold ?? await readCommitHoldMarker(this.config.root)
         if (this.pendingCommitHold && !current.killSwitch && !current.supervisor) {
           current = holdTask(current, this.pendingCommitHold, 'parent_commit_failed')
-          await saveState(this.config.root, current)
+          current = await saveState(this.config.root, current, {
+            expectedRevision: current.revision,
+            action: 'hold:parent_commit_failed',
+          })
           this.pendingCommitHold = null
           await clearCommitHoldMarker(this.config.root)
         }
+        let sessionRolled = false
+        let pendingApplied = false
+        if (this.pendingSignals && !current.killSwitch && !current.supervisor) {
+          current = {
+            ...current,
+            usage: applyRunSignals(current.usage, this.pendingSignals.taskId, now, this.pendingSignals),
+          }
+          pendingApplied = true
+        }
+        if (!this.sessionCostReset && !current.killSwitch && current.usage.costUsdSession !== 0) {
+          current = {
+            ...current,
+            usage: rollCostWindows(current.usage, now, true),
+          }
+          sessionRolled = true
+        }
         if (current.supervisor?.reason === 'unreadable_state') {
           this.ctx.logger.error('[dsh-devloop] tick skipped: unreadable STATE.json')
+          await snapshotProgress(this.config.root, current, now, this.ctx.logger)
           return
         }
         if (current.killSwitch || current.lastAction.type === 'stop') {
+          await snapshotProgress(this.config.root, current, now, this.ctx.logger)
           this.stop()
           return
         }
@@ -140,6 +170,7 @@ export default class DevloopService extends Service {
               this.config.root,
               mergeTaskId,
               result.state.tasks.find(task => task.id === mergeTaskId)?.baseSha ?? null,
+              result.state.tasks.find(task => task.id === mergeTaskId)?.implementationSha ?? null,
             )
             result = {
               ...result,
@@ -159,7 +190,15 @@ export default class DevloopService extends Service {
         }
         if (!result.skipped) {
           try {
-            await saveState(this.config.root, result.state)
+            result = {
+              ...result,
+              state: await saveState(this.config.root, result.state, {
+                expectedRevision: current.revision,
+                action: actionKeyForJournal(result.action),
+              }),
+            }
+            if (pendingApplied) this.pendingSignals = null
+            this.sessionCostReset = true
             this.ctx.logger.info(`[dsh-devloop] tick action=${result.action.type}`)
           } catch (error) {
             if (worktreeRoot && result.action.type === 'plan' && isolatedPlan(this.config.agentBackend)) {
@@ -172,7 +211,36 @@ export default class DevloopService extends Service {
             }
             throw error
           }
+        } else if (sessionRolled) {
+          result = {
+            ...result,
+            state: await saveState(this.config.root, result.state, {
+              expectedRevision: current.revision,
+              action: 'cost:session-roll',
+            }),
+          }
+          if (pendingApplied) this.pendingSignals = null
+          this.sessionCostReset = true
+        } else {
+          const rolled = rollCostWindows(result.state.usage, now)
+          const dayRolled = rolled.costUsdDay !== result.state.usage.costUsdDay
+          if (dayRolled || pendingApplied) {
+            result = {
+              ...result,
+              state: { ...result.state, usage: pendingApplied ? rollCostWindows(result.state.usage, now) : rolled },
+            }
+            result = {
+              ...result,
+              state: await saveState(this.config.root, result.state, {
+                expectedRevision: current.revision,
+                action: pendingApplied ? 'cost:deferred' : 'cost:day-roll',
+              }),
+            }
+            if (pendingApplied) this.pendingSignals = null
+          }
+          this.sessionCostReset = true
         }
+        await snapshotProgress(this.config.root, result.state, now, this.ctx.logger)
         if (result.action.type === 'stop' || result.state.killSwitch) {
           this.stop()
         }
@@ -220,20 +288,95 @@ export default class DevloopService extends Service {
               ),
               abort.signal,
             )
-            if (
-              dispatched?.status === 'started'
-              && action.type === 'delegate'
-              && outcome.value.worktreeRoot
-            ) {
+            let implementationSha: string | undefined
+            let transitionAllowed = dispatched?.status === 'started' && dispatched.outcome !== undefined
+            if (transitionAllowed && action.type === 'delegate' && dispatched?.outcome?.kind === 'implementation'
+              && dispatched.outcome.outcome === 'completed' && outcome.value.worktreeRoot) {
               try {
+                const input = runInputFor(this.config.root, action, outcome.value.result.state, this.config.budget)
+                if (!input.contract) throw new Error('scope_check: missing task contract')
+                await assertTaskChangesAllowed(outcome.value.worktreeRoot, input.contract)
                 await commitDirtyTaskWorktree(outcome.value.worktreeRoot, action.taskId)
+                implementationSha = await taskWorktreeHeadSha(outcome.value.worktreeRoot)
+                if (implementationSha === input.contract.baseSha) throw new Error('empty_task')
               } catch (error) {
                 this.ctx.logger.error('[dsh-devloop] parent commit failed', error)
-                const held = await persistParentCommitHold(this.config.root, action.taskId, this.ctx.logger)
+                transitionAllowed = false
+                const reason = implementationFailureReason(error)
+                const held = await persistAgentHold(this.config.root, action.taskId, reason, this.ctx.logger)
                 if (!held) {
                   this.pendingCommitHold = action.taskId
                   await writeCommitHoldMarker(this.config.root, action.taskId, this.ctx.logger)
                 }
+              }
+            }
+            if (transitionAllowed && action.type === 'review') {
+              if (!outcome.value.worktreeRoot) {
+                transitionAllowed = false
+                await persistAgentHold(this.config.root, action.taskId, 'missing_review_worktree', this.ctx.logger)
+              } else {
+                try {
+                  const actualSha = await taskWorktreeHeadSha(outcome.value.worktreeRoot)
+                  const expectedSha = outcome.value.result.state.tasks.find(task => task.id === action.taskId)?.implementationSha
+                  if (!expectedSha || actualSha !== expectedSha) throw new Error('stale_review_sha')
+                } catch (error) {
+                  transitionAllowed = false
+                  await persistAgentHold(this.config.root, action.taskId, 'stale_review_sha', this.ctx.logger)
+                }
+              }
+            }
+            const agentOutcome = dispatched?.outcome
+            if (transitionAllowed && dispatched && agentOutcome) {
+              try {
+                await persistAgentTransition(
+                  this.config.root,
+                  action,
+                  { ...dispatched, outcome: agentOutcome },
+                  implementationSha,
+                  this.ctx.logger,
+                )
+              } catch (error) {
+                this.ctx.logger.error('[dsh-devloop] result transition failed', error)
+                await persistAgentHold(
+                  this.config.root,
+                  action.type === 'plan' ? null : action.taskId,
+                  transitionFailureReason(error),
+                  this.ctx.logger,
+                )
+              }
+            } else if (dispatched?.status === 'failed') {
+              await persistBackendFailure(this.config.root, action, dispatched.detail, this.ctx.logger)
+            } else if (dispatched?.status === 'started' && !dispatched.outcome) {
+              await persistAgentHold(
+                this.config.root,
+                action.type === 'plan' ? null : action.taskId,
+                'missing_agent_result',
+                this.ctx.logger,
+              )
+            }
+            const hasSignals = dispatched
+              && (finitePositive(dispatched.tokens) || finitePositive(dispatched.costUsd))
+            if (hasSignals && dispatched && !this.disposed) {
+              const taskId = action.type === 'delegate' || action.type === 'review' ? action.taskId : null
+              try {
+                const folded = await persistCostSignals(this.config.root, taskId, dispatched, this.ctx.logger)
+                if (folded.ok) {
+                  this.pendingSignals = null
+                } else {
+                  this.pendingSignals = {
+                    taskId,
+                    tokens: dispatched.tokens,
+                    costUsd: dispatched.costUsd,
+                  }
+                  this.ctx.logger.info('[dsh-devloop] cost signals deferred: lock held')
+                }
+              } catch (error) {
+                this.pendingSignals = {
+                  taskId,
+                  tokens: dispatched.tokens,
+                  costUsd: dispatched.costUsd,
+                }
+                this.ctx.logger.error('[dsh-devloop] cost signal persist failed', error)
               }
             }
           } catch (error) {
@@ -268,6 +411,18 @@ export default class DevloopService extends Service {
    * constructor arg do not spawn. RecordingBackend is tests-only.
    */
   protected createBackend(): AgentBackend {
+    if (this.config.agentBackend === 'routed') {
+      return new RoutedBackend({
+        planner: this.config.plannerRoute,
+        reviewer: this.config.reviewerRoute,
+        workers: this.config.routing,
+      }, {
+        dsh: new DshHeadlessBackend(),
+        claude: new ClaudeCliBackend(),
+        codex: new CodexCliBackend(),
+        subagent: new HarnessSubagentBackend(new CordisHarnessHost(this.ctx)),
+      })
+    }
     if (this.config.agentBackend === 'dsh') return new DshHeadlessBackend()
     if (this.config.agentBackend === 'claude') return new ClaudeCliBackend()
     if (this.config.agentBackend === 'codex') return new CodexCliBackend()
@@ -276,7 +431,54 @@ export default class DevloopService extends Service {
 }
 
 function isolatedPlan(agentBackend: Config['agentBackend']): boolean {
-  return agentBackend === 'claude' || agentBackend === 'codex'
+  return agentBackend !== 'noop'
+}
+
+const SYNTHETIC_STATE_HALTS = new Set(['unreadable_state', 'invalid_state', 'escaped_devloop'])
+
+async function snapshotProgress(
+  root: string,
+  state: LoopState,
+  now: number,
+  log: { error(message: string, ...rest: unknown[]): void },
+): Promise<void> {
+  const reason = state.supervisor?.reason
+  if (reason && SYNTHETIC_STATE_HALTS.has(reason)) {
+    log.error(`[dsh-devloop] PROGRESS.md skipped: ${reason}`)
+    return
+  }
+  try {
+    await writeProgress(root, state, now)
+  } catch (error) {
+    log.error('[dsh-devloop] PROGRESS.md write failed', error)
+  }
+}
+
+async function persistCostSignals(
+  root: string,
+  taskId: string | null,
+  dispatched: { tokens?: number; costUsd?: number },
+  log: { error(message: string, ...rest: unknown[]): void; info(message: string, ...rest: unknown[]): void },
+): Promise<LockResult<void>> {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const folded = await withStateLock(root, async () => {
+        const current = await loadState(root, Date.now())
+        if (current.killSwitch || current.supervisor) return
+        const next = {
+          ...current,
+          usage: applyRunSignals(current.usage, taskId, Date.now(), dispatched),
+        }
+        await saveState(root, next, { expectedRevision: current.revision, action: 'cost:backend' })
+        await snapshotProgress(root, next, Date.now(), log)
+      })
+      if (folded.ok) return folded
+    } catch {
+      // Treat write/lock IO failures like contention so the caller can defer.
+    }
+    if (attempt === 0) await new Promise(resolve => setTimeout(resolve, 50))
+  }
+  return { ok: false }
 }
 
 const DISPATCH_REAP_GRACE_MS = RUNNER_REAP_MS + 250
@@ -331,19 +533,35 @@ async function writeCommitHoldMarker(
   taskId: string,
   log: { error(message: string, ...rest: unknown[]): void },
 ): Promise<void> {
+  const file = commitHoldPath(root)
+  const temp = `${file}.${String(process.pid)}.${String(Date.now())}.tmp`
   try {
-    await writeFile(commitHoldPath(root), `${taskId}\n`, 'utf8')
+    const flags = constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW
+    const handle = await open(temp, flags, 0o600)
+    try {
+      await handle.writeFile(`${taskId}\n`, 'utf8')
+    } finally {
+      await handle.close()
+    }
+    await rename(temp, file)
   } catch (error) {
+    await unlink(temp).catch(() => undefined)
     log.error('[dsh-devloop] parent commit hold marker write failed', error)
   }
 }
 
 async function readCommitHoldMarker(root: string): Promise<string | null> {
+  let handle
   try {
-    const raw = (await readFile(commitHoldPath(root), 'utf8')).trim()
-    return raw.length > 0 ? raw : null
+    handle = await open(commitHoldPath(root), constants.O_RDONLY | constants.O_NOFOLLOW)
+    const meta = await handle.stat()
+    if (!meta.isFile()) return null
+    const raw = (await handle.readFile('utf8')).trim()
+    return worktreeTaskToken(raw) ? raw : null
   } catch {
     return null
+  } finally {
+    await handle?.close().catch(() => undefined)
   }
 }
 
@@ -365,7 +583,10 @@ async function persistParentCommitHold(
       const folded = await withStateLock(root, async () => {
         const current = await loadState(root, Date.now())
         if (current.killSwitch || current.supervisor) return
-        await saveState(root, holdTask(current, taskId, 'parent_commit_failed'))
+        await saveState(root, holdTask(current, taskId, 'parent_commit_failed'), {
+          expectedRevision: current.revision,
+          action: 'hold:parent_commit_failed',
+        })
       })
       if (folded.ok) return true
     } catch (error) {
@@ -377,11 +598,125 @@ async function persistParentCommitHold(
   return false
 }
 
-function mergeHoldReason(error: unknown): 'empty_task' | 'merge_wedged' | 'unknown_base' | null {
+async function persistAgentTransition(
+  root: string,
+  action: AgentAction,
+  dispatched: AgentRunResult & { readonly outcome: NonNullable<AgentRunResult['outcome']> },
+  implementationSha: string | undefined,
+  log: { error(message: string, ...rest: unknown[]): void },
+): Promise<void> {
+  const folded = await withStateLock(root, async () => {
+    const now = Date.now()
+    const current = await loadState(root, now)
+    if (current.killSwitch || current.supervisor) throw new Error('stale_agent_result: loop is halted')
+    const next = {
+      ...applyAgentResult(current, action, dispatched.outcome, {
+        agent: dispatched.agent ?? 'unknown',
+        ...(implementationSha === undefined ? {} : { implementationSha }),
+      }),
+      updatedAt: new Date(now).toISOString(),
+    }
+    await saveState(root, next, {
+      expectedRevision: current.revision,
+      action: `result:${action.type}`,
+    })
+    await snapshotProgress(root, next, now, log)
+  })
+  if (!folded.ok) throw new Error('result_transition_lock_busy')
+}
+
+async function persistBackendFailure(
+  root: string,
+  action: AgentAction,
+  detail: string | undefined,
+  log: { error(message: string, ...rest: unknown[]): void },
+): Promise<void> {
+  if (action.type !== 'delegate') {
+    await persistAgentHold(root, action.type === 'plan' ? null : action.taskId, 'backend_failed', log)
+    return
+  }
+  const folded = await withStateLock(root, async () => {
+    const now = Date.now()
+    const current = await loadState(root, now)
+    if (current.killSwitch || current.supervisor) return
+    const tasks = current.tasks.map(task => task.id === action.taskId
+      ? { ...task, status: 'rework' as const, attempts: current.usage.taskAttempts[action.taskId] ?? task.attempts }
+      : task)
+    const next = { ...current, tasks, updatedAt: new Date(now).toISOString() }
+    await saveState(root, next, {
+      expectedRevision: current.revision,
+      action: 'result:backend-failed',
+    })
+    await snapshotProgress(root, next, now, log)
+  })
+  if (!folded.ok) {
+    log.error('[dsh-devloop] backend failure transition deferred', detail)
+  }
+}
+
+async function persistAgentHold(
+  root: string,
+  taskId: string | null,
+  reason: string,
+  log: { error(message: string, ...rest: unknown[]): void },
+): Promise<boolean> {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const folded = await withStateLock(root, async () => {
+        const current = await loadState(root, Date.now())
+        if (current.killSwitch || current.supervisor) return
+        await saveState(root, {
+          ...current,
+          supervisor: { taskId, reason },
+          lastAction: { type: 'escalate', taskId, reason },
+          updatedAt: new Date().toISOString(),
+        }, { expectedRevision: current.revision, action: `hold:${reason}` })
+      })
+      if (folded.ok) return true
+    } catch (error) {
+      log.error('[dsh-devloop] agent hold failed', error)
+    }
+    if (attempt === 0) await new Promise(resolve => setTimeout(resolve, 50))
+  }
+  return false
+}
+
+function implementationFailureReason(error: unknown): string {
+  const message = error instanceof Error ? error.message : ''
+  if (message.startsWith('scope_violation:')) return 'scope_violation'
+  if (message.startsWith('scope_check:')) return 'scope_check_failed'
+  if (message === 'empty_task') return 'empty_task'
+  return 'parent_commit_failed'
+}
+
+function transitionFailureReason(error: unknown): string {
+  const message = error instanceof Error ? error.message : ''
+  if (message.includes('stale_review_sha')) return 'stale_review_sha'
+  if (message.includes('reviewer_identity_matches_implementer')) return 'reviewer_identity_conflict'
+  if (message.includes('result_kind_mismatch') || message.includes('result_task_mismatch')) return 'invalid_agent_result'
+  return 'result_transition_failed'
+}
+
+function actionKeyForJournal(action: TickResult['action']): string {
+  if (action.type === 'delegate' || action.type === 'review' || action.type === 'merge') {
+    return `tick:${action.type}:${action.taskId}`
+  }
+  if (action.type === 'stop') return `tick:stop:${action.reason}`
+  if (action.type === 'escalate') return `tick:escalate:${action.taskId ?? '_'}:${action.reason}`
+  return `tick:${action.type}`
+}
+
+function finitePositive(value: number | undefined): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
+}
+
+function mergeHoldReason(error: unknown): 'empty_task' | 'merge_wedged' | 'unknown_base' | 'unknown_review_sha' | 'stale_review_sha' | null {
   const message = error instanceof Error ? error.message : ''
   if (message.startsWith('empty_task')) return 'empty_task'
   if (message.startsWith('merge_wedged')) return 'merge_wedged'
   if (message.startsWith('unknown_base')) return 'unknown_base'
+  if (message.startsWith('unknown_review_sha')) return 'unknown_review_sha'
+  if (message.startsWith('stale_review_sha')) return 'stale_review_sha'
   return null
 }
 

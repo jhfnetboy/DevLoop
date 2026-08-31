@@ -18,6 +18,8 @@ import {
   readContractBaseSha,
   worktreePath,
   worktreeTaskToken,
+  assertTaskChangesAllowed,
+  taskWorktreeHeadSha,
 } from '../src/worktree.ts'
 import { initGitRepo, makeTask, mkdtempInRepo } from './helpers.ts'
 
@@ -289,12 +291,31 @@ describe('mergeTaskWorktree', () => {
     await writeFile(join(dest, 'src.txt'), 'from-worker\n', 'utf8')
     await execFileAsync('git', ['-C', dest, 'add', 'src.txt'])
     await execFileAsync('git', ['-C', dest, 'commit', '-m', 'worker'])
-    await mergeTaskWorktree(root, 'd1', await readContractBaseSha(dest))
+    await mergeTaskWorktree(root, 'd1', await readContractBaseSha(dest), await taskWorktreeHeadSha(dest))
     await expect(readFile(join(root, 'src.txt'), 'utf8')).resolves.toBe('from-worker\n')
     await expect(lstat(dest)).rejects.toMatchObject({ code: 'ENOENT' })
     await execFileAsync('git', ['-C', root, 'rev-parse', '--verify', 'devloop/d1'])
     await deleteMergedTaskBranch(root, 'd1')
     await expect(execFileAsync('git', ['-C', root, 'rev-parse', '--verify', 'devloop/d1'])).rejects.toThrow()
+  }, 30_000)
+
+  it('host merge does not run hooks from the shared git directory', async () => {
+    const root = await gitWorkspace()
+    const dest = await prepareDelegateWorktree(root, contractFor('d1'))
+    await writeFile(join(dest, 'src.txt'), 'from-worker\n', 'utf8')
+    await execFileAsync('git', ['-C', dest, 'add', 'src.txt'])
+    await execFileAsync('git', ['-C', dest, 'commit', '-m', 'worker'])
+    const { stdout: commonDir } = await execFileAsync('git', [
+      '-C', dest, 'rev-parse', '--path-format=absolute', '--git-common-dir',
+    ], { encoding: 'utf8' })
+    const hooks = join(commonDir.trim(), 'hooks')
+    const marker = join(root, 'post-merge-ran')
+    await mkdir(hooks, { recursive: true })
+    const hook = join(hooks, 'post-merge')
+    await writeFile(hook, `#!/bin/sh\nprintf ran > ${JSON.stringify(marker)}\n`, 'utf8')
+    await chmod(hook, 0o755)
+    await mergeTaskWorktree(root, 'd1', await readContractBaseSha(dest), await taskWorktreeHeadSha(dest))
+    await expect(lstat(marker)).rejects.toMatchObject({ code: 'ENOENT' })
   }, 30_000)
 
   it('refuses merge when the workspace has tracked changes', async () => {
@@ -334,7 +355,9 @@ describe('mergeTaskWorktree', () => {
     await writeFile(join(root, 'src.txt'), 'other\n', 'utf8')
     await execFileAsync('git', ['-C', root, 'add', 'src.txt'])
     await execFileAsync('git', ['-C', root, 'commit', '-m', 'main-other'])
-    await expect(mergeTaskWorktree(root, 'd1', await readContractBaseSha(dest))).rejects.toThrow()
+    await expect(mergeTaskWorktree(
+      root, 'd1', await readContractBaseSha(dest), await taskWorktreeHeadSha(dest),
+    )).rejects.toThrow()
     const { stdout } = await execFileAsync('git', ['-C', root, 'status', '--porcelain', '--untracked-files=no'], { encoding: 'utf8' })
     expect(stdout).toBe('')
     await expect(execFileAsync('git', ['-C', root, 'rev-parse', '-q', '--verify', 'MERGE_HEAD'])).rejects.toThrow()
@@ -407,8 +430,9 @@ describe('mergeTaskWorktree', () => {
     await writeFile(join(dest, 'src.txt'), 'from-worker\n', 'utf8')
     await execFileAsync('git', ['-C', dest, 'add', 'src.txt'])
     await execFileAsync('git', ['-C', dest, 'commit', '-m', 'worker'])
+    const reviewedSha = await taskWorktreeHeadSha(dest)
     await execFileAsync('git', ['-C', root, 'worktree', 'remove', dest])
-    await mergeTaskWorktree(root, 'd1', baseSha)
+    await mergeTaskWorktree(root, 'd1', baseSha, reviewedSha)
     await expect(readFile(join(root, 'src.txt'), 'utf8')).resolves.toBe('from-worker\n')
   })
 
@@ -419,6 +443,21 @@ describe('mergeTaskWorktree', () => {
     await execFileAsync('git', ['-C', root, 'worktree', 'remove', dest])
     await expect(mergeTaskWorktree(root, 'd1', baseSha)).rejects.toThrow(/empty_task/)
     await execFileAsync('git', ['-C', root, 'rev-parse', '--verify', 'devloop/d1'])
+  })
+
+  it('refuses a task branch that moved after review', async () => {
+    const root = await gitWorkspace()
+    const dest = await prepareDelegateWorktree(root, contractFor('d1'))
+    const baseSha = await readContractBaseSha(dest)
+    await writeFile(join(dest, 'src.txt'), 'reviewed\n', 'utf8')
+    await execFileAsync('git', ['-C', dest, 'add', 'src.txt'])
+    await execFileAsync('git', ['-C', dest, 'commit', '-m', 'reviewed'])
+    const reviewedSha = await taskWorktreeHeadSha(dest)
+    await writeFile(join(dest, 'later.txt'), 'unreviewed\n', 'utf8')
+    await execFileAsync('git', ['-C', dest, 'add', 'later.txt'])
+    await execFileAsync('git', ['-C', dest, 'commit', '-m', 'moved'])
+    await expect(mergeTaskWorktree(root, 'd1', baseSha, reviewedSha)).rejects.toThrow('stale_review_sha')
+    await expect(readFile(join(root, 'src.txt'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   it('refuses an empty branch when CONTRACT.json is missing', async () => {
@@ -447,3 +486,46 @@ async function pathExists(path: string): Promise<boolean> {
     return false
   }
 }
+
+describe('host-enforced task write scope', () => {
+  it('accepts an allowed change and exposes the host commit SHA', async () => {
+    const root = await gitWorkspace()
+    const contract = contractFor('scope-ok')
+    const dest = await prepareDelegateWorktree(root, contract)
+    const baseSha = await readContractBaseSha(dest)
+    await mkdir(join(dest, 'src'))
+    await writeFile(join(dest, 'src', 'persist.ts'), 'export const ok = true\n', 'utf8')
+    await expect(assertTaskChangesAllowed(dest, { ...contract, baseSha: baseSha! }))
+      .resolves.toEqual(['src/persist.ts'])
+    await commitDirtyTaskWorktree(dest, 'scope-ok')
+    await expect(taskWorktreeHeadSha(dest)).resolves.not.toBe(baseSha)
+  })
+
+  it('rejects paths outside allowedPaths and protected paths', async () => {
+    const root = await gitWorkspace()
+    const outside = contractFor('scope-outside')
+    const outsideDest = await prepareDelegateWorktree(root, outside)
+    const outsideBase = await readContractBaseSha(outsideDest)
+    await writeFile(join(outsideDest, 'other.ts'), 'no\n', 'utf8')
+    await expect(assertTaskChangesAllowed(outsideDest, { ...outside, baseSha: outsideBase! }))
+      .rejects.toThrow('outside allowedPaths')
+
+    const forbidden = contractFor('scope-forbidden')
+    const forbiddenDest = await prepareDelegateWorktree(root, forbidden)
+    const forbiddenBase = await readContractBaseSha(forbiddenDest)
+    await writeFile(join(forbiddenDest, 'package.json'), '{}\n', 'utf8')
+    await expect(assertTaskChangesAllowed(forbiddenDest, { ...forbidden, baseSha: forbiddenBase! }))
+      .rejects.toThrow('forbidden path')
+  })
+
+  it('rejects symlink changes even when their path matches', async () => {
+    const root = await gitWorkspace()
+    const contract = contractFor('scope-link')
+    const dest = await prepareDelegateWorktree(root, contract)
+    const baseSha = await readContractBaseSha(dest)
+    await mkdir(join(dest, 'src'))
+    await symlink('/tmp/outside', join(dest, 'src', 'persist.ts'))
+    await expect(assertTaskChangesAllowed(dest, { ...contract, baseSha: baseSha! }))
+      .rejects.toThrow('symlink change')
+  })
+})

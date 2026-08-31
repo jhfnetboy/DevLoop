@@ -1,9 +1,10 @@
-import { lstat, readFile, realpath, unlink, writeFile } from 'node:fs/promises'
+import { constants, lstat, open, readFile, realpath, rename, unlink } from 'node:fs/promises'
 import { basename, isAbsolute, join } from 'node:path'
 import type { AgentBackend, AgentRunInput, AgentRunResult } from './backend.js'
 import { headlessPrompt, type HeadlessRunner } from './dsh.js'
-import { DEVLOOP_DIR } from './persist.js'
+import { assertLocalDevloopDir, DEVLOOP_DIR } from './persist.js'
 import { defaultRunner } from './spawn.js'
+import { parseDevloopResult, protocolRepairInstruction } from './result.js'
 
 const PLAN_TIMEOUT_MS = 45 * 60_000
 
@@ -13,10 +14,11 @@ function runTimeoutMs(input: AgentRunInput): number {
 
 function claudeArgv(input: AgentRunInput): string[] {
   const mode = input.action.type === 'delegate' ? 'acceptEdits' : 'plan'
+  const model = input.route ? ['--model', input.route.model] : []
   if (input.action.type !== 'delegate') {
-    return ['-p', '--permission-mode', mode, cliPrompt(input)]
+    return ['-p', ...model, '--permission-mode', mode, cliPrompt(input)]
   }
-  return ['-p', '--permission-mode', mode, '--', cliPrompt(input)]
+  return ['-p', ...model, '--permission-mode', mode, '--', cliPrompt(input)]
 }
 
 async function resolveLinkedGitDir(input: AgentRunInput): Promise<string | null> {
@@ -36,11 +38,13 @@ async function resolveLinkedGitDir(input: AgentRunInput): Promise<string | null>
 
 async function codexArgv(input: AgentRunInput): Promise<string[]> {
   const sandbox = input.action.type === 'delegate' ? 'workspace-write' : 'read-only'
+  const argv = ['exec', '--sandbox', sandbox]
+  if (input.route) argv.push('--model', input.route.model)
   if (input.action.type !== 'delegate') {
-    return ['exec', '--sandbox', sandbox, cliPrompt(input)]
+    argv.push(cliPrompt(input))
+    return argv
   }
   const gitDir = await resolveLinkedGitDir(input)
-  const argv = ['exec', '--sandbox', sandbox]
   if (gitDir) argv.push('--add-dir', gitDir)
   argv.push(cliPrompt(input))
   return argv
@@ -72,12 +76,9 @@ function isEnoent(error: unknown): boolean {
 async function writeDevloopNote(workspaceRoot: string, filename: 'PLAN.md' | 'REVIEW.md', stdout: string): Promise<void> {
   const dir = join(workspaceRoot, DEVLOOP_DIR)
   const file = join(dir, filename)
+  await assertLocalDevloopDir(workspaceRoot)
   if (stdout.trim().length === 0) {
     try {
-      const dirMeta = await lstat(dir)
-      if (dirMeta.isSymbolicLink() || !dirMeta.isDirectory()) {
-        throw new Error('refusing symlink .devloop')
-      }
       const fileMeta = await lstat(file)
       if (fileMeta.isSymbolicLink()) throw new Error(`refusing symlink ${filename}`)
       await unlink(file)
@@ -86,23 +87,34 @@ async function writeDevloopNote(workspaceRoot: string, filename: 'PLAN.md' | 'RE
     }
     return
   }
-  const dirMeta = await lstat(dir)
-  if (dirMeta.isSymbolicLink() || !dirMeta.isDirectory()) {
-    throw new Error('refusing symlink .devloop')
-  }
   try {
     const fileMeta = await lstat(file)
     if (fileMeta.isSymbolicLink()) throw new Error(`refusing symlink ${filename}`)
   } catch (error) {
     if (!isEnoent(error)) throw error
   }
-  await writeFile(file, stdout.endsWith('\n') ? stdout : `${stdout}\n`, 'utf8')
+  const temp = join(dir, `.${filename}.${String(process.pid)}.${String(Date.now())}.tmp`)
+  try {
+    const flags = constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW
+    const handle = await open(temp, flags, 0o600)
+    try {
+      await handle.writeFile(stdout.endsWith('\n') ? stdout : `${stdout}\n`, 'utf8')
+      await handle.sync()
+    } finally {
+      await handle.close()
+    }
+    await rename(temp, file)
+  } catch (error) {
+    await unlink(temp).catch(() => undefined)
+    throw error
+  }
 }
 
 async function runCli(
   runner: HeadlessRunner,
   command: string,
   argv: readonly string[],
+  repairArgv: readonly string[],
   input: AgentRunInput,
   failLabel: string,
 ): Promise<AgentRunResult> {
@@ -111,13 +123,30 @@ async function runCli(
     return { status: 'failed', detail: 'refusing to run T3 CLI at workspace root' }
   }
   try {
-    const { stdout } = await runner({ command, argv, cwd, timeoutMs: runTimeoutMs(input), signal: input.signal })
+    const request = { command, argv, cwd, timeoutMs: runTimeoutMs(input), signal: input.signal }
+    let { stdout } = await runner(request)
+    let outcome
+    if (stdout.includes('<devloop_result>')) {
+      try {
+        outcome = parseDevloopResult(stdout)
+      } catch {
+        const repaired = [...repairArgv]
+        const promptIndex = repaired.length - 1
+        repaired[promptIndex] = `${repaired[promptIndex] ?? ''}\n${protocolRepairInstruction()}`
+        stdout = (await runner({ ...request, argv: repaired })).stdout
+        outcome = stdout.includes('<devloop_result>') ? parseDevloopResult(stdout) : undefined
+      }
+    }
     if (input.action.type === 'plan') {
       await writeDevloopNote(input.workspaceRoot, 'PLAN.md', stdout)
     } else if (input.action.type === 'review') {
       await writeDevloopNote(input.workspaceRoot, 'REVIEW.md', stdout)
     }
-    return { status: 'started' }
+    return {
+      status: 'started',
+      ...(outcome === undefined ? {} : { outcome }),
+      ...(input.route ? { agent: `${input.route.backend}/${input.route.model}` } : {}),
+    }
   } catch (error) {
     const detail = error instanceof Error ? error.message : failLabel
     return { status: 'failed', detail }
@@ -150,7 +179,8 @@ export class ClaudeCliBackend implements AgentBackend {
   ) {}
 
   async run(input: AgentRunInput): Promise<AgentRunResult> {
-    return runCli(this.runner, this.command, claudeArgv(input), input, 'claude cli failed')
+    const argv = claudeArgv(input)
+    return runCli(this.runner, this.command, argv, claudeRepairArgv(argv), input, 'claude cli failed')
   }
 
   async cancel(_taskId: string): Promise<void> {}
@@ -173,7 +203,8 @@ export class CodexCliBackend implements AgentBackend {
   ) {}
 
   async run(input: AgentRunInput): Promise<AgentRunResult> {
-    return runCli(this.runner, this.command, await codexArgv(input), input, 'codex exec failed')
+    const argv = await codexArgv(input)
+    return runCli(this.runner, this.command, argv, codexRepairArgv(argv), input, 'codex exec failed')
   }
 
   async cancel(_taskId: string): Promise<void> {}
@@ -181,4 +212,28 @@ export class CodexCliBackend implements AgentBackend {
   async health(): Promise<'ok' | 'down'> {
     return probeHelp(this.runner, this.command)
   }
+}
+
+function claudeRepairArgv(argv: readonly string[]): string[] {
+  const repaired = [...argv]
+  const mode = repaired.indexOf('--permission-mode')
+  if (mode >= 0) repaired[mode + 1] = 'plan'
+  return repaired
+}
+
+function codexRepairArgv(argv: readonly string[]): string[] {
+  const repaired: string[] = []
+  for (let index = 0; index < argv.length; index += 1) {
+    if (argv[index] === '--add-dir') {
+      index += 1
+      continue
+    }
+    if (argv[index] === '--sandbox') {
+      repaired.push('--sandbox', 'read-only')
+      index += 1
+      continue
+    }
+    repaired.push(argv[index]!)
+  }
+  return repaired
 }
