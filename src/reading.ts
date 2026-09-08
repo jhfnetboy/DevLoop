@@ -14,7 +14,16 @@ export interface CliReading {
 
 export type ReadCliOutput = (stdout: string) => CliReading
 
-/** A CLI that reports nothing but its prose. */
+/**
+ * A CLI that reports nothing but its prose — today, `dsh --profile headless`,
+ * which has no output options at all.
+ *
+ * This is the silent case stated in the type rather than left implicit. A
+ * backend using it contributes nothing to `costUsdDay`, so its spend is
+ * invisible to the cap; that is a fact about the CLI, not a gap to be papered
+ * over with a zero. It is exported so a backend outside this package can say
+ * the same thing about itself.
+ */
 export const readPlainOutput: ReadCliOutput = stdout => ({ text: stdout })
 
 /**
