@@ -1,4 +1,5 @@
 import s from '@deepseek-ai/schemastery'
+import { assertForgeOptions } from './forge.js'
 import type { ModelTier, Route } from './types.js'
 
 export interface BudgetLimits {
@@ -21,6 +22,18 @@ export interface RoutingTable {
   readonly T3: Route
 }
 
+export interface ForgeConfig {
+  /** Canonical push URL. The workspace's own remotes are never trusted for this. */
+  readonly pushUrl: string
+  readonly base: string
+  readonly command: string
+  /** GitHub logins allowed to decide a task. Empty means the forge route cannot review. */
+  readonly reviewers: string[]
+  readonly pollIntervalMs: number
+  /** 0 takes the wait bound from the task contract's own time budget. */
+  readonly maxWaitMs: number
+}
+
 export interface Config {
   readonly root: string
   readonly enabled: boolean
@@ -30,6 +43,8 @@ export interface Config {
   readonly plannerRoute: Route
   readonly reviewerRoute: Route
   readonly routing: RoutingTable
+  /** Only consulted when a route names the `forge` backend. */
+  readonly forge: ForgeConfig
 }
 
 const routeSchema = (tier: ModelTier, backend: string, model: string) =>
@@ -79,6 +94,14 @@ export const ConfigSchema: s<Config> = s.object({
     maxSameAction: 3,
     noProgressMinutes: 15,
   }),
+  forge: s.object({
+    pushUrl: s.string().default(''),
+    base: s.string().default('main'),
+    command: s.string().default('gh'),
+    reviewers: s.array(s.string()).default([]),
+    pollIntervalMs: s.number().step(1).min(1_000).max(2_147_483_647).default(30_000),
+    maxWaitMs: s.number().step(1).min(0).max(2_147_483_647).default(0),
+  }).default({ pushUrl: '', base: 'main', command: 'gh', reviewers: [], pollIntervalMs: 30_000, maxWaitMs: 0 }),
   routing: s.object({
     T0: routeSchema('T0', 'local', 'qwen-coder-7b').default({
       tier: 'T0', backend: 'local', model: 'qwen-coder-7b',
@@ -106,6 +129,7 @@ export function resolveConfig(raw: unknown): Config {
   const config = ConfigSchema((raw ?? {}) as Config)
   assertFiniteCost(config.budget.maxCostUsdPerSession, 'budget.maxCostUsdPerSession')
   assertFiniteCost(config.budget.maxCostUsdPerDay, 'budget.maxCostUsdPerDay')
+  assertForgeOptions(config.forge)
   const lifetime = Math.max(
     config.budget.taskLifetimeMinutes,
     config.budget.taskTimeoutMinutes * config.budget.maxTaskAttempts,

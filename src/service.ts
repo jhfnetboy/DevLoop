@@ -14,6 +14,7 @@ import {
 } from './backend.js'
 import { ConfigSchema, resolveConfig, type Config } from './config.js'
 import { ClaudeCliBackend, CodexCliBackend } from './cli.js'
+import { ForgePrBackend } from './forge.js'
 import { DshHeadlessBackend } from './dsh.js'
 import { CordisHarnessHost, HarnessSubagentBackend } from './harness.js'
 import { DEVLOOP_DIR, loadState, saveState, withStateLock, workspaceArmed, type LockResult } from './persist.js'
@@ -412,6 +413,10 @@ export default class DevloopService extends Service {
    */
   protected createBackend(): AgentBackend {
     if (this.config.agentBackend === 'routed') {
+      const routes = [this.config.plannerRoute, this.config.reviewerRoute, ...Object.values(this.config.routing)]
+      // Only register what a route actually names: RoutedBackend.health() probes
+      // every registered adapter, so an unused one would demand its CLI be installed.
+      const usesForge = routes.some(route => route.backend === 'forge')
       return new RoutedBackend({
         planner: this.config.plannerRoute,
         reviewer: this.config.reviewerRoute,
@@ -420,6 +425,7 @@ export default class DevloopService extends Service {
         dsh: new DshHeadlessBackend(),
         claude: new ClaudeCliBackend(),
         codex: new CodexCliBackend(),
+        ...(usesForge ? { forge: new ForgePrBackend(this.config.forge) } : {}),
         subagent: new HarnessSubagentBackend(new CordisHarnessHost(this.ctx)),
       })
     }

@@ -18,6 +18,7 @@ This repository is `dsh-devloop`. It is not another coding agent and it does not
 - After writing STATE, plan / delegate / review is handed to `AgentBackend.run` outside the lock; validated results are committed in a second revision-checked transition
 - `delegate` creates `.devloop/worktrees/<taskId>` and writes `.devloop/CONTRACT.json` inside it
 - With `agentBackend: routed`, plan uses `plannerRoute`, delegate uses `routing[contract.tier]`, and review uses the independent `reviewerRoute`
+- `reviewerRoute` may name the `forge` backend to review on a GitHub pull request instead of a local CLI
 - `merge` is mechanical git: `merge_ready` plus Review `PASS` / `PASS_WITH_NOTES` merges `devloop/<taskId>` into workspace HEAD, deletes the worktree, marks the task `done`. No PASS → escalate. Does not push. Does not call AgentBackend.
 
 Install: [`docs/Install.md`](./docs/Install.md). This cut: [`docs/Release.md`](./docs/Release.md).
@@ -219,6 +220,112 @@ Optional overrides in `~/.dsh/profiles/web/cordis.patch.yml`:
 ```
 
 `agentBackend` defaults to `noop` (no spawn). Routed defaults require `dsh`, `claude`, and `codex` on PATH; override routes to match the installed adapters.
+
+### Review on a pull request instead of a local reviewer
+
+Point `reviewerRoute` at the `forge` backend to move review off this machine. The
+reviewed commit is pushed, a pull request is opened (or reused), and the verdict
+is read back from a PR comment. Requires `gh` on PATH, authenticated, and a
+remote that accepts the push.
+
+```yaml
+- id: devloop
+  config:
+    agentBackend: routed
+    reviewerRoute: { tier: T3, backend: forge, model: pull-request }
+    forge:
+      pushUrl: git@github.com:acme/widgets.git
+      base: main
+      reviewers: [some-login, some-review-bot]
+      pollIntervalMs: 30000
+```
+
+`forge.pushUrl` and `forge.reviewers` have no defaults and are both **required**:
+without them the route refuses to review rather than guessing a target or
+accepting whoever comments first. Needs git ≥ 2.7.
+
+The reviewer answers in a comment carrying the same envelope the CLI reviewers
+emit, bound to the exact commit under review:
+
+```text
+<devloop_result>{"version":1,"kind":"review","taskId":"TASK-001",
+"reviewedSha":"<the SHA named in the PR body>","verdict":"PASS","notes":"..."}</devloop_result>
+```
+
+What this path establishes before a verdict counts — re-checked on every poll,
+not just when the pull request is opened:
+
+- The target is `forge.pushUrl` from DevLoop configuration. The workspace's own
+  remotes are **never** consulted: `git remote get-url` applies the checkout's
+  `url.*.pushInsteadOf`, so a poisoned repository could hand back an
+  already-retargeted URL that every later check would agree with. That host is
+  also the identity namespace `reviewers` is read in, so it must not be
+  selectable by the checkout. `GH_REPO` and `GH_HOST` are cleared and every `gh`
+  call is pinned to `HOST/OWNER/REPO`.
+- Every child gets an **allowlisted** environment, not a filtered one. Only what
+  is needed to reach the forge as you survives: `PATH` and the Windows equivalents,
+  `HOME`/`USERPROFILE`, `SSH_AUTH_SOCK`, `GH_TOKEN` and friends, the standard
+  proxy variables, and locale/temp. Everything else is dropped, including names
+  invented after this code was written. A denylist was tried first and lost twice
+  — to `GIT_CONFIG_PARAMETERS`, then to `XDG_CONFIG_HOME`.
+  One consequence worth knowing: git global config is read through `HOME`, so a
+  credential helper in `~/.gitconfig` works, but one kept only under
+  `$XDG_CONFIG_HOME/git/config` will not be seen.
+- The push runs from a **throwaway repository** that borrows the workspace's
+  object store but none of its configuration. The workspace `.git/config` is
+  exactly the file models have been editing, and git will run commands it names
+  during a push through more settings than can be listed — `credential.helper`,
+  `core.sshCommand`, `remote.<name>.vcs`, a signer via `push.gpgSign`, nested
+  pushes via `push.recurseSubmodules`, transport redirection via `http.*`, or a
+  remote whose *name* is the literal target URL. Excluding that file is the only
+  defense that does not depend on keeping a list current. Your **global** config
+  still applies, so your own credential helper keeps working. The scratch repo
+  names the target remote itself and both validates and pushes through that
+  name, so the URL is never re-resolved as a remote name.
+- The commit is pushed **by SHA** (`<sha>:refs/heads/devloop/<task>`), never with
+  `--force`, so the branch cannot move between the read and the push.
+- The pull request must be same-repository and must still have that exact commit
+  as its head, on the expected base and head branch. Two open pull requests for
+  one head is an error, not a guess.
+- The author must be on `forge.reviewers` and must not be the account this host
+  authenticates as, so the loop cannot merge on its own signature.
+- The whole comment thread is read with pagination. A thread is never truncated
+  to a window — that would let filler bury an objection behind a later approval —
+  and one longer than 2000 comments is refused instead.
+- The verdict must echo the task id and the implementation SHA, so an approval
+  left on a reused pull request from an earlier attempt is ignored. A pull
+  request reused for a second attempt is rewritten to name the new commit, so
+  the instructions never point at a commit whose verdict would be discarded.
+- **Any** non-approving verdict for that commit outranks an approval, whoever
+  commented last.
+- Git runs with repository hooks disabled and terminal prompts off, so a poisoned
+  checkout cannot execute a `pre-push` hook on this host.
+
+One dispatch waits for the verdict; `runTick` latches a repeated review, so
+polling from the outer loop would ask the forge exactly once. The wait is bounded
+by `forge.maxWaitMs`, or by the task's own `taskTimeoutMinutes` when that is `0`.
+That deadline starts before the push, not after it, and caps every git and `gh`
+call. It reserves a grace for reaping a child that overruns, but that reaping and
+the scratch cleanup happen after the timer, so treat the bound as close-to rather
+than exactly wall-clock; the loop's own dispatch abort is the hard stop. A wait that ends
+with no verdict escalates instead of merging. The loop runs one dispatch at a
+time, so an unreviewed pull request holds the loop for that budget — size
+`taskTimeoutMinutes` to the review latency you actually expect.
+
+Known limits:
+
+- An approval withdrawn or edited *after* the verdict is recorded is not re-read
+  before the merge tick. Treat a recorded verdict as an attestation about that
+  commit, not as live pull-request state.
+- GitHub review submissions (Approve / Request changes) are **not** consumed;
+  only issue comments on the pull request are.
+- `STATE.json` records the route (`forge/pull-request`) rather than which
+  allowlisted login approved — `RoutedBackend` deliberately overwrites an
+  adapter's self-reported identity. The pull request itself is the audit trail
+  for who decided; the adapter is what enforces that they were authorized.
+
+`merge` is unchanged: still a local git merge that does not push, so the pull
+request stays open for you to close.
 
 ## Arm a project
 
