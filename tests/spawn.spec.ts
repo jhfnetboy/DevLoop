@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
+import { scrubbedEnvNames } from '../src/forge.ts'
 import { defaultRunner, quoteForWinCmd, spawnFireAndForget, winCmdCArgument, winCmdSpawnArgs, SIGKILL_GRACE_MS } from '../src/spawn.ts'
 
 describe('quoteForWinCmd', () => {
@@ -110,4 +111,98 @@ describe('defaultRunner', () => {
     await expect(run).rejects.toThrow(/backend timeout/)
     expect(Date.now() - started).toBeLessThan(SIGKILL_GRACE_MS * 2 + 1_500)
   }, 8_000)
+})
+
+describe('defaultRunner environment', () => {
+  const script = fileURLToPath(new URL('./fixtures/echo-env.mjs', import.meta.url))
+
+  it('layers overrides on top of the inherited environment instead of replacing it', async () => {
+    process.env.DEVLOOP_SPAWN_INHERITED = 'kept'
+    try {
+      const { stdout } = await defaultRunner({
+        command: process.execPath,
+        argv: [script, 'DEVLOOP_SPAWN_INHERITED', 'GIT_TERMINAL_PROMPT', 'PATH'],
+        cwd: process.cwd(),
+        timeoutMs: 10_000,
+        env: { GIT_TERMINAL_PROMPT: '0' },
+      })
+      const seen = JSON.parse(stdout)
+      expect(seen.GIT_TERMINAL_PROMPT).toBe('0')
+      // Inherited entries the child still needs must survive the override.
+      expect(seen.DEVLOOP_SPAWN_INHERITED).toBe('kept')
+      expect(seen.PATH).toBeTruthy()
+    } finally {
+      delete process.env.DEVLOOP_SPAWN_INHERITED
+    }
+  })
+
+  it('lets an override blank out an inherited entry', async () => {
+    process.env.DEVLOOP_SPAWN_OVERRIDDEN = 'original'
+    try {
+      const { stdout } = await defaultRunner({
+        command: process.execPath,
+        argv: [script, 'DEVLOOP_SPAWN_OVERRIDDEN'],
+        cwd: process.cwd(),
+        timeoutMs: 10_000,
+        env: { DEVLOOP_SPAWN_OVERRIDDEN: '' },
+      })
+      expect(JSON.parse(stdout).DEVLOOP_SPAWN_OVERRIDDEN).toBe('')
+    } finally {
+      delete process.env.DEVLOOP_SPAWN_OVERRIDDEN
+    }
+  })
+
+  it('inherits the environment unchanged when no override is given', async () => {
+    process.env.DEVLOOP_SPAWN_PLAIN = 'inherited'
+    try {
+      const { stdout } = await defaultRunner({
+        command: process.execPath,
+        argv: [script, 'DEVLOOP_SPAWN_PLAIN'],
+        cwd: process.cwd(),
+        timeoutMs: 10_000,
+      })
+      expect(JSON.parse(stdout).DEVLOOP_SPAWN_PLAIN).toBe('inherited')
+    } finally {
+      delete process.env.DEVLOOP_SPAWN_PLAIN
+    }
+  })
+
+  it('keeps git config injected through GIT_CONFIG_PARAMETERS away from the child', async () => {
+    // Git honours this even in a repository with no config of its own, so a
+    // value inherited from this process must not reach a forge child.
+    process.env.GIT_CONFIG_PARAMETERS = "'credential.helper=!touch /tmp/devloop-pwned'"
+    try {
+      const script = fileURLToPath(new URL('./fixtures/echo-env.mjs', import.meta.url))
+      const { stdout } = await defaultRunner({
+        command: process.execPath,
+        argv: [script, 'GIT_CONFIG_PARAMETERS'],
+        cwd: process.cwd(),
+        timeoutMs: 10_000,
+        unsetEnv: scrubbedEnvNames(),
+      })
+      expect(JSON.parse(stdout).GIT_CONFIG_PARAMETERS).toBeNull()
+    } finally {
+      delete process.env.GIT_CONFIG_PARAMETERS
+    }
+  })
+
+  it('removes named inherited entries before applying overrides', async () => {
+    process.env.DEVLOOP_SPAWN_HOSTILE = 'present'
+    try {
+      const script = fileURLToPath(new URL('./fixtures/echo-env.mjs', import.meta.url))
+      const { stdout } = await defaultRunner({
+        command: process.execPath,
+        argv: [script, 'DEVLOOP_SPAWN_HOSTILE', 'PATH'],
+        cwd: process.cwd(),
+        timeoutMs: 10_000,
+        unsetEnv: ['DEVLOOP_SPAWN_HOSTILE'],
+      })
+      const seen = JSON.parse(stdout)
+      expect(seen.DEVLOOP_SPAWN_HOSTILE).toBeNull()
+      // Unsetting one name must not strip the rest of the environment.
+      expect(seen.PATH).toBeTruthy()
+    } finally {
+      delete process.env.DEVLOOP_SPAWN_HOSTILE
+    }
+  })
 })

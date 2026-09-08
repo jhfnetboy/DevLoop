@@ -14,9 +14,20 @@ export interface HeadlessRun {
   readonly signal?: AbortSignal
   /** Test override. Production callers omit this and use MAX_SPAWN_BUFFER. */
   readonly maxBuffer?: number
+  /** Extra environment for this child. Callers pass hardening, not secrets. */
+  readonly env?: Readonly<Record<string, string>>
+  /** Inherited names removed before `env` is applied. Overrides cannot be unset this way. */
+  readonly unsetEnv?: readonly string[]
 }
 
 export type HeadlessRunner = (request: HeadlessRun) => Promise<{ stdout: string, stderr: string }>
+
+function childEnv(request: HeadlessRun): NodeJS.ProcessEnv {
+  if (!request.env && !request.unsetEnv) return process.env
+  const env: NodeJS.ProcessEnv = { ...process.env }
+  for (const name of request.unsetEnv ?? []) delete env[name]
+  return request.env ? { ...env, ...request.env } : env
+}
 
 /**
  * Spawn without a Unix shell. On Windows, npm `.cmd` shims are launched via
@@ -30,7 +41,7 @@ export function defaultRunner(request: HeadlessRun): Promise<{ stdout: string, s
   return new Promise((resolve, reject) => {
     const child = spawnCli(request.command, request.argv, {
       cwd: request.cwd,
-      env: process.env,
+      env: childEnv(request),
       stdio: ['ignore', 'pipe', 'pipe'],
     })
 
