@@ -170,9 +170,36 @@ export function repoSlug(repo: ForgeRepo): string {
  * repository from the checkout or `GH_REPO`, which need not be the one that
  * just received the branch.
  */
+/**
+ * Hide anything between the scheme and the host before a URL reaches an error
+ * message. `forge_remote:` failures are logged by the service, and a push URL
+ * carrying `user:token@` would put that token in the log.
+ */
+export function maskUrl(url: string): string {
+  return url.replace(/^([A-Za-z][A-Za-z0-9+.-]*:\/\/)[^/@]*@/, '$1***@')
+}
+
+/**
+ * An SSH URL conventionally carries a user name (`ssh://git@host/...`), which is
+ * not a secret. Anything else in the userinfo is: a password, or a token in the
+ * `https://TOKEN@host/...` form. Those belong in a credential helper, not in
+ * configuration that is passed on an argv and echoed in errors.
+ */
+function assertNoEmbeddedCredential(url: string): void {
+  const match = /^([A-Za-z][A-Za-z0-9+.-]*):\/\/([^/]*)@/.exec(url)
+  if (!match) return
+  const scheme = (match[1] ?? '').toLowerCase()
+  const userinfo = match[2] ?? ''
+  const secret = userinfo.includes(':') || scheme === 'http' || scheme === 'https'
+  if (secret) {
+    throw new Error(`forge_remote: remote URL must not embed credentials (${maskUrl(url)})`)
+  }
+}
+
 export function parseRemoteUrl(url: string): ForgeRepo {
   const trimmed = url.trim()
   if (trimmed.length === 0) throw new Error('forge_remote: remote has no push URL')
+  assertNoEmbeddedCredential(trimmed)
   const scp = /^(?:[A-Za-z0-9._-]+@)?([A-Za-z0-9.-]+):(?!\/)(.+)$/.exec(trimmed)
   const path = scp
     ? { host: scp[1] ?? '', rest: scp[2] ?? '' }
@@ -180,12 +207,12 @@ export function parseRemoteUrl(url: string): ForgeRepo {
   // Exactly OWNER/REPO[.git]: anything else is not something `gh --repo
   // HOST/OWNER/REPO` can name, so the push and the API would disagree.
   const segments = path.rest.replace(/^\/+/, '').replace(/\.git$/, '').split('/')
-  if (segments.length !== 2) throw new Error(`forge_remote: cannot read owner/name from ${trimmed}`)
+  if (segments.length !== 2) throw new Error(`forge_remote: cannot read owner/name from ${maskUrl(trimmed)}`)
   const owner = segments[0] ?? ''
   const name = segments[1] ?? ''
-  if (!HOSTNAME.test(path.host)) throw new Error(`forge_remote: invalid host in ${trimmed}`)
+  if (!HOSTNAME.test(path.host)) throw new Error(`forge_remote: invalid host in ${maskUrl(trimmed)}`)
   if (!REPO_SEGMENT.test(owner) || !REPO_SEGMENT.test(name)) {
-    throw new Error(`forge_remote: invalid owner/name in ${trimmed}`)
+    throw new Error(`forge_remote: invalid owner/name in ${maskUrl(trimmed)}`)
   }
   return { host: path.host, owner, name }
 }
@@ -195,12 +222,12 @@ function parseUrlForm(raw: string): { host: string; rest: string } {
   try {
     parsed = new URL(raw)
   } catch {
-    throw new Error(`forge_remote: unsupported remote URL ${raw}`)
+    throw new Error(`forge_remote: unsupported remote URL ${maskUrl(raw)}`)
   }
   // URL drops :443 and :80 during normalization, so read the port off the raw
   // authority instead: `gh --repo` cannot carry one either way.
   if (/^[A-Za-z][A-Za-z0-9+.-]*:\/\/[^/@]*@?[^/:]+:[0-9]/.test(raw)) {
-    throw new Error(`forge_remote: remote URL with a port is not supported (${raw})`)
+    throw new Error(`forge_remote: remote URL with a port is not supported (${maskUrl(raw)})`)
   }
   if (!['ssh:', 'git:', 'http:', 'https:'].includes(parsed.protocol)) {
     throw new Error(`forge_remote: unsupported remote protocol ${parsed.protocol}`)
@@ -380,7 +407,7 @@ export class ForgePrBackend implements AgentBackend {
       await this.git(isolated, ['remote', 'add', '--', TARGET_REMOTE, url], ctx, borrow)
       const effective = (await this.git(isolated, ['remote', 'get-url', '--push', '--', TARGET_REMOTE], ctx, borrow)).trim()
       if (effective !== url) {
-        throw new Error(`forge_remote: git config rewrites ${url} to ${effective}`)
+        throw new Error(`forge_remote: git config rewrites ${maskUrl(url)} to ${maskUrl(effective)}`)
       }
 
       await this.git(isolated, [
@@ -535,7 +562,14 @@ export class ForgePrBackend implements AgentBackend {
     })
   }
 
-  /** Fail closed: without a known host identity, self-review cannot be excluded. */
+  /**
+   * Fail closed: without a known host identity, self-review cannot be excluded.
+   *
+   * This asks who the host authenticates as, which is the account that opens the
+   * pull request. Under a GitHub App installation token that need not be the
+   * login a bot comments under, so the exclusion below rests on them matching.
+   * The residual gap needs both a mismatch and that bot being on `reviewers`.
+   */
   private async authenticatedLogin(root: string, repo: ForgeRepo, ctx: RunCtx): Promise<string> {
     let raw: string
     try {

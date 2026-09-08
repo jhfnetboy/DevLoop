@@ -318,7 +318,16 @@ Known limits:
   before the merge tick. Treat a recorded verdict as an attestation about that
   commit, not as live pull-request state.
 - GitHub review submissions (Approve / Request changes) are **not** consumed;
-  only issue comments on the pull request are.
+  only issue comments on the pull request are. The halves are not equally
+  costly: a missed approval only makes the loop keep waiting, while a missed
+  *Request changes* means an objection never arrives at all — and that is the
+  most natural place to raise one. Reviewers must object in a comment.
+- A `pushUrl` that embeds credentials is refused rather than used. Put them in a
+  credential helper: a URL is passed on an argv and echoed in errors.
+- The remote `devloop/<task>` branch and the pull request are left behind, on
+  success and on failure alike. Deleting a branch and closing a pull request are
+  outward-facing, destructive acts that an unattended loop should not decide for
+  you — and on a failed task they are the only thing showing you what happened.
 - `STATE.json` records the route (`forge/pull-request`) rather than which
   allowlisted login approved — `RoutedBackend` deliberately overwrites an
   adapter's self-reported identity. The pull request itself is the audit trail
