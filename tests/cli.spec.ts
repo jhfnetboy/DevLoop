@@ -1,16 +1,16 @@
-import { access, chmod, mkdir, mkdtemp, readFile, symlink, writeFile } from 'node:fs/promises'
+import { access, chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { NoopBackend, runInputFor } from '../src/backend.ts'
-import type { HeadlessRun } from '../src/dsh.ts'
+import type { HeadlessRun, HeadlessRunner } from '../src/dsh.ts'
 import { DshHeadlessBackend, headlessPrompt } from '../src/dsh.ts'
 import { ClaudeCliBackend, CodexCliBackend } from '../src/cli.ts'
 import { resolveConfig } from '../src/config.ts'
 import DevloopService from '../src/service.ts'
-import { baseState, makeTask } from './helpers.ts'
+import { baseState, makeTask, mkdtempInRepo } from './helpers.ts'
 
 const limits = resolveConfig({}).budget
 
@@ -62,11 +62,13 @@ describe('ClaudeCliBackend', () => {
     expect(calls[0]?.command).toBe('claude')
     expect(calls[0]?.argv).toEqual([
       '-p',
+      '--output-format',
+      'json',
       '--permission-mode',
       'plan',
       expect.stringContaining('Review task d1'),
     ])
-    expect(calls[0]?.argv[3]).toContain('Do not edit files')
+    expect(calls[0]?.argv.at(-1)).toContain('Do not edit files')
     expect(calls[0]?.cwd).toBe('/repo/.devloop/worktrees/d1')
     expect(calls[0]?.timeoutMs).toBe(limits.taskTimeoutMinutes * 60_000)
   })
@@ -77,6 +79,8 @@ describe('ClaudeCliBackend', () => {
     await backend.run(delegateInput('/repo/.devloop/worktrees/d1'))
     expect(calls[0]?.argv).toEqual([
       '-p',
+      '--output-format',
+      'json',
       '--permission-mode',
       'acceptEdits',
       '--',
@@ -93,8 +97,8 @@ describe('ClaudeCliBackend', () => {
       ...reviewInput('/repo/.devloop/worktrees/d1'),
       route: { tier: 'T3', backend: 'claude', model: 'opus' },
     })
-    expect(calls[0]?.argv.slice(0, 5)).toEqual([
-      '-p', '--model', 'opus', '--permission-mode', 'plan',
+    expect(calls[0]?.argv.slice(0, 7)).toEqual([
+      '-p', '--model', 'opus', '--output-format', 'json', '--permission-mode', 'plan',
     ])
   })
 
@@ -104,6 +108,8 @@ describe('ClaudeCliBackend', () => {
     await backend.run(planInput('/repo/.devloop/worktrees/_loop-plan'))
     expect(calls[0]?.argv).toEqual([
       '-p',
+      '--output-format',
+      'json',
       '--permission-mode',
       'plan',
       expect.stringContaining('GOAL.md'),
@@ -210,7 +216,7 @@ describe('ClaudeCliBackend', () => {
     const input = planInput(cwd)
     await expect(backend.run(input)).resolves.toEqual({ status: 'started' })
     const argv = JSON.parse(await readFile(join(cwd, 'argv.json'), 'utf8')) as string[]
-    expect(argv).toEqual(['-p', '--permission-mode', 'plan', headlessPrompt(input)])
+    expect(argv).toEqual(['-p', '--output-format', 'json', '--permission-mode', 'plan', headlessPrompt(input)])
   })
 
   it('returns failed when the runner throws', async () => {
@@ -295,6 +301,93 @@ describe('ClaudeCliBackend', () => {
   })
 })
 
+describe('what the backends report to the budget', () => {
+  const scratch: string[] = []
+  afterEach(async () => {
+    await Promise.all(scratch.splice(0).map(dir => rm(dir, { recursive: true, force: true })))
+  })
+
+  /** A real workspace: the operator notes are written for real here. */
+  async function workspace(): Promise<string> {
+    const root = await mkdtempInRepo('devloop-signals-')
+    scratch.push(root)
+    await mkdir(join(root, '.devloop'))
+    return root
+  }
+
+  function reviewIn(root: string) {
+    return { ...reviewInput(join(root, '.devloop', 'worktrees', 'd1')), workspaceRoot: root }
+  }
+
+  const PASS = `<devloop_result>{"version":1,"kind":"review","taskId":"d1","reviewedSha":"${'a'.repeat(40)}","verdict":"PASS"}</devloop_result>`
+
+  it("carries claude's tokens and settled price out of one run", async () => {
+    const root = await workspace()
+    const runner: HeadlessRunner = async () => ({
+      stdout: JSON.stringify({
+        result: PASS,
+        total_cost_usd: 0.25,
+        usage: { input_tokens: 100, output_tokens: 20 },
+      }),
+      stderr: '',
+    })
+    const result = await new ClaudeCliBackend(runner).run(reviewIn(root))
+    expect(result).toMatchObject({ status: 'started', tokens: 120, costUsd: 0.25 })
+    expect(result.outcome).toMatchObject({ kind: 'review', verdict: 'PASS' })
+  })
+
+  it('bills both attempts when the envelope had to be repaired', async () => {
+    // A run that had to be asked twice cost twice; charging once would let a
+    // misbehaving model spend past the cap for free.
+    const root = await workspace()
+    let call = 0
+    const runner: HeadlessRunner = async () => {
+      call += 1
+      return {
+        stdout: JSON.stringify({
+          result: call === 1 ? '<devloop_result>not json</devloop_result>' : PASS,
+          total_cost_usd: 0.1,
+          usage: { input_tokens: 10, output_tokens: 1 },
+        }),
+        stderr: '',
+      }
+    }
+    const result = await new ClaudeCliBackend(runner).run(reviewIn(root))
+    expect(call).toBe(2)
+    expect(result).toMatchObject({ tokens: 22, costUsd: 0.2 })
+  })
+
+  it('reports codex tokens without inventing a price', async () => {
+    const root = await workspace()
+    const runner: HeadlessRunner = async () => ({
+      stdout: [
+        `{"type":"item.completed","item":{"type":"agent_message","text":${JSON.stringify(PASS)}}}`,
+        '{"type":"turn.completed","usage":{"input_tokens":50,"output_tokens":5}}',
+      ].join('\n'),
+      stderr: '',
+    })
+    const result = await new CodexCliBackend(runner).run(reviewIn(root))
+    expect(result.tokens).toBe(55)
+    expect(result.costUsd).toBeUndefined()
+    expect(result.outcome).toMatchObject({ verdict: 'PASS' })
+  })
+
+  it('writes the operator note as prose, not as the transport envelope', async () => {
+    const root = await workspace()
+    const runner: HeadlessRunner = async () => ({
+      stdout: JSON.stringify({ result: 'A readable plan.', total_cost_usd: 0.01 }),
+      stderr: '',
+    })
+    await new ClaudeCliBackend(runner).run({
+      ...planInput(join(root, '.devloop', 'worktrees', '_loop-plan')),
+      workspaceRoot: root,
+    })
+    const note = await readFile(join(root, '.devloop', 'PLAN.md'), 'utf8')
+    expect(note).toContain('A readable plan.')
+    expect(note).not.toContain('total_cost_usd')
+  })
+})
+
 describe('CodexCliBackend', () => {
   it('runs codex exec --sandbox read-only for review', async () => {
     const calls: HeadlessRun[] = []
@@ -304,11 +397,12 @@ describe('CodexCliBackend', () => {
     expect(calls[0]?.command).toBe('codex')
     expect(calls[0]?.argv).toEqual([
       'exec',
+      '--json',
       '--sandbox',
       'read-only',
       expect.stringContaining('Review task d1'),
     ])
-    expect(calls[0]?.argv[3]).toContain('Do not edit files')
+    expect(calls[0]?.argv.at(-1)).toContain('Do not edit files')
     expect(calls[0]?.cwd).toBe('/repo/.devloop/worktrees/d1')
     expect(calls[0]?.timeoutMs).toBe(limits.taskTimeoutMinutes * 60_000)
   })
@@ -319,6 +413,7 @@ describe('CodexCliBackend', () => {
     await backend.run(delegateInput('/repo/.devloop/worktrees/d1'))
     expect(calls[0]?.argv).toEqual([
       'exec',
+      '--json',
       '--sandbox',
       'workspace-write',
       '--add-dir',
@@ -351,9 +446,9 @@ describe('CodexCliBackend', () => {
       route: { tier: 'T3', backend: 'codex', model: 'gpt-5.4' },
     })
     expect(calls[0]?.argv.slice(0, 6)).toEqual([
-      'exec', '--sandbox', 'read-only', '--model', 'gpt-5.4',
-      expect.stringContaining('Review task d1'),
+      'exec', '--json', '--sandbox', 'read-only', '--model', 'gpt-5.4',
     ])
+    expect(calls[0]?.argv.at(-1)).toContain('Review task d1')
   })
 
   it('adds the gitdir from a linked worktree .git file', async () => {
@@ -369,6 +464,7 @@ describe('CodexCliBackend', () => {
     })
     expect(calls[0]?.argv).toEqual([
       'exec',
+      '--json',
       '--sandbox',
       'workspace-write',
       '--add-dir',
@@ -383,6 +479,7 @@ describe('CodexCliBackend', () => {
     await backend.run(planInput('/repo/.devloop/worktrees/_loop-plan'))
     expect(calls[0]?.argv).toEqual([
       'exec',
+      '--json',
       '--sandbox',
       'read-only',
       expect.stringContaining('GOAL.md'),
@@ -408,7 +505,7 @@ describe('CodexCliBackend', () => {
     const input = planInput(cwd)
     await expect(backend.run(input)).resolves.toEqual({ status: 'started' })
     const argv = JSON.parse(await readFile(join(cwd, 'argv.json'), 'utf8')) as string[]
-    expect(argv).toEqual(['exec', '--sandbox', 'read-only', headlessPrompt(input)])
+    expect(argv).toEqual(['exec', '--json', '--sandbox', 'read-only', headlessPrompt(input)])
   })
 
   it('does not hang when the child reads stdin to EOF', async () => {
