@@ -228,6 +228,8 @@ describe('parseRemoteUrl', () => {
       `https://user:${secret}@github.com/owner/repo/extra`,
       `https://user:${secret}@github.com/owner/repo.git`,
       `https://${secret}@github.com/owner`,
+      // No scheme: git accepts this and takes `user:secret` as the ssh user.
+      `user:${secret}@github.com:owner/repo.git`,
     ]) {
       let message = ''
       try {
@@ -244,8 +246,22 @@ describe('parseRemoteUrl', () => {
 
   it('masks only the userinfo, leaving the URL readable', () => {
     expect(maskUrl('https://user:tok@github.com/a/b.git')).toBe('https://***@github.com/a/b.git')
+    expect(maskUrl('user:tok@github.com:a/b.git')).toBe('***@github.com:a/b.git')
     expect(maskUrl('https://github.com/a/b.git')).toBe('https://github.com/a/b.git')
+    // An scp remote without a secret must survive untouched.
     expect(maskUrl('git@github.com:a/b.git')).toBe('git@github.com:a/b.git')
+  })
+
+  it('still accepts the ordinary scp remote', () => {
+    // The control for the case above: a rule wide enough to reject every scp
+    // form would make that test pass while breaking the normal way to configure
+    // this backend.
+    expect(parseRemoteUrl('git@github.com:owner/repo.git')).toEqual({
+      host: 'github.com', owner: 'owner', name: 'repo',
+    })
+    expect(parseRemoteUrl('github.com:owner/repo')).toEqual({
+      host: 'github.com', owner: 'owner', name: 'repo',
+    })
   })
 
   it('refuses a URL whose path is not exactly owner/repo', () => {

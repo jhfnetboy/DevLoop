@@ -176,7 +176,11 @@ export function repoSlug(repo: ForgeRepo): string {
  * carrying `user:token@` would put that token in the log.
  */
 export function maskUrl(url: string): string {
-  return url.replace(/^([A-Za-z][A-Za-z0-9+.-]*:\/\/)[^/@]*@/, '$1***@')
+  const scheme = url.replace(/^([A-Za-z][A-Za-z0-9+.-]*:\/\/)[^/@]*@/, '$1***@')
+  if (scheme !== url) return scheme
+  // The scp form has no scheme, and git accepts `user:secret@host:path` there,
+  // parsing the whole `user:secret` as the ssh user.
+  return url.replace(/^[^/@]*:[^/@]*@/, '***@')
 }
 
 /**
@@ -187,11 +191,18 @@ export function maskUrl(url: string): string {
  */
 function assertNoEmbeddedCredential(url: string): void {
   const match = /^([A-Za-z][A-Za-z0-9+.-]*):\/\/([^/]*)@/.exec(url)
-  if (!match) return
-  const scheme = (match[1] ?? '').toLowerCase()
-  const userinfo = match[2] ?? ''
-  const secret = userinfo.includes(':') || scheme === 'http' || scheme === 'https'
-  if (secret) {
+  if (match) {
+    const scheme = (match[1] ?? '').toLowerCase()
+    const userinfo = match[2] ?? ''
+    if (userinfo.includes(':') || scheme === 'http' || scheme === 'https') {
+      throw new Error(`forge_remote: remote URL must not embed credentials (${maskUrl(url)})`)
+    }
+    return
+  }
+  // Scheme-less scp form. `git@host:path` is the ordinary shape and carries no
+  // secret; `user:secret@host:path` is a real remote git accepts, taking the
+  // whole `user:secret` as the ssh user, so it must be refused as well.
+  if (/^[^/@]*:[^/@]*@/.test(url)) {
     throw new Error(`forge_remote: remote URL must not embed credentials (${maskUrl(url)})`)
   }
 }
