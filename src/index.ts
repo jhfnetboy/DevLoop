@@ -18,7 +18,7 @@ export type { DevloopResult, PlanResult, PlannedTask, ImplementationResult, Revi
 export { runTick } from './tick.js'
 export { applyAgentResult } from './transition.js'
 export type { ApplyAgentResultOptions } from './transition.js'
-export { loadState, saveState, emptyState, workspaceArmed, devloopDir, eventsPath, withStateLock, assertLocalDevloopDir, EVENTS_FILE } from './persist.js'
+export { loadState, saveState, emptyState, workspaceArmed, devloopDir, eventsPath, withStateLock, assertLocalDevloopDir, writeBudgetSnapshot, readBudgetSnapshot, EVENTS_FILE, BUDGET_FILE } from './persist.js'
 export { writeProgress, renderProgress, progressPath, PROGRESS_FILE } from './progress.js'
 export type { LockResult } from './persist.js'
 export type * from './types.js'
