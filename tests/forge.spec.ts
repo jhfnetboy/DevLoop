@@ -228,7 +228,8 @@ describe('parseRemoteUrl', () => {
       `https://user:${secret}@github.com/owner/repo/extra`,
       `https://user:${secret}@github.com/owner/repo.git`,
       `https://${secret}@github.com/owner`,
-      // No scheme: git accepts this and takes `user:secret` as the ssh user.
+      // No scheme: the secret still reaches config, argv and logs, which is
+      // reason enough — git actually dials a host named `user` here.
       `user:${secret}@github.com:owner/repo.git`,
     ]) {
       let message = ''

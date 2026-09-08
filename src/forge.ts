@@ -200,8 +200,15 @@ function assertNoEmbeddedCredential(url: string): void {
     return
   }
   // Scheme-less scp form. `git@host:path` is the ordinary shape and carries no
-  // secret; `user:secret@host:path` is a real remote git accepts, taking the
-  // whole `user:secret` as the ssh user, so it must be refused as well.
+  // secret. `user:secret@host:path` is refused because the secret would still be
+  // stored in config, passed on an argv and echoed in errors — not because it
+  // reaches the intended host. Measured with an ssh stub that prints argv to
+  // stderr, git splits at the first colon and dials a host literally named
+  // `user`:
+  //   user:tok@example.invalid:owner/repo.git
+  //     -> ssh "user" git-upload-pack 'tok@example.invalid:owner/repo.git'
+  //   git@example.invalid:owner/repo.git
+  //     -> ssh "git@example.invalid" git-upload-pack 'owner/repo.git'
   if (/^[^/@]*:[^/@]*@/.test(url)) {
     throw new Error(`forge_remote: remote URL must not embed credentials (${maskUrl(url)})`)
   }
