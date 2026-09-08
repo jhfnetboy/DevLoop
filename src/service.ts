@@ -10,8 +10,10 @@ import {
 } from './backend.js'
 import { ConfigSchema, resolveConfig, type Config } from './config.js'
 import { DshHeadlessBackend } from './dsh.js'
+import { applyOutcome, type AgentOutcome } from './outcome.js'
 import { loadState, saveState, withStateLock, workspaceArmed } from './persist.js'
 import { runTick, type TickResult } from './tick.js'
+import type { AgentAction } from './backend.js'
 import type { LoopState } from './types.js'
 import { prepareDelegateWorktree, mergeTaskWorktree, deleteMergedTaskBranch, worktreePath, readContractBaseSha } from './worktree.js'
 
@@ -167,16 +169,17 @@ export default class DevloopService extends Service {
       }
       if (this.disposed) return
       if (outcome.value && !outcome.value.result.skipped && isAgentAction(outcome.value.result.action)) {
+        const dispatched = outcome.value.result.action
         const abort = new AbortController()
         this.dispatchAbort = abort
         const timeoutMs = this.config.budget.taskTimeoutMinutes * 60_000
         const timer = setTimeout(() => abort.abort(), timeoutMs)
         try {
-          await raceAbort(
+          const ran = await raceAbort(
             dispatchTick(
               this.backend,
               this.config.root,
-              outcome.value.result.action,
+              dispatched,
               outcome.value.result.state,
               this.config.budget,
               this.ctx.logger,
@@ -185,6 +188,9 @@ export default class DevloopService extends Service {
             ),
             abort.signal,
           )
+          if (ran?.outcome) {
+            await this.applyBackendOutcome(dispatched, ran.outcome)
+          }
         } catch (error) {
           if (!this.disposed) {
             this.ctx.logger.error('[dsh-devloop] backend timed out', error)
@@ -198,6 +204,36 @@ export default class DevloopService extends Service {
       this.ctx.logger.error('[dsh-devloop] tick failed', error)
     } finally {
       this.busy = false
+    }
+  }
+
+  /**
+   * Close the loop: fold a finished worker's result back into STATE under the
+   * lock, on freshly loaded state. Without this a task never leaves the status
+   * it was dispatched in, the latch keeps seeing the same dispatch status, and
+   * the loop idles until no-progress halts it.
+   */
+  private async applyBackendOutcome(action: AgentAction, result: AgentOutcome): Promise<void> {
+    if (this.disposed) return
+    try {
+      const written = await withStateLock(this.config.root, async () => {
+        const current = await loadState(this.config.root, Date.now())
+        if (current.killSwitch || current.lastAction.type === 'stop') return false
+        if (current.supervisor?.reason === 'unreadable_state') return false
+        const next = applyOutcome(current, action, result, this.config.budget)
+        if (next === current) return false
+        await saveState(this.config.root, next)
+        return true
+      })
+      if (!written.ok) {
+        this.ctx.logger.info('[dsh-devloop] outcome dropped: lock held')
+        return
+      }
+      if (written.value) {
+        this.ctx.logger.info(`[dsh-devloop] outcome applied for ${action.type}`)
+      }
+    } catch (error) {
+      this.ctx.logger.error('[dsh-devloop] outcome write failed', error)
     }
   }
 

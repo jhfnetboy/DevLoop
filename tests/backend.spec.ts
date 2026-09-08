@@ -118,7 +118,7 @@ describe('dispatchTick', () => {
       baseState(),
       limits,
       log,
-    )).resolves.toBeUndefined()
+    )).resolves.toBeNull()
     expect(logs.some(line => line.includes('backend threw'))).toBe(true)
   })
 

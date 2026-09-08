@@ -1,4 +1,5 @@
 import type { BudgetLimits } from './config.js'
+import type { AgentOutcome } from './outcome.js'
 import { contractForTask } from './router.js'
 import type { LoopAction, LoopState, TaskContract } from './types.js'
 
@@ -15,6 +16,11 @@ export interface AgentRunInput {
 export interface AgentRunResult {
   readonly status: 'recorded' | 'started' | 'failed'
   readonly detail?: string
+  /**
+   * Structured result the caller feeds back into STATE. A backend that omits
+   * it only records the action; the task will not advance on its own.
+   */
+  readonly outcome?: AgentOutcome
 }
 
 /**
@@ -68,6 +74,7 @@ export interface DispatchLog {
  * Hand a persisted tick to the adapter. At-most-once applies only after STATE
  * is latched: a throw or `failed` is logged and not retried.
  * Worktree prepare happens earlier, inside the lock, and is not latched on failure.
+ * Returns the backend result so the caller can apply its outcome to STATE.
  */
 export async function dispatchTick(
   backend: AgentBackend,
@@ -78,20 +85,22 @@ export async function dispatchTick(
   log: DispatchLog,
   worktreeRoot: string | null = null,
   signal?: AbortSignal,
-): Promise<void> {
-  if (!isAgentAction(action)) return
+): Promise<AgentRunResult | null> {
+  if (!isAgentAction(action)) return null
   const input = runInputFor(workspaceRoot, action, state, limits)
   if (action.type !== 'plan' && !input.contract) {
     log.error(`[dsh-devloop] skip backend: missing task ${action.taskId}`)
-    return
+    return null
   }
   try {
     const dispatched = await backend.run({ ...input, worktreeRoot, signal })
     if (dispatched.status === 'failed') {
       log.error(`[dsh-devloop] backend failed: ${dispatched.detail ?? 'unknown'}`)
     }
+    return dispatched
   } catch (error) {
     log.error('[dsh-devloop] backend threw', error)
+    return null
   }
 }
 

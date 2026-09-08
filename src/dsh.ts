@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import type { AgentBackend, AgentRunInput, AgentRunResult } from './backend.js'
+import { readOutcome } from './outcome.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -14,7 +15,25 @@ export interface HeadlessRun {
 
 export type HeadlessRunner = (request: HeadlessRun) => Promise<{ stdout: string, stderr: string }>
 
+/**
+ * The envelope every worker must print last. Without it the run cannot move
+ * the task out of its current status, and the loop halts on no-progress.
+ */
+export function outcomeEnvelope(action: AgentRunInput['action']): string {
+  if (action.type === 'plan') {
+    return 'Finish by printing one fenced ```json block and nothing after it: {"kind":"plan","tasks":[{"id":"KEBAB-001","title":"...","tier":"T1","risk":"low","allowedPaths":["src/"],"acceptance":["..."]}]}. Task ids must match [A-Za-z0-9][A-Za-z0-9._-]* because they become git branch names.'
+  }
+  if (action.type === 'review') {
+    return 'Finish by printing one fenced ```json block and nothing after it: {"kind":"review","verdict":"PASS|PASS_WITH_NOTES|REWORK|REPLAN|BLOCKED","notes":"..."}.'
+  }
+  return 'Commit your work on the current branch. Finish by printing one fenced ```json block and nothing after it: {"kind":"implement","ok":true,"detail":"..."}. Use ok:false if you could not complete the task.'
+}
+
 export function headlessPrompt(input: AgentRunInput): string {
+  return `${taskPrompt(input)} ${outcomeEnvelope(input.action)}`
+}
+
+function taskPrompt(input: AgentRunInput): string {
   if (input.action.type === 'plan') {
     return 'Read .devloop/GOAL.md and produce a bounded task list. Do not edit business source files.'
   }
@@ -59,16 +78,24 @@ export class DshHeadlessBackend implements AgentBackend {
       ? input.contract.budget.maxMinutes * 60_000
       : 45 * 60_000
     try {
-      await this.runner({
+      const { stdout } = await this.runner({
         command: this.command,
         argv: ['--profile', 'headless', headlessPrompt(input)],
         cwd,
         timeoutMs,
         signal: input.signal,
       })
-      return { status: 'started' }
+      const outcome = readOutcome(stdout, input.action.type)
+      return outcome ? { status: 'started', outcome } : { status: 'started' }
     } catch (error) {
       const detail = error instanceof Error ? error.message : 'dsh headless failed'
+      // A crashed implementer is a real (bounded) failure: report it so the task
+      // burns an attempt and reaches rework/failed instead of wedging. A crashed
+      // reviewer reports nothing — a verdict must come from a reviewer that ran,
+      // so the loop fails closed on no-progress instead.
+      if (input.action.type === 'delegate') {
+        return { status: 'failed', detail, outcome: { kind: 'implement', ok: false, detail } }
+      }
       return { status: 'failed', detail }
     }
   }

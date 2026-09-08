@@ -1,6 +1,8 @@
+import { execFile } from 'node:child_process'
 import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { promisify } from 'node:util'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { RecordingBackend } from '../src/backend.ts'
@@ -9,8 +11,11 @@ import { resolveConfig } from '../src/config.ts'
 import { emptyState, loadState, saveState, withStateLock, workspaceArmed } from '../src/persist.ts'
 import { contractForTask } from '../src/router.ts'
 import DevloopService from '../src/service.ts'
+import type { LoopState } from '../src/types.ts'
 import { prepareDelegateWorktree, readContractBaseSha } from '../src/worktree.ts'
 import { initGitRepo, makeTask, mkdtempInRepo } from './helpers.ts'
+
+const execFileAsync = promisify(execFile)
 
 async function waitForAction(root: string, type: string, timeoutMs = 2000): Promise<void> {
   const start = Date.now()
@@ -518,5 +523,112 @@ describe('DevloopService', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+/**
+ * The whole point of the outcome path: a workspace that starts with nothing but
+ * GOAL.md must reach merged code with no human editing STATE.json.
+ */
+class ScriptedBackend implements AgentBackend {
+  readonly seen: string[] = []
+
+  async run(input: AgentRunInput): Promise<AgentRunResult> {
+    this.seen.push(input.action.type)
+    if (input.action.type === 'plan') {
+      return {
+        status: 'started',
+        outcome: { kind: 'plan', tasks: [{ id: 'CLOSE-001', title: 'add a module', allowedPaths: ['src/'] }] },
+      }
+    }
+    if (input.action.type === 'delegate') {
+      const cwd = input.worktreeRoot
+      if (!cwd) return { status: 'failed', detail: 'no worktree', outcome: { kind: 'implement', ok: false } }
+      await mkdir(join(cwd, 'src'), { recursive: true })
+      await writeFile(join(cwd, 'src', 'added.ts'), 'export const added = true\n', 'utf8')
+      await execFileAsync('git', ['-C', cwd, 'add', 'src/added.ts'])
+      await execFileAsync('git', ['-C', cwd, 'commit', '-m', 'worker: add module'])
+      return { status: 'started', outcome: { kind: 'implement', ok: true } }
+    }
+    return { status: 'started', outcome: { kind: 'review', verdict: 'PASS' } }
+  }
+
+  async cancel(): Promise<void> {}
+  async health(): Promise<'ok' | 'down'> { return 'ok' }
+}
+
+/**
+ * Beat the loop by hand instead of waiting on the timer: these assertions are
+ * about the state transitions, not about scheduling, and a wall-clock wait here
+ * only makes the suite flaky when it runs alongside the other service tests.
+ */
+async function runToStop(service: DevloopService, root: string, maxBeats = 40): Promise<LoopState> {
+  let last = await loadState(root, Date.now())
+  for (let beat = 0; beat < maxBeats; beat += 1) {
+    await service.tick(Date.now())
+    last = await loadState(root, Date.now())
+    if (last.lastAction.type === 'stop' || last.lastAction.type === 'escalate') return last
+  }
+  throw new Error(`no halt; last action=${JSON.stringify(last.lastAction)} tasks=${JSON.stringify(last.tasks)}`)
+}
+
+/**
+ * Lives here rather than in its own file so it runs sequentially with the other
+ * git-heavy service tests; in parallel they starve each other and time out.
+ */
+describe('closed loop', () => {
+  const services: DevloopService[] = []
+  afterEach(() => {
+    for (const service of services.splice(0)) service.stop()
+  })
+
+  it('drives GOAL.md to merged code without a human editing STATE', async () => {
+    const root = await mkdtempInRepo('devloop-closed-')
+    await mkdir(join(root, '.devloop'))
+    await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n\nAdd a module.\n', 'utf8')
+    await initGitRepo(root)
+
+    const backend = new ScriptedBackend()
+    const ctx = new Context()
+    const service = new DevloopService(ctx, resolveConfig({ root, enabled: false }), backend)
+    services.push(service)
+
+    const final = await runToStop(service, root)
+
+    expect(final.lastAction).toEqual({ type: 'stop', reason: 'goal_complete' })
+    expect(final.tasks).toHaveLength(1)
+    expect(final.tasks[0]).toMatchObject({ id: 'CLOSE-001', status: 'done', lastReviewVerdict: 'PASS' })
+    expect(backend.seen).toEqual(['plan', 'delegate', 'review'])
+
+    // The worker's commit is on the primary branch, and the task branch is gone.
+    const { stdout: log } = await execFileAsync('git', ['-C', root, 'log', '--oneline'])
+    expect(log).toContain('worker: add module')
+    const { stdout: branches } = await execFileAsync('git', ['-C', root, 'branch', '--list', 'devloop/CLOSE-001'])
+    expect(branches.trim()).toBe('')
+  })
+
+  it('sends a failed implementation back to rework instead of wedging', async () => {
+    const root = await mkdtempInRepo('devloop-rework-')
+    await mkdir(join(root, '.devloop'))
+    await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
+    await initGitRepo(root)
+
+    const backend: AgentBackend = {
+      async run(input: AgentRunInput): Promise<AgentRunResult> {
+        if (input.action.type === 'plan') {
+          return { status: 'started', outcome: { kind: 'plan', tasks: [{ id: 'FAIL-001', title: 'doomed' }] } }
+        }
+        return { status: 'failed', detail: 'worker crashed', outcome: { kind: 'implement', ok: false } }
+      },
+      async cancel() {},
+      async health() { return 'ok' },
+    }
+    const ctx = new Context()
+    const service = new DevloopService(ctx, resolveConfig({ root, enabled: false }), backend)
+    services.push(service)
+
+    const final = await runToStop(service, root)
+    expect(final.tasks[0]).toMatchObject({ id: 'FAIL-001', status: 'failed' })
+    expect(final.tasks[0]?.attempts).toBe(resolveConfig({}).budget.maxTaskAttempts)
   })
 })
