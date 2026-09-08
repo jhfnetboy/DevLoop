@@ -87,6 +87,12 @@ export class DshHeadlessBackend implements AgentBackend {
       return {
         status: 'started',
         ...(outcome === undefined ? {} : { outcome }),
+        // Forwarded even though `readPlainOutput` never supplies them. Without
+        // this line the counters are structurally absent, so a future reader
+        // that does report them would be dropped here in silence — and the
+        // test guarding dsh's silence could not tell the difference.
+        ...(reading.tokens === undefined ? {} : { tokens: reading.tokens }),
+        ...(reading.costUsd === undefined ? {} : { costUsd: reading.costUsd }),
         ...(input.route ? { agent: `${input.route.backend}/${input.route.model}` } : {}),
       }
     } catch (error) {
