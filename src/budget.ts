@@ -1,10 +1,10 @@
 import type { BudgetLimits } from './config.js'
-import type { BudgetUsage, LoopAction, LoopState } from './types.js'
+import type { BudgetUsage, CircuitReason, LoopAction, LoopState } from './types.js'
 import { actionKey } from './loop.js'
 
 export type CircuitVerdict =
   | { readonly ok: true }
-  | { readonly ok: false; readonly reason: string; readonly taskId: string | null }
+  | { readonly ok: false; readonly reason: CircuitReason; readonly taskId: string | null }
 
 export function emptyUsage(now: number): BudgetUsage {
   return {
@@ -248,7 +248,7 @@ function refusedTaskId(usage: BudgetUsage, limits: BudgetLimits): string | undef
   return undefined
 }
 
-function fail(reason: string, taskId: string | null = null): CircuitVerdict {
+function fail(reason: CircuitReason, taskId: string | null = null): CircuitVerdict {
   return { ok: false, reason, taskId }
 }
 

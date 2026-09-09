@@ -72,6 +72,25 @@ export type HoldReason =
   // the same way the budget circuits' interpolated reasons are.
   | `acceptance_failed:${string}`
 
+/**
+ * Reasons a budget circuit trips. Closed for the same reason `HoldReason` is:
+ * the gate switches on these, and one added without a question there would
+ * reach an operator as "the loop stopped and needs a decision".
+ */
+export type CircuitReason =
+  | 'daily_cost_cap'
+  | 'session_cost_cap'
+  | 'max_tokens_per_task'
+  | 'no_progress'
+  | `task_timeout:${string}`
+  | `dispatch_refused:${string}`
+  | `max_task_attempts:${string}`
+  | `max_review_cycles:${string}`
+  | `duplicate_action:${string}`
+
+/** A reason with its interpolated tail removed, as the gate matches it. */
+export type BaseReason<R extends string> = R extends `${infer B}:${string}` ? B : R
+
 export interface SupervisorHold {
   readonly taskId: string | null
   readonly reason: string
