@@ -111,10 +111,10 @@ function blockedReason(state: LoopState, limits: BudgetLimits, now: number): str
  * already burned three attempts is exactly how an unattended loop starts
  * spending without end.
  */
-export function resumeState(state: LoopState, options: ResumeOptions, now: number): LoopState {
+export function liftHold(state: LoopState, now: number, what: string): LoopState {
   const integrity = integrityHold(state)
   if (integrity !== null) {
-    throw new Error(`resume: refusing to overwrite a ${integrity} hold; repair STATE.json first`)
+    throw new Error(`${what}: refusing to overwrite a ${integrity} hold; repair STATE.json first`)
   }
 
   // Roll the cost windows against the OLD timestamp: it is the day anchor, and
@@ -123,8 +123,9 @@ export function resumeState(state: LoopState, options: ResumeOptions, now: numbe
   // profile — which a resume requires — clears it anyway.
   const rolled = rollCostWindows(state.usage, now, true)
 
-  let next: LoopState = {
-    ...state,
+  const { acknowledged: _acknowledged, ...rest } = state
+  return {
+    ...rest,
     killSwitch: false,
     supervisor: null,
     lastAction: { type: 'idle' },
@@ -136,6 +137,10 @@ export function resumeState(state: LoopState, options: ResumeOptions, now: numbe
       lastProgressAt: now,
     },
   }
+}
+
+export function resumeState(state: LoopState, options: ResumeOptions, now: number): LoopState {
+  let next: LoopState = liftHold(state, now, 'resume')
 
   if (options.taskId !== undefined) {
     const target = state.tasks.find(task => task.id === options.taskId)

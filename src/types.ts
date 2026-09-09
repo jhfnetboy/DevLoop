@@ -40,9 +40,54 @@ export interface Task {
   readonly reviewer?: string
 }
 
+/**
+ * A hold the host writes when it decides on its own that a person is needed.
+ *
+ * Closed on purpose: the gate that turns a hold into a question switches on
+ * these, and a new reason added without a matching question silently inherits
+ * the generic one. Budget circuits are deliberately not in here — they carry an
+ * interpolated task id (`max_task_attempts:t1`) and are matched by prefix.
+ */
+export type HoldReason =
+  | 'backend_failed'
+  | 'parent_commit_failed'
+  | 'missing_review_worktree'
+  | 'review_requested_replan'
+  | 'empty_task'
+  | 'scope_violation'
+  | 'scope_check_failed'
+  | 'no_review_pass'
+  | 'stale_review_sha'
+  | 'unknown_review_sha'
+  | 'reviewer_identity_conflict'
+  | 'security_high_risk'
+  | 'repeated_test_failure'
+  | 'blocked_task'
+  | 'merge_wedged'
+  | 'unknown_base'
+  | 'acceptance_failed'
+  | 'missing_agent_result'
+  | 'invalid_agent_result'
+  | 'result_transition_failed'
+
 export interface SupervisorHold {
   readonly taskId: string | null
   readonly reason: string
+}
+
+/**
+ * An operator's decision to leave a halt alone.
+ *
+ * `answer stop` changes no task and lifts no hold, so without this the state
+ * directory cannot tell "nobody has looked at this yet" from "somebody looked
+ * and chose not to act". It is recorded as an ordinary revision rather than an
+ * annotation on an existing one, because the journal's recovery check requires
+ * every event to advance the revision by exactly one.
+ */
+export interface Acknowledgement {
+  readonly at: string
+  readonly reason: string
+  readonly taskId: string | null
 }
 
 export interface BudgetUsage {
@@ -77,6 +122,8 @@ export interface LoopState {
   readonly usage: BudgetUsage
   readonly lastAction: LoopAction
   readonly lastDispatchStatus?: string | null
+  /** Set by `answer stop`; cleared the moment the hold is actually lifted. */
+  readonly acknowledged?: Acknowledgement
   readonly updatedAt: string
 }
 

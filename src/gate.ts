@@ -1,5 +1,5 @@
 import type { BudgetLimits } from './config.js'
-import { diagnoseHalt, integrityHold, resumeState } from './resume.js'
+import { diagnoseHalt, integrityHold, liftHold, resumeState } from './resume.js'
 import type { LoopState, Task } from './types.js'
 
 /** One thing the operator can say back, and what saying it does. */
@@ -132,6 +132,15 @@ export function gateFor(state: LoopState, limits: BudgetLimits, now: number): Ga
         'the workspace was left untouched',
       ], [RETRY, STOP], 'Check the primary worktree is clean and on a branch, then retry.')
 
+    // Not folded into the default: the reviewer asked for a different *plan*,
+    // and `retry` means running the same task again under the same plan — an
+    // answer to a question nobody asked.
+    case 'review_requested_replan':
+      return gate(reason, taskId, 'The reviewer asked for the plan to change, not for the task to run again. Replan, or leave it?', [
+        `review of ${label(taskId)} returned REPLAN`,
+        'the work is untouched; it is the plan that was rejected',
+      ], [STOP], 'Edit the task in .devloop/PLAN.md to reflect the review, then: devloop resume --task ' + (taskId ?? '<id>'))
+
     default:
       return gate(reason, taskId, 'The loop stopped and needs a decision. Redo the task, or leave it?', [
         `the recorded reason is ${reason}`,
@@ -141,8 +150,16 @@ export function gateFor(state: LoopState, limits: BudgetLimits, now: number): Ga
 
 /**
  * Apply an answer. Pure, like the resume it builds on; the caller persists it
- * under the lock. Returns the state unchanged for `stop`, which is a decision
- * to leave things alone rather than a no-op.
+ * under the lock.
+ *
+ * Only `retry` is a resume. `retry` means "throw the attempt away and start
+ * over", so it spends a fresh budget and `resumeState` clears the task's
+ * counters to match. `review` and `accept` keep the work that exists, so they
+ * must keep the budget that bought it: they lift the hold and nothing else.
+ * Routing them through `resumeState` handed a task a fresh `maxReviewCycles`
+ * every time an operator answered, and dropped the task's start time — which
+ * only a `delegate` ever writes back, so the lifetime circuit stopped seeing a
+ * task that stayed in review.
  */
 export function applyAnswer(
   state: LoopState,
@@ -153,16 +170,19 @@ export function applyAnswer(
   if (!gate.options.some(option => option.key === key)) {
     throw new Error(`gate: ${key} is not an answer to this question`)
   }
-  if (key === 'stop') return state
+  if (key === 'stop') return acknowledge(state, gate, now)
   const taskId = gate.taskId
   if (taskId === null) throw new Error(`gate: ${key} needs a task, and this halt names none`)
 
-  const resumed = resumeState(state, { taskId }, now)
-  if (key === 'retry') return resumed
+  if (key === 'retry') return resumeState(state, { taskId }, now)
 
+  const lifted = liftHold(state, now, 'answer')
   return {
-    ...resumed,
-    tasks: resumed.tasks.map(task => task.id === taskId ? afterAnswer(task, key) : task),
+    ...lifted,
+    // Reopening a task is the only thing that makes a finished goal unfinished.
+    goalCompleted: false,
+    tasks: lifted.tasks.map(task => task.id === taskId ? afterAnswer(task, key) : task),
+    updatedAt: new Date(now).toISOString(),
   }
 }
 
@@ -170,10 +190,27 @@ export function applyAnswer(
  * `review` sends the commit that already exists back for a verdict, so the work
  * is not thrown away. `accept` is the operator agreeing the task needed no
  * change; it is the only path that marks a task done without a merge.
+ *
+ * The stale verdict goes either way: `review` is asking for a new one, and
+ * `accept` is the operator standing in for one.
  */
 function afterAnswer(task: Task, key: 'review' | 'accept'): Task {
-  if (key === 'accept') return { ...task, status: 'done' }
-  return { ...task, status: 'review_pending' }
+  const { lastReviewVerdict: _verdict, reviewer: _reviewer, ...rest } = task
+  if (key === 'accept') return { ...rest, status: 'done' }
+  return { ...rest, status: 'review_pending' }
+}
+
+/**
+ * `stop` leaves every task and the hold itself alone, and records that a person
+ * decided so. Without the record, an unanswered halt and a deliberately
+ * declined one are indistinguishable in `.devloop/`.
+ */
+function acknowledge(state: LoopState, gate: Gate, now: number): LoopState {
+  return {
+    ...state,
+    acknowledged: { at: new Date(now).toISOString(), reason: gate.reason, taskId: gate.taskId },
+    updatedAt: new Date(now).toISOString(),
+  }
 }
 
 function gate(

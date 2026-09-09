@@ -132,7 +132,6 @@ async function main(
         const gate = gateFor(current, budget.limits, now)
         if (gate === null) throw new Error('answer: the loop is not waiting on anything')
         const next = applyAnswer(current, gate, choice as GateOption['key'], now)
-        if (next === current) return { gate, saved: current, changed: false }
         const saved = await saveState(root, next, {
           expectedRevision: current.revision,
           action: `answer:${choice ?? ''}`,
@@ -142,7 +141,7 @@ async function main(
         } catch {
           fail('devloop: state saved but PROGRESS.md could not be rewritten\n')
         }
-        return { gate, saved, changed: true }
+        return { gate, saved, declined: choice === 'stop' }
       })
     } catch (error) {
       fail(`devloop: ${error instanceof Error ? error.message : String(error)}\n`)
@@ -152,9 +151,12 @@ async function main(
       fail('devloop: another process holds the state lock; stop the profile and retry\n')
       return 1
     }
-    const { gate, saved, changed } = outcome.value
-    if (!changed) {
-      write(`left halted: ${gate.reason}\n`)
+    const { gate, saved, declined } = outcome.value
+    // `stop` lifts nothing on purpose, so it is not "still blocked" — it is the
+    // answer. Exit 0 keeps a successful command distinguishable from a busy
+    // lock or a failed save, both of which exit 1.
+    if (declined) {
+      write(`left halted: ${gate.reason} (recorded at revision ${saved.revision})\n`)
       return 0
     }
     write(`answered ${choice} for ${gate.reason} at revision ${saved.revision}\n`)
@@ -237,7 +239,9 @@ function render(revision: number, diagnosis: HaltDiagnosis, source: string, gate
   }
   if (diagnosis.integrityHold !== null) {
     lines.push(`STATE.json cannot be trusted; repair it before resuming`)
-    return `${lines.join('\n')}\n`
+    // The gate still prints: an integrity hold is the one halt no answer can
+    // lift, so its recovery instructions are the only guidance there is.
+    return `${[...lines, ...gateLines(gate)].join('\n')}\n`
   }
   if (diagnosis.wouldHaltAgain !== null) {
     lines.push(`resuming as-is would stop again: ${diagnosis.wouldHaltAgain}`)
@@ -245,14 +249,16 @@ function render(revision: number, diagnosis: HaltDiagnosis, source: string, gate
   } else if (diagnosis.halted) {
     lines.push('resuming would let the loop continue')
   }
-  if (gate !== null) {
-    lines.push('')
-    lines.push(gate.question)
-    for (const item of gate.evidence) lines.push(`  - ${item}`)
-    for (const option of gate.options) {
-      lines.push(`  devloop answer ${option.key.padEnd(6)}  ${option.summary}`)
-    }
-    if (gate.manual !== null) lines.push(`  by hand: ${gate.manual}`)
+  return `${[...lines, ...gateLines(gate)].join('\n')}\n`
+}
+
+function gateLines(gate: Gate | null): string[] {
+  if (gate === null) return []
+  const lines = ['', gate.question]
+  for (const item of gate.evidence) lines.push(`  - ${item}`)
+  for (const option of gate.options) {
+    lines.push(`  devloop answer ${option.key.padEnd(6)}  ${option.summary}`)
   }
-  return `${lines.join('\n')}\n`
+  if (gate.manual !== null) lines.push(`  by hand: ${gate.manual}`)
+  return lines
 }

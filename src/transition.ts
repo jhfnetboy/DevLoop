@@ -1,7 +1,7 @@
 import { actionKey } from './loop.js'
 import type { AgentAction } from './backend.js'
 import type { DevloopResult } from './result.js'
-import type { LoopState, Task, TaskStatus } from './types.js'
+import type { HoldReason, LoopState, Task, TaskStatus } from './types.js'
 
 export interface ApplyAgentResultOptions {
   readonly agent: string
@@ -94,7 +94,7 @@ function applyReview(
   if (result.verdict !== 'REPLAN') return next
   return {
     ...next,
-    supervisor: { taskId, reason: 'review_requested_replan' },
+    supervisor: { taskId, reason: 'review_requested_replan' satisfies HoldReason },
   }
 }
 

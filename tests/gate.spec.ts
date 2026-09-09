@@ -1,4 +1,4 @@
-import { mkdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { runCli } from '../src/command.ts'
@@ -92,9 +92,14 @@ describe('applyAnswer', () => {
       .toThrow(/not an answer to this question/)
   })
 
-  it('leaves everything alone for stop, which is a decision', () => {
+  it('leaves everything alone for stop, and records that a person said so', () => {
     const state = held('empty_task')
-    expect(applyAnswer(state, gate('empty_task'), 'stop', NOW)).toBe(state)
+    const next = applyAnswer(state, gate('empty_task'), 'stop', NOW)
+    // Everything that drives the loop is identical...
+    expect({ ...next, acknowledged: undefined, updatedAt: state.updatedAt })
+      .toEqual({ ...state, acknowledged: undefined })
+    // ...and the decision itself is now a fact rather than terminal output.
+    expect(next.acknowledged).toMatchObject({ reason: 'empty_task', taskId: 'A' })
   })
 
   it('sends the task back to a worker for retry', () => {
@@ -122,6 +127,46 @@ describe('applyAnswer', () => {
     for (const reason of ['no_review_pass', 'scope_violation', 'blocked_task', 'max_task_attempts:A']) {
       expect(gate(reason).options.map(o => o.key), reason).not.toContain('accept')
     }
+  })
+
+  // Both directions, on purpose: asserting only that `review` keeps the
+  // counters would also pass for a fix that stopped clearing them for `retry`,
+  // which is the one answer whose whole meaning is a fresh budget.
+  it('keeps the budget for an answer that keeps the work, and clears it for one that does not', () => {
+    const spent = held('stale_review_sha', { implementationSha: SHA, attempts: 2, reviewCycles: 2 })
+    const state: LoopState = {
+      ...spent,
+      usage: {
+        ...spent.usage,
+        taskAttempts: { A: 2 },
+        reviewCycles: { A: 2 },
+        tokens: { A: 5_000 },
+        taskStartedAt: { A: NOW - 60_000 },
+      },
+    }
+
+    const reviewed = applyAnswer(state, gate('stale_review_sha', { implementationSha: SHA }), 'review', NOW)
+    expect(reviewed.usage.reviewCycles.A).toBe(2)
+    expect(reviewed.usage.taskAttempts.A).toBe(2)
+    expect(reviewed.usage.tokens.A).toBe(5_000)
+    // The one that cannot be rebuilt: only a delegate ever writes it back, so a
+    // task answered into review would leave the lifetime circuit for good.
+    expect(reviewed.usage.taskStartedAt.A).toBe(NOW - 60_000)
+    expect(reviewed.tasks[0]).toMatchObject({ status: 'review_pending', attempts: 2, reviewCycles: 2 })
+    expect(reviewed.supervisor).toBeNull()
+
+    const retried = applyAnswer(state, gate('stale_review_sha', { implementationSha: SHA }), 'retry', NOW)
+    expect(retried.usage.reviewCycles.A).toBeUndefined()
+    expect(retried.usage.taskAttempts.A).toBeUndefined()
+    expect(retried.usage.taskStartedAt.A).toBeUndefined()
+    expect(retried.tasks[0]).toMatchObject({ status: 'rework', attempts: 0, reviewCycles: 0 })
+  })
+
+  it('answers a request to replan with a plan change, not another identical run', () => {
+    const g = gate('review_requested_replan')
+    expect(g.options.map(o => o.key)).toEqual(['stop'])
+    expect(g.question).toMatch(/plan/i)
+    expect(g.manual).toContain('PLAN.md')
   })
 
   it('refuses an answer that needs a task when the halt names none', () => {
@@ -197,4 +242,49 @@ describe('the answer command', () => {
     expect(result.out).toContain('left halted: empty_task')
     expect((await runCli(['status', root])).out).toContain('supervisor hold: empty_task')
   })
+
+  // The control matters as much as the case: assert only that `stop` appends
+  // and a fix that writes an event for every branch would pass, breaking the
+  // journal's one-event-per-revision rule that crash recovery reads.
+  it('records a decision to leave a halt alone, so it is not mistaken for an unread one', async () => {
+    const root = await armed({ ...emptyState(NOW), ...held('empty_task', { lastReviewVerdict: 'PASS' }) })
+    const before = await journalLines(root)
+
+    expect((await runCli(['answer', 'stop', root])).code).toBe(0)
+    const afterStop = await journalLines(root)
+    expect(afterStop.length).toBe(before.length + 1)
+    expect(afterStop.at(-1)?.action).toBe('answer:stop')
+    // The hold is untouched — it is the decision that was recorded, not a change.
+    expect(afterStop.at(-1)?.state.supervisor).toMatchObject({ reason: 'empty_task' })
+    expect(afterStop.at(-1)?.state.acknowledged).toMatchObject({ reason: 'empty_task', taskId: 'A' })
+
+    // Control: an answer that does change things still advances by exactly one.
+    expect((await runCli(['answer', 'accept', root])).out).toContain('answered accept')
+    const afterAccept = await journalLines(root)
+    expect(afterAccept.length).toBe(afterStop.length + 1)
+    expect(afterAccept.map(event => event.revision)).toEqual(
+      afterAccept.map((_, index) => index + 1),
+    )
+    // Lifting the hold clears the acknowledgement; it described that hold only.
+    expect(afterAccept.at(-1)?.state.acknowledged).toBeUndefined()
+  })
+
+  it('still shows the recovery instructions for the one halt no answer can lift', async () => {
+    const root = await armed({
+      ...emptyState(NOW),
+      killSwitch: true,
+      supervisor: { taskId: null, reason: 'invalid_state' },
+    })
+    const result = await runCli(['status', root])
+    expect(result.code).toBe(1)
+    expect(result.out).toContain('STATE.json cannot be trusted')
+    // Before, render() returned here and the composed guidance never printed.
+    expect(result.out).toContain('The recorded state could not be read back')
+    expect(result.out).toContain('EVENTS.jsonl')
+  })
 })
+
+async function journalLines(root: string): Promise<{ revision: number; action: string; state: LoopState }[]> {
+  const text = await readFile(join(root, '.devloop', 'EVENTS.jsonl'), 'utf8')
+  return text.split('\n').filter(Boolean).map(line => JSON.parse(line) as { revision: number; action: string; state: LoopState })
+}
