@@ -1054,7 +1054,7 @@ describe('acceptance gates the review, not just the log', () => {
    * reviewer. Asserting only that a check ran would leave the feature free to
    * be broken while every test stayed green.
    */
-  async function runWith(acceptance: string[][]): Promise<{ root: string; seen: string[] }> {
+  async function runWith(acceptance: string[][]): Promise<{ root: string; seen: string[]; logged: string[] }> {
     const root = await mkdtempInRepo('devloop-accept-svc-')
     await mkdir(join(root, '.devloop'))
     await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
@@ -1097,15 +1097,23 @@ describe('acceptance gates the review, not just the log', () => {
       async cancel() {},
       async health() { return 'ok' },
     }
+    const ctx = new Context()
+    const logged: string[] = []
+    const errors = ctx.logger.error.bind(ctx.logger)
+    ctx.logger.error = (message: unknown, ...rest: unknown[]): void => {
+      logged.push(String(message))
+      void errors
+      void rest
+    }
     const service = new DevloopService(
-      new Context(),
+      ctx,
       resolveConfig({ root, enabled: false, acceptance }),
       backend,
     )
     services.push(service)
     await service.tick()
     await service.tick()
-    return { root, seen }
+    return { root, seen, logged }
   }
 
   it('lets a task through to review when the checks pass', async () => {
@@ -1115,6 +1123,16 @@ describe('acceptance gates the review, not just the log', () => {
     // Reviewed and accepted: the checks let it through.
     expect(state.tasks[0]?.status).toBe('merge_ready')
     expect(state.supervisor).toBeNull()
+    await rm(root, { recursive: true, force: true })
+  })
+
+  // The control is the point: a genuine commit failure must still say so, or
+  // "log whatever the reason was" degenerates into logging nothing specific.
+  it('names the step that actually refused, not the one that already succeeded', async () => {
+    const { root, logged } = await runWith([['false']])
+    expect(logged.some(line => line.includes('acceptance_failed'))).toBe(true)
+    // The commit had already happened by the time acceptance ran.
+    expect(logged.some(line => line.includes('parent commit failed'))).toBe(false)
     await rm(root, { recursive: true, force: true })
   })
 

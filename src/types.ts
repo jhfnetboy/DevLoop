@@ -65,10 +65,12 @@ export type HoldReason =
   | 'blocked_task'
   | 'merge_wedged'
   | 'unknown_base'
-  | 'acceptance_failed'
   | 'missing_agent_result'
   | 'invalid_agent_result'
   | 'result_transition_failed'
+  // Carries which check failed, so the gate can name it. Matched by prefix,
+  // the same way the budget circuits' interpolated reasons are.
+  | `acceptance_failed:${string}`
 
 export interface SupervisorHold {
   readonly taskId: string | null
