@@ -291,6 +291,12 @@ What reading them changed:
   for the task's lifetime and is never refunded: the attempt stays free, and the
   loop still says which task's route is broken.
 
+A third comparison, against a plugin that shares the name and not the problem:
+[`docs/Compared-dsh-dev-loop.md`](./docs/Compared-dsh-dev-loop.md). It is a panel
+a person drives; this runs unattended. It has a trust record where this has a
+default-off switch, and it declines to feed a failed check back into an automatic
+repair — which is the risk this design carries by choosing to.
+
 Where this design is weaker than either: both assume the executor can report its
 own usage. `dsh --profile headless` cannot, so the daily cost cap only sees what
 the planner and reviewer spent — a missing instrument, not a decision. Deferred
