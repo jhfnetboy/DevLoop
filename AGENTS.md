@@ -11,7 +11,11 @@
 - `pnpm exec vitest tests/budget.spec.ts` runs one test file while iterating.
 - `pnpm build` type-checks strict TypeScript and emits JavaScript and declarations into `lib/`.
 
-Run both `pnpm test` and `pnpm build` before opening a pull request. Package installation also invokes the build through `prepare`.
+Run both `pnpm test` and `pnpm build` before opening a pull request. Package installation also invokes the build through `prepare`. A GitHub Actions workflow runs the same two commands on every pull request.
+
+Five suites do real git and real process work and account for nearly all of the wall clock. Measured on an idle machine, in ms: worktree 230457, service 143720, forge 73143, persist 35196, autonomous.e2e 24996; everything else together stays under 20000. They are IO-bound, so `vitest.config.ts` caps the worker count rather than running one per core.
+
+Treat a timeout in those five as a statement about the machine until proven otherwise. On a saturated host a 3ms case in `forge.spec` took 918724ms and one `worktree.spec` case took 7295317ms — the same code and the same tests that pass in milliseconds when the machine is idle. Attribute a failure the way any other regression is attributed: stash the change, re-run on the branch point, and see whether it still fails. A red that means "the machine was busy" gets ignored, and an ignored check stops catching regressions as well.
 
 ## Coding Style & Naming Conventions
 
