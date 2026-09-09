@@ -132,6 +132,36 @@ function utcDay(ms: number): string {
 }
 
 /** Fold optional backend token/cost signals into usage. Missing signals are a no-op. */
+/**
+ * Give back what a dispatch that never ran should not have been charged.
+ *
+ * `recordAction` charges when work is sent out, which is right: a run that
+ * starts and fails has still been attempted. But a dispatch refused before any
+ * provider saw it — a bad route, a missing adapter, a precondition the operator
+ * has to fix — spent nothing, and letting it eat a task's attempts means the
+ * budget runs out on a misconfiguration that retrying cannot fix.
+ *
+ * Never goes below zero, and touches nothing else: the duplicate-action window
+ * and the task's start time still record that the loop tried.
+ */
+export function refundAction(usage: BudgetUsage, action: LoopAction): BudgetUsage {
+  if (action.type === 'delegate') {
+    return { ...usage, taskAttempts: decrement(usage.taskAttempts, action.taskId) }
+  }
+  if (action.type === 'review') {
+    return { ...usage, reviewCycles: decrement(usage.reviewCycles, action.taskId) }
+  }
+  return usage
+}
+
+function decrement(counts_: Readonly<Record<string, number>>, taskId: string): Record<string, number> {
+  const next = counts(counts_)
+  const current = ownCount(next, taskId)
+  if (current <= 0) return next
+  next[taskId] = current - 1
+  return next
+}
+
 export function applyRunSignals(
   usage: BudgetUsage,
   taskId: string | null,

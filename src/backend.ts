@@ -24,6 +24,15 @@ export interface AgentRunResult {
   readonly outcome?: DevloopResult
   /** Concrete provider/model identity used for independent-review checks. */
   readonly agent?: string
+  /**
+   * False when the run stopped before any provider did work — a bad route, a
+   * missing adapter, a refused precondition. Absent means it did.
+   *
+   * An attempt is meant to measure work, and a dispatch that never reached a
+   * model has spent nothing but a tick. Charging one anyway erodes a task's
+   * budget for a misconfiguration it cannot fix by trying again.
+   */
+  readonly reachedProvider?: boolean
 }
 
 /**
@@ -53,13 +62,14 @@ export class RoutedBackend implements AgentBackend {
 
   async run(input: AgentRunInput): Promise<AgentRunResult> {
     const selected = this.routeFor(input)
-    if (!selected.ok) return { status: 'failed', detail: selected.detail }
+    if (!selected.ok) return { status: 'failed', detail: selected.detail, reachedProvider: false }
     const backend = this.backends[selected.route.backend]
       ?? (selected.route.backend.startsWith('subagent:') ? this.backends.subagent : undefined)
     if (!backend) {
       return {
         status: 'failed',
         detail: `no backend adapter registered for ${selected.route.backend}`,
+        reachedProvider: false,
       }
     }
     const result = await backend.run({ ...input, route: selected.route })

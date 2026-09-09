@@ -126,7 +126,7 @@ async function runCli(
 ): Promise<AgentRunResult> {
   const cwd = input.worktreeRoot
   if (!cwd || await samePath(cwd, input.workspaceRoot)) {
-    return { status: 'failed', detail: 'refusing to run T3 CLI at workspace root' }
+    return { status: 'failed', detail: 'refusing to run T3 CLI at workspace root', reachedProvider: false }
   }
   try {
     const request = { command, argv, cwd, timeoutMs: runTimeoutMs(input), signal: input.signal }
