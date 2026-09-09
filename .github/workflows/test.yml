@@ -54,5 +54,14 @@ jobs:
 
       - run: pnpm test
 
+      # The name in this file is what DSH resolves to load the plugin, and it
+      # starts with `@`, which YAML reserves. Unquoted, the file does not parse
+      # and the plugin cannot be installed — while a test that string-matches
+      # the line passes on exactly that file. The unit test asserts the quoting;
+      # this asserts the property that actually matters, so a bad indent or a
+      # stray colon fails here too.
+      - name: The bundle patch must parse as YAML
+        run: python3 -c "import yaml,sys; d=yaml.safe_load(open('cordis.patch.yml')); print(d); sys.exit(0 if d[0]['insert'][0]['name'] == '@jhfnetboy/dsh-devloop' else 1)"
+
       - name: Check for whitespace errors
         run: git diff --check

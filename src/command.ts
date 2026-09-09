@@ -1,4 +1,5 @@
-import { resolve } from 'node:path'
+import { dirname, extname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { ConfigSchema, resolveConfig, type BudgetLimits } from './config.js'
 import { loadState, readBudgetSnapshot, saveState, withStateLock, workspaceArmed } from './persist.js'
 import { writeProgress } from './progress.js'
@@ -32,19 +33,39 @@ export interface CliResult {
 }
 
 /** Exported so the behaviour can be tested without paying for a subprocess. */
-export async function runCli(argv: readonly string[]): Promise<CliResult> {
+export async function runCli(
+  argv: readonly string[],
+  options: { readonly invokedAs?: string } = {},
+): Promise<CliResult> {
   let out = ''
   let err = ''
   const write = (text: string): void => { out += text }
   const fail = (text: string): void => { err += text }
-  const code = await main(argv, write, fail)
+  const code = await main(argv, write, fail, options.invokedAs ?? selfInvocation())
   return { code, out, err }
+}
+
+/**
+ * How to run this CLI again, spelled the way it was actually run.
+ *
+ * Nothing puts `devloop` on `PATH`: npm and pnpm do not link a package's own
+ * `bin` into its own `node_modules/.bin`, and `dsh plugin add` does not either.
+ * A gate whose whole purpose is to hand back the exact command to type must not
+ * hand back one that cannot be typed, so it echoes the invocation it received.
+ */
+function selfInvocation(): string {
+  // Derived from this module's own location rather than `process.argv[1]`:
+  // argv is whatever started the process, which under a test runner or any
+  // embedding host is not this CLI at all.
+  const here = fileURLToPath(import.meta.url)
+  return `node ${join(dirname(here), 'bin', `devloop${extname(here)}`)}`
 }
 
 async function main(
   argv: readonly string[],
   write: (text: string) => void,
   fail: (text: string) => void,
+  invokedAs: string,
 ): Promise<number> {
   const [command, ...rest] = argv
   if (command === undefined || command === '--help' || command === '-h') {
@@ -117,7 +138,7 @@ async function main(
     const now = Date.now()
     const state = await loadState(root, now)
     const diagnosis = diagnoseHalt(state, budget.limits, now, options.resume)
-    write(render(state.revision, diagnosis, budget.source, gateFor(state, budget.limits, now)))
+    write(render(state.revision, diagnosis, budget.source, gateFor(state, budget.limits, now), invokedAs, root))
     // Non-zero for a loop that is stopped *or* that would stop on its next
     // tick: both need a human, and only one of them is visible in STATE.
     return diagnosis.halted || diagnosis.wouldHaltAgain !== null ? 1 : 0
@@ -229,7 +250,14 @@ async function effectiveBudget(root: string): Promise<{ limits: BudgetLimits; so
   }
 }
 
-function render(revision: number, diagnosis: HaltDiagnosis, source: string, gate: Gate | null): string {
+function render(
+  revision: number,
+  diagnosis: HaltDiagnosis,
+  source: string,
+  gate: Gate | null,
+  invokedAs: string,
+  root: string,
+): string {
   const lines = [`revision ${revision} (${source})`]
   if (!diagnosis.halted) {
     lines.push('not halted')
@@ -241,23 +269,23 @@ function render(revision: number, diagnosis: HaltDiagnosis, source: string, gate
     lines.push(`STATE.json cannot be trusted; repair it before resuming`)
     // The gate still prints: an integrity hold is the one halt no answer can
     // lift, so its recovery instructions are the only guidance there is.
-    return `${[...lines, ...gateLines(gate)].join('\n')}\n`
+    return `${[...lines, ...gateLines(gate, invokedAs, root)].join('\n')}\n`
   }
   if (diagnosis.wouldHaltAgain !== null) {
     lines.push(`resuming as-is would stop again: ${diagnosis.wouldHaltAgain}`)
-    if (diagnosis.taskId !== null) lines.push(`  try: devloop resume --task ${diagnosis.taskId}`)
+    if (diagnosis.taskId !== null) lines.push(`  try: ${invokedAs} resume ${root} --task ${diagnosis.taskId}`)
   } else if (diagnosis.halted) {
     lines.push('resuming would let the loop continue')
   }
-  return `${[...lines, ...gateLines(gate)].join('\n')}\n`
+  return `${[...lines, ...gateLines(gate, invokedAs, root)].join('\n')}\n`
 }
 
-function gateLines(gate: Gate | null): string[] {
+function gateLines(gate: Gate | null, invokedAs: string, root: string): string[] {
   if (gate === null) return []
   const lines = ['', gate.question]
   for (const item of gate.evidence) lines.push(`  - ${item}`)
   for (const option of gate.options) {
-    lines.push(`  devloop answer ${option.key.padEnd(6)}  ${option.summary}`)
+    lines.push(`  ${invokedAs} answer ${option.key.padEnd(6)} ${root}   ${option.summary}`)
   }
   if (gate.manual !== null) lines.push(`  by hand: ${gate.manual}`)
   return lines
