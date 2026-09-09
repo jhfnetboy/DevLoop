@@ -8,6 +8,7 @@ export const DEVLOOP_DIR = '.devloop'
 export const STATE_FILE = 'STATE.json'
 export const GOAL_FILE = 'GOAL.md'
 export const LOCK_FILE = 'LOCK'
+export const BUDGET_FILE = 'BUDGET.json'
 export const EVENTS_FILE = 'EVENTS.jsonl'
 const EVENT_VERSION = 1 as const
 const JOURNAL_TAIL_BYTES = 8 * 1024 * 1024
@@ -22,6 +23,35 @@ interface StateEvent {
 
 export function devloopDir(root: string): string {
   return join(root, DEVLOOP_DIR)
+}
+
+export function budgetPath(root: string): string {
+  return join(devloopDir(root), BUDGET_FILE)
+}
+
+/**
+ * Record the limits this profile is actually running with.
+ *
+ * Tools outside the process cannot see the DSH profile's config, and guessing
+ * the defaults makes them answer "would resuming help?" with the wrong budget.
+ * Best-effort: a missing snapshot only costs accuracy, never correctness of the
+ * loop itself.
+ */
+export async function writeBudgetSnapshot(root: string, limits: unknown): Promise<void> {
+  const file = budgetPath(root)
+  await mkdir(dirname(file), { recursive: true })
+  const temp = `${file}.${String(process.pid)}.${String(Date.now())}.tmp`
+  await writeFile(temp, `${JSON.stringify(limits, null, 2)}\n`, 'utf8')
+  await rename(temp, file)
+}
+
+/** The recorded limits, or null when no profile has written them yet. */
+export async function readBudgetSnapshot(root: string): Promise<unknown | null> {
+  try {
+    return JSON.parse(await readFile(budgetPath(root), 'utf8'))
+  } catch {
+    return null
+  }
 }
 
 export function statePath(root: string): string {
