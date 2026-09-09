@@ -195,11 +195,11 @@ exact implementation commit, so a verdict expires the moment the branch moves.
 
 What reading them changed:
 
-- **A halt says what broke, not what to decide.** `reason: "empty_task"` is an
+- **A halt said what broke, not what to decide.** `reason: "empty_task"` is an
   error code. LoopX's point is that a gate must be *a concrete question with a
-  concrete answer*, not a signal that someone is needed. This is also why a
-  resumed workspace currently needs the profile restarted: without a gate to
-  wait on, the loop has nothing to do but stop.
+  concrete answer*, not a signal that someone is needed. Fixed: see
+  [Unsticking a halted loop](#unsticking-a-halted-loop). The loop still stops
+  rather than waiting on the gate, which is the remaining half.
 - **Acceptance criteria are written, validated, persisted, sent to models — and
   never executed.** `contract.acceptance` reaches prompts only. LongHorizon's
   auditor inspects real artifacts; here the closest mechanical check is
@@ -424,6 +424,27 @@ pnpm exec devloop resume ~/dev/myproj --task AUTH-001
 ```
 
 `status` exits non-zero while halted, so it drops straight into a script.
+
+A halt is stated as a question rather than an error code, with the answers the
+loop can act on:
+
+```text
+The task branch has no commits, but review passed it. Did it need any change?
+  - task AUTH-001 is still at the commit it started from
+  - a review verdict of PASS is recorded against it
+  devloop answer retry   give the task another attempt from a clean worktree
+  devloop answer accept  agree the task needed no change and mark it done
+  devloop answer stop    leave the loop halted; nothing changes
+```
+
+`devloop answer <retry|review|accept|stop>` applies one. Only the answers a
+question offers are accepted, so `retry` cannot be used on a halt that no retry
+would fix. `review` sends the commit that already exists back for a verdict
+rather than throwing the work away; `accept` is the operator agreeing a task
+needed no change, and is the only path that marks a task done without a merge;
+`stop` changes nothing and says so. Where no answer would help — a high-risk
+task, a spend cap, an unreadable `STATE.json` — the question says what to do by
+hand instead of offering a button that does not work.
 
 `status` and `resume` answer with **this profile's** limits: the running plugin
 records them at `.devloop/BUDGET.json`, and the output says whether it used
