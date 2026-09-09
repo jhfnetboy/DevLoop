@@ -1042,3 +1042,89 @@ describe('DevloopService', () => {
     expect(loaded.supervisor).toEqual({ taskId: 'd1', reason: 'parent_commit_failed' })
   })
 })
+
+describe('acceptance gates the review, not just the log', () => {
+  const services: DevloopService[] = []
+  afterEach(() => {
+    for (const service of services.splice(0)) service.stop()
+  })
+
+  /**
+   * The load-bearing case: a task whose checks fail must never reach a
+   * reviewer. Asserting only that a check ran would leave the feature free to
+   * be broken while every test stayed green.
+   */
+  async function runWith(acceptance: string[][]): Promise<{ root: string; seen: string[] }> {
+    const root = await mkdtempInRepo('devloop-accept-svc-')
+    await mkdir(join(root, '.devloop'))
+    await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
+    await initGitRepo(root)
+    await saveState(root, {
+      ...emptyState(Date.now()),
+      tasks: [makeTask({ id: 'd1', status: 'ready', allowedPaths: ['src/**'] })],
+    })
+
+    const seen: string[] = []
+    const backend: AgentBackend = {
+      async run(input: AgentRunInput): Promise<AgentRunResult> {
+        seen.push(input.action.type)
+        if (input.action.type === 'review') {
+          // Echoes the commit under review, so the pass case can proceed and
+          // the fail case's missing review means something.
+          return {
+            status: 'started',
+            agent: 'test/reviewer',
+            outcome: {
+              version: 1, kind: 'review', taskId: 'd1',
+              reviewedSha: input.contract?.implementationSha ?? '',
+              verdict: 'PASS',
+            },
+          }
+        }
+        if (input.action.type !== 'delegate') return { status: 'started' }
+        // A worker that writes something and declares itself finished.
+        await mkdir(join(input.worktreeRoot ?? root, 'src'), { recursive: true })
+        await writeFile(join(input.worktreeRoot ?? root, 'src', 'added.ts'), 'export const x = 1\n', 'utf8')
+        return {
+          status: 'started',
+          agent: 'test/worker',
+          outcome: {
+            version: 1, kind: 'implementation', taskId: 'd1',
+            outcome: 'completed', summary: 'done',
+          },
+        }
+      },
+      async cancel() {},
+      async health() { return 'ok' },
+    }
+    const service = new DevloopService(
+      new Context(),
+      resolveConfig({ root, enabled: false, acceptance }),
+      backend,
+    )
+    services.push(service)
+    await service.tick()
+    await service.tick()
+    return { root, seen }
+  }
+
+  it('lets a task through to review when the checks pass', async () => {
+    const { root, seen } = await runWith([['true']])
+    expect(seen).toEqual(['delegate', 'review'])
+    const state = await loadState(root, Date.now())
+    // Reviewed and accepted: the checks let it through.
+    expect(state.tasks[0]?.status).toBe('merge_ready')
+    expect(state.supervisor).toBeNull()
+    await rm(root, { recursive: true, force: true })
+  })
+
+  it('holds the task and never dispatches a review when a check fails', async () => {
+    const { root, seen } = await runWith([['false']])
+    const state = await loadState(root, Date.now())
+    // The worker's own claim of completion is not enough.
+    expect(state.tasks[0]?.status).not.toBe('review_pending')
+    expect(state.supervisor?.reason).toMatch(/^acceptance_failed/)
+    expect(seen).not.toContain('review')
+    await rm(root, { recursive: true, force: true })
+  })
+})

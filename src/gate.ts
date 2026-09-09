@@ -67,6 +67,12 @@ export function gateFor(state: LoopState, limits: BudgetLimits, now: number): Ga
         'a review verdict of PASS is recorded against it',
       ], [RETRY, ACCEPT, STOP])
 
+    case 'acceptance_failed':
+      return gate(reason, taskId, 'The task did not pass the checks this workspace requires. Redo it, or leave it?', [
+        `${label(taskId)} failed: ${reason.slice('acceptance_failed:'.length).trim() || 'an acceptance check'}`,
+        'the commit exists but was never offered for review',
+      ], [RETRY, STOP], 'Run the same command in .devloop/worktrees/<task> to see the output.')
+
     case 'scope_violation':
     case 'scope_check_failed':
       return gate(reason, taskId, 'The worker wrote outside the paths this task was allowed. Retry, or change the plan?', [

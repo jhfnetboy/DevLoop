@@ -200,11 +200,11 @@ What reading them changed:
   concrete answer*, not a signal that someone is needed. Fixed: see
   [Unsticking a halted loop](#unsticking-a-halted-loop). The loop still stops
   rather than waiting on the gate, which is the remaining half.
-- **Acceptance criteria are written, validated, persisted, sent to models — and
-  never executed.** `contract.acceptance` reaches prompts only. LongHorizon's
-  auditor inspects real artifacts; here the closest mechanical check is
+- **Acceptance criteria were written, validated, persisted, sent to models — and
+  never executed.** `contract.acceptance` reached prompts only. LongHorizon's
+  auditor inspects real artifacts; the closest mechanical check here was
   `assertTaskChangesAllowed`, which polices *where* a task wrote, not *whether
-  it works*.
+  it works*. Fixed: see [Acceptance checks](#acceptance-checks).
 - **Quota is charged on dispatch.** A run that fails in a second costs the same
   attempt budget as one that worked for forty minutes. LoopX spends only after a
   validated writeback.
@@ -410,6 +410,35 @@ cp ~/.dsh/profiles/web/node_modules/dsh-devloop/templates/GOAL.md \
 ```
 
 Each tick writes `.devloop/STATE.json`, appends `.devloop/EVENTS.jsonl`, and updates `PROGRESS.md`. With `agentBackend: noop` (default) it does not edit source. `dsh` / `claude` / `codex` run that CLI in the worktree; `subagent:<provider>` reuses an installed Harness provider.
+
+## Acceptance checks
+
+A worker reporting `outcome: completed` is a claim. `pnpm test` reading the files
+it wrote is evidence. Until an operator lists commands, the loop advances on the
+claim.
+
+```yaml
+- id: devloop
+  config:
+    acceptance:
+      - [pnpm, test]
+      - [pnpm, build]
+    acceptanceTimeoutMinutes: 15
+```
+
+They run in the task's own worktree, after the host commits the work and
+**before it is offered for review** — a task that cannot pass them never costs a
+reviewer anything. The first failure stops the rest and holds the task, which
+surfaces as a question naming the command that failed.
+
+Given as argv lists, not shell strings: there is no shell, so nothing in a path
+or a task title can become another command. The model's own `acceptance` text
+stays what it always was — criteria for a human and a reviewer to read. **A model
+never chooses what the host executes.**
+
+The trade is stated rather than hidden. Running the project's tests runs code the
+worker wrote, so this is off by default; switching it on is the same trust as
+typing those commands yourself after reading the diff.
 
 ## Unsticking a halted loop
 

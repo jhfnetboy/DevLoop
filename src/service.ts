@@ -14,6 +14,7 @@ import {
 } from './backend.js'
 import { ConfigSchema, resolveConfig, type Config } from './config.js'
 import { ClaudeCliBackend, CodexCliBackend } from './cli.js'
+import { runAcceptanceChecks } from './acceptance.js'
 import { ForgePrBackend } from './forge.js'
 import { DshHeadlessBackend } from './dsh.js'
 import { CordisHarnessHost, HarnessSubagentBackend } from './harness.js'
@@ -304,6 +305,18 @@ export default class DevloopService extends Service {
                 await commitDirtyTaskWorktree(outcome.value.worktreeRoot, action.taskId)
                 implementationSha = await taskWorktreeHeadSha(outcome.value.worktreeRoot)
                 if (implementationSha === input.contract.baseSha) throw new Error('empty_task')
+                // Evidence before the verdict: a task that cannot pass the
+                // operator's own checks does not reach a reviewer at all.
+                const failure = await runAcceptanceChecks(
+                  outcome.value.worktreeRoot,
+                  this.config.acceptance,
+                  this.config.acceptanceTimeoutMinutes * 60_000,
+                  abort.signal,
+                )
+                if (failure) {
+                  this.ctx.logger.error(`[dsh-devloop] acceptance failed: ${failure.argv.join(' ')} — ${failure.detail}`)
+                  throw new Error(`acceptance_failed: ${failure.argv.join(' ')}`)
+                }
               } catch (error) {
                 this.ctx.logger.error('[dsh-devloop] parent commit failed', error)
                 transitionAllowed = false
@@ -693,6 +706,7 @@ async function persistAgentHold(
 
 function implementationFailureReason(error: unknown): HoldReason {
   const message = error instanceof Error ? error.message : ''
+  if (message.startsWith('acceptance_failed:')) return message.split(':').slice(0, 2).join(':').trim()
   if (message.startsWith('scope_violation:')) return 'scope_violation'
   if (message.startsWith('scope_check:')) return 'scope_check_failed'
   if (message === 'empty_task') return 'empty_task'
