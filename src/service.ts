@@ -17,7 +17,7 @@ import { ClaudeCliBackend, CodexCliBackend } from './cli.js'
 import { ForgePrBackend } from './forge.js'
 import { DshHeadlessBackend } from './dsh.js'
 import { CordisHarnessHost, HarnessSubagentBackend } from './harness.js'
-import { DEVLOOP_DIR, loadState, saveState, withStateLock, workspaceArmed, type LockResult } from './persist.js'
+import { DEVLOOP_DIR, loadState, saveState, withStateLock, workspaceArmed, writeBudgetSnapshot, type LockResult } from './persist.js'
 import { writeProgress } from './progress.js'
 import { applyRunSignals, rollCostWindows } from './budget.js'
 import { runTick, type TickResult } from './tick.js'
@@ -72,6 +72,10 @@ export default class DevloopService extends Service {
 
   start(): void {
     if (this.timer || this.disposed) return
+    // So `devloop status` answers with this profile's limits, not the defaults.
+    void writeBudgetSnapshot(this.config.root, this.config.budget).catch((error: unknown) => {
+      this.ctx.logger.error('[dsh-devloop] budget snapshot failed', error)
+    })
     void this.tick()
     this.timer = setInterval(() => {
       void this.tick()

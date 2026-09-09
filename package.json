@@ -55,5 +55,8 @@
     "@types/node": "^22.19.0",
     "typescript": "^5.9.2",
     "vitest": "^4.1.8"
+  },
+  "bin": {
+    "devloop": "./lib/bin/devloop.js"
   }
 }

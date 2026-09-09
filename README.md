@@ -325,7 +325,16 @@ Known limits:
   before the merge tick. Treat a recorded verdict as an attestation about that
   commit, not as live pull-request state.
 - GitHub review submissions (Approve / Request changes) are **not** consumed;
-  only issue comments on the pull request are.
+  only issue comments on the pull request are. The halves are not equally
+  costly: a missed approval only makes the loop keep waiting, while a missed
+  *Request changes* means an objection never arrives at all — and that is the
+  most natural place to raise one. Reviewers must object in a comment.
+- A `pushUrl` that embeds credentials is refused rather than used. Put them in a
+  credential helper: a URL is passed on an argv and echoed in errors.
+- The remote `devloop/<task>` branch and the pull request are left behind, on
+  success and on failure alike. Deleting a branch and closing a pull request are
+  outward-facing, destructive acts that an unattended loop should not decide for
+  you — and on a failed task they are the only thing showing you what happened.
 - `STATE.json` records the route (`forge/pull-request`) rather than which
   allowlisted login approved — `RoutedBackend` deliberately overwrites an
   adapter's self-reported identity. The pull request itself is the audit trail
@@ -348,6 +357,58 @@ cp ~/.dsh/profiles/web/node_modules/dsh-devloop/templates/GOAL.md \
 ```
 
 Each tick writes `.devloop/STATE.json`, appends `.devloop/EVENTS.jsonl`, and updates `PROGRESS.md`. With `agentBackend: noop` (default) it does not edit source. `dsh` / `claude` / `codex` run that CLI in the worktree; `subagent:<provider>` reuses an installed Harness provider.
+
+## Unsticking a halted loop
+
+The loop halts itself on a supervisor hold or a tripped circuit breaker, and it
+sets `killSwitch` on the way out. Clearing that flag by hand is usually a false
+recovery: whatever tripped is still tripped, so the next tick stops for the same
+reason. `devloop` does the whole job.
+
+```bash
+pnpm exec devloop status ~/dev/myproj    # why it stopped, and whether resuming helps
+pnpm exec devloop resume ~/dev/myproj --task AUTH-001
+```
+
+`status` exits non-zero while halted, so it drops straight into a script.
+
+`status` and `resume` answer with **this profile's** limits: the running plugin
+records them at `.devloop/BUDGET.json`, and the output says whether it used
+those or fell back to the defaults. A diagnosis built on the wrong budget could
+otherwise report a recovery the service then refuses.
+
+`resume` lifts the hold and clears the circuits that are keyed on history which
+no longer applies — the no-progress clock and the duplicate-action window.
+Per-task counters are cleared only for a task named with `--task`: forgetting on
+its own that a task already burned three attempts is how an unattended loop
+starts spending without end. A retried task goes back to `rework`, losing any
+earlier `PASS`, so it can never skip review on the way to a merge. Spend caps
+survive unless you pass `--reset-cost`; a cap is a decision, not a glitch.
+
+"Would it help?" is answered against the state `resume` would actually write,
+so a terminal outcome counts as blocked even when no breaker has tripped — a
+goal already complete, a task that only escalates, a high-risk task that policy
+routes to a human. `status` exits non-zero for a loop that is stopped *or* that
+would stop on its next tick.
+
+A `STATE.json` the host could not parse or trust is never written over: when the
+journal cannot recover it, the loop halts with a synthesised empty state, and
+persisting that would erase the real task history. `resume` refuses and says so.
+
+If resuming would not actually help, it says so and exits non-zero rather than
+leaving you to find out on the next tick:
+
+```text
+resumed at revision 12
+  cleared: killSwitch is set
+  still blocked by: daily_cost_cap
+  the loop will stop again on the next tick
+```
+
+**A resumed workspace is not a running one.** The plugin disposes its timer when
+the loop halts, so restart the DSH profile afterwards (`launchctl kickstart -k`
+for a launchd-managed loop). Re-arming a running service without a restart is a
+separate change.
 
 ## Uninstall
 
