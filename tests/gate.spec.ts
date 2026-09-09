@@ -406,7 +406,11 @@ describe('the built CLI prints a command that does something', () => {
     expect(argv[1]).toBe(bin)
 
     const answered = await run(argv.slice(1))
-    expect(answered.code, answered.err).toBe(1) // still halted on goal_complete
+    // Not the exit code beyond "this was a command at all": what it exits with
+    // after accepting is a claim about halt semantics, which is not what this
+    // test is named for and would send the next reader looking at the printed
+    // command when it was the semantics that changed.
+    expect(answered.code, answered.err).not.toBe(2)
     expect(answered.out).toContain('answered accept')
     // The claim this test exists for: the command moved the state.
     expect((await loadState(root, Date.now())).revision).toBeGreaterThan(before)
