@@ -2,7 +2,7 @@
 
 DeepSeek Harness plugin: **expensive models plan and review, cheap models implement, a program loop keeps the factory inside budget.**
 
-This repository is `dsh-devloop`. It is not another coding agent and it does not fork DSH core. Design and decisions: [docs/](https://github.com/jhfnetboy/DevLoop/tree/main/docs).
+This repository publishes `@jhfnetboy/dsh-devloop`. It is not another coding agent and it does not fork DSH core. Design and decisions: [docs/](https://github.com/jhfnetboy/DevLoop/tree/main/docs).
 
 ## Quick start
 
@@ -58,7 +58,7 @@ path. From this checkout that is `node lib/bin/devloop.js`; against a profile
 that already has the plugin, use its copy:
 
 ```bash
-node ~/.dsh/profiles/web/node_modules/dsh-devloop/lib/bin/devloop.js status /path/to/project
+node ~/.dsh/profiles/web/node_modules/@jhfnetboy/dsh-devloop/lib/bin/devloop.js status /path/to/project
 ```
 
 Worth an alias if you use it often.
@@ -72,7 +72,7 @@ when an answer is not enough.
 Everything above this line is how to run it. Everything below is why it is built
 this way.
 
-## What 0.4.0 does
+## What 0.4.1 does
 
 - Advances the bounded plan → delegate → review → local merge pipeline from validated, versioned model results
 - Adds a human snapshot at `.devloop/PROGRESS.md` after each tick (including latched idle, killSwitch, and unreadable STATE)
@@ -117,7 +117,7 @@ Routing is opt-in. The safe default remains `noop`; fixed `dsh` / `claude` / `co
 
 ## Progress vs that target
 
-**0.4.0 is the current release.** 0.3 combined the unattended scheduler,
+**0.4.1 is the current release.** 0.3 combined the unattended scheduler,
 role-aware one-shot dispatch, host-enforced task boundaries, SHA-bound review,
 durable recovery, and human-readable progress snapshots; 0.4 makes a halt
 answerable, runs the operator's own checks before a reviewer is paid, and stops
@@ -220,7 +220,7 @@ In routed mode, plan / delegate / review use independent configured routes. Merg
 
 The goal is: expensive models plan and review, cheap models implement, a program loop keeps the factory inside budget.
 
-| Goal slice | 0.4.0 |
+| Goal slice | 0.4.1 |
 |---|---|
 | DSH plugin, not a new runtime | Yes. Bundle + Cordis Service. |
 | Program loop, one transition per tick | Yes. Pure `decideNextAction` plus `runTick`, driven by `setInterval`. |
@@ -315,12 +315,12 @@ Git installs run `prepare` → `pnpm build`, so the published entry is `lib/`.
 
 ## Install into DSH
 
-Pinned GitHub tag (needs git tag `v0.4.0`; until then `github:jhfnetboy/DevLoop`). Git install runs `prepare` → `pnpm build`. pnpm ≥10 may ignore that build and still exit 0 — if it prints `Ignored build scripts`, approve `dsh-devloop` (`onlyBuiltDependencies` on pnpm 10.1–10.25, `allowBuilds` on ≥10.26, or `pnpm approve-builds`) and re-run `add` (not `pnpm rebuild`), even when `add` succeeded:
+Pinned GitHub tag (needs git tag `v0.4.1`; until then `github:jhfnetboy/DevLoop`). Git install runs `prepare` → `pnpm build`. pnpm ≥10 may ignore that build and still exit 0 — if it prints `Ignored build scripts`, approve `@jhfnetboy/dsh-devloop` (`onlyBuiltDependencies` on pnpm 10.1–10.25, `allowBuilds` on ≥10.26, or `pnpm approve-builds`) and re-run `add` (not `pnpm rebuild`), even when `add` succeeded:
 
 Quote the spec: zsh treats `#` as a glob (`no matches found`).
 
 ```bash
-dsh plugin --profile web add 'github:jhfnetboy/DevLoop#v0.4.0'
+dsh plugin --profile web add 'github:jhfnetboy/DevLoop#v0.4.1'
 ```
 
 From this checkout (after `pnpm build`):
@@ -343,7 +343,7 @@ Confirm the layer is composed:
 dsh --profile web --dump-config | grep -A2 devloop
 ```
 
-You should see a `# == dsh-devloop` layer and an inserted row `id: devloop`.
+You should see a `# == @jhfnetboy/dsh-devloop` layer and an inserted row `id: devloop`.
 
 Optional overrides in `~/.dsh/profiles/web/cordis.patch.yml`:
 
@@ -485,7 +485,7 @@ The plugin is idle until the target workspace contains `.devloop/GOAL.md` (a reg
 ```bash
 mkdir -p /path/to/your/project/.devloop
 # after plugin install:
-cp ~/.dsh/profiles/web/node_modules/dsh-devloop/templates/GOAL.md \
+cp ~/.dsh/profiles/web/node_modules/@jhfnetboy/dsh-devloop/templates/GOAL.md \
   /path/to/your/project/.devloop/GOAL.md
 # from a local checkout, use templates/GOAL.md instead
 # edit GOAL.md, then start dsh from that project (or set config.root)
@@ -603,7 +603,7 @@ separate change.
 ## Uninstall
 
 ```bash
-dsh plugin --profile web remove dsh-devloop
+dsh plugin --profile web remove @jhfnetboy/dsh-devloop
 ```
 
 ## Acknowledgements

@@ -9,7 +9,7 @@
 
 ## 决策
 
-DevLoop 是 **DeepSeek Harness 上的工程工作流插件**（npm 包名 `dsh-devloop`），不是另一个 Agent Harness。
+DevLoop 是 **DeepSeek Harness 上的工程工作流插件**（npm 包名 `@jhfnetboy/dsh-devloop`），不是另一个 Agent Harness。
 
 职责切分：
 
