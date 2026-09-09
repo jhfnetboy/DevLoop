@@ -52,6 +52,8 @@ Pin installs to `'github:jhfnetboy/DevLoop#v0.4.0'` (quotes required on zsh). At
 
 Only when `npm whoami` succeeds, `HEAD` **is** the release tag (`git rev-parse HEAD` equals `git rev-parse v0.4.0`), the tree is clean, and `pnpm test` is green.
 
+Check `npm whoami --registry=https://registry.npmjs.org/`, not bare `npm whoami`: a machine configured against a mirror answers for the mirror, which reports "not logged in" for an account that is, and cannot accept a publish either way. `publishConfig` in `package.json` pins the publish registry, so the flags below are belt and braces rather than the thing that makes it work.
+
 Publish the **inspected tarball** from `main` while it still points at the tag commit (do not `git checkout v0.4.0`: detached HEAD makes pnpm 10.6.3 fail with `ERR_PNPM_GIT_UNKNOWN_BRANCH`):
 
 ```bash
@@ -70,4 +72,4 @@ If `npm whoami` fails, do not invent a token. GitHub Release + `github:` spec is
 
 - Force-push tags
 - Publish from a dirty working tree
-- Treat the later 0.4 operator surface as shipped because this tag exists
+- Treat the later 0.5 operator surface as shipped because this tag exists

@@ -85,7 +85,7 @@ this way.
   all and reports **neither**. That last one matters: the implementers are
   where most of the spend is, so `maxCostUsdPerDay` currently only sees what
   the planner and reviewer cost
-- Still no operator UI (**0.4**)
+- Still no operator UI (**0.5**)
 - Installs into a DSH profile as a bundle plugin
 - On each tick, if the workspace has `.devloop/GOAL.md`, reads revisioned state and deterministically chooses plan / delegate / review / merge / stop
 - Enforces budget / circuit-breaker rules in-process
@@ -117,9 +117,11 @@ Routing is opt-in. The safe default remains `noop`; fixed `dsh` / `claude` / `co
 
 ## Progress vs that target
 
-**0.3 is the current release candidate.** It combines the unattended scheduler,
+**0.4.0 is the current release.** 0.3 combined the unattended scheduler,
 role-aware one-shot dispatch, host-enforced task boundaries, SHA-bound review,
-durable recovery, and human-readable progress snapshots.
+durable recovery, and human-readable progress snapshots; 0.4 makes a halt
+answerable, runs the operator's own checks before a reviewer is paid, and stops
+charging for a dispatch no provider ever saw.
 
 | Slice | Status | Meaning |
 |---|---|---|
@@ -130,8 +132,9 @@ durable recovery, and human-readable progress snapshots.
 | **0.2.4** | **Done** (PR #11 on `main`) | Mechanical merge only after Review PASS; then delete worktree |
 | **0.2.5** | **Done** (PR #12 on `main`) | Spawn `claude` / `codex` as T3; DSH Flash/Pro remain T1/T2 |
 | **0.2.6** | **Done** (on `main`) | Host commit, Claude `--`, Codex gitdir |
-| **0.3** | **This slice** | Continuous scheduler ticks, role/tier routing, one-shot dispatch, budget signals, PROGRESS.md |
-| **0.4** | **Not started** | Operator UI / human queue / budget panel — **not** required for the autonomous loop |
+| **0.3** | **Done** (tag `v0.3.0`) | Continuous scheduler ticks, role/tier routing, one-shot dispatch, budget signals, PROGRESS.md |
+| **0.4** | **This slice** | Gates, host-run acceptance, quota charged for work that happened |
+| **0.5** | **Not started** | Operator UI / human queue / budget panel — **not** required for the autonomous loop |
 
 Path to the goal you described:
 
@@ -143,7 +146,7 @@ v0.2.3
   → 0.3 unattended scheduler        # this slice: continuous bounded ticks
 ```
 
-The prerequisite slices are on `main`. **0.4 is a later operator surface**,
+The prerequisite slices are on `main`. **0.5 is a later operator surface**,
 after the bounded autonomous loop is released and observed in real projects.
 
 ## How it fits
@@ -227,7 +230,7 @@ The goal is: expensive models plan and review, cheap models implement, a program
 | Expensive models actually review | Yes when opted in. Review is bound to the implementation SHA and an independent provider/model identity. |
 | Unattended milestone completion | Yes for the bounded plan → delegate → review → local merge chain; push and release remain explicit operator actions. |
 
-0.3 advances the bounded pipeline from validated machine results under budget. The operator UI, general API broker, and pstack-style multi-candidate arena remain 0.4.
+0.3 advanced the bounded pipeline from validated machine results under budget, and 0.4 makes its halts answerable. The operator UI, general API broker, and pstack-style multi-candidate arena remain 0.5.
 
 ## Measured against other long-running agent designs
 

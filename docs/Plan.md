@@ -49,9 +49,9 @@ The active, testable 0.3 release checklist is [`V0.3-TODO.md`](./V0.3-TODO.md).
 - 熔断接入真实 token / 成本信号（能拿到多少算多少，拿不到用墙钟）
 - 进度汇总写入 PROGRESS.md
 
-**0.3 最终边界**：PLAN、implementation 与 Review 只通过版本化 machine envelope 进入纯代码状态机；宿主强制路径和提交 SHA 门禁。自动 push、发布、UI、通用 API broker 与多候选 arena 留到 0.4。
+**0.3 最终边界**：PLAN、implementation 与 Review 只通过版本化 machine envelope 进入纯代码状态机；宿主强制路径和提交 SHA 门禁。自动 push、发布、UI、通用 API broker 与多候选 arena 留到 0.5。
 
-## Milestone 0.4 — Operator surface
+## Milestone 0.5 — Operator surface
 
 **未开始。** 在 0.3 的无人值守循环能跑之后。不是到达产品目标的前置条件。
 
