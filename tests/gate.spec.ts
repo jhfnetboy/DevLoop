@@ -1,11 +1,13 @@
+import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
+import { promisify } from 'node:util'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { runCli } from '../src/command.ts'
 import { resolveConfig } from '../src/config.ts'
 import { applyAnswer, gateFor } from '../src/gate.ts'
-import { emptyState, saveState } from '../src/persist.ts'
+import { emptyState, loadState, saveState } from '../src/persist.ts'
 import type { LoopState } from '../src/types.ts'
 import { baseState, makeTask, mkdtempInRepo, withTasks } from './helpers.ts'
 
@@ -356,6 +358,69 @@ describe('the answer command', () => {
     expect(result.out).toContain('The recorded state could not be read back')
     expect(result.out).toContain('EVENTS.jsonl')
   })
+})
+
+/**
+ * The two tests above run against `src/`, so they say nothing about the layout
+ * an operator actually runs. `selfInvocation` computes a path relative to this
+ * module, and the built tree puts that module somewhere else — `lib/command.js`
+ * next to `lib/bin/devloop.js`. Nothing asserted the answer is right there.
+ *
+ * This one spends a subprocess to buy a different claim than the replay test:
+ * not that the printed command is accepted, but that running it — as a person
+ * would, against the published artifact — moves the state.
+ */
+describe('the built CLI prints a command that does something', () => {
+  const repo = join(import.meta.dirname, '..')
+  const bin = join(repo, 'lib', 'bin', 'devloop.js')
+  const scratch: string[] = []
+
+  beforeAll(async () => {
+    // `pnpm test` does not build, and Deploy.md runs test before build, so a
+    // fresh clone would otherwise fail here for the wrong reason. ~1.5s.
+    if (!existsSync(bin)) await promisify(execFile)('pnpm', ['build'], { cwd: repo })
+  }, 60_000)
+
+  afterEach(async () => {
+    await Promise.all(scratch.splice(0).map(dir => rm(dir, { recursive: true, force: true })))
+  })
+
+  it('runs its own printed answer against a real workspace', async () => {
+    const root = await mkdtempInRepo('devloop-built-')
+    scratch.push(root)
+    await mkdir(join(root, '.devloop'))
+    await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
+    await saveState(root, { ...emptyState(NOW), ...held('empty_task', { lastReviewVerdict: 'PASS' }) })
+    const before = (await loadState(root, Date.now())).revision
+
+    const status = await run([bin, 'status', root])
+    expect(status.code, status.err).toBe(1)
+
+    const line = status.out.split('\n').find(l => l.includes(' answer accept '))
+    expect(line, status.out).toBeDefined()
+    const words = line!.trim().split(/\s+/)
+    // Everything up to and including the workspace is the command; the rest of
+    // the line is the summary a person reads.
+    const argv = words.slice(0, words.indexOf(root) + 1)
+    expect(argv[0]).toBe('node')
+    expect(argv[1]).toBe(bin)
+
+    const answered = await run(argv.slice(1))
+    expect(answered.code, answered.err).toBe(1) // still halted on goal_complete
+    expect(answered.out).toContain('answered accept')
+    // The claim this test exists for: the command moved the state.
+    expect((await loadState(root, Date.now())).revision).toBeGreaterThan(before)
+  }, 60_000)
+
+  async function run(argv: string[]): Promise<{ code: number; out: string; err: string }> {
+    try {
+      const { stdout, stderr } = await promisify(execFile)('node', argv)
+      return { code: 0, out: stdout, err: stderr }
+    } catch (error) {
+      const e = error as { code?: number; stdout?: string; stderr?: string }
+      return { code: e.code ?? 1, out: e.stdout ?? '', err: e.stderr ?? '' }
+    }
+  }
 })
 
 async function journalLines(root: string): Promise<{ revision: number; action: string; state: LoopState }[]> {
