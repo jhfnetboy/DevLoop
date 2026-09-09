@@ -161,6 +161,59 @@ The goal is: expensive models plan and review, cheap models implement, a program
 
 0.3 advances the bounded pipeline from validated machine results under budget. The operator UI, general API broker, and pstack-style multi-candidate arena remain 0.4.
 
+## Measured against other long-running agent designs
+
+Two published designs describe the same problem from different angles, and
+reading them against this code found real gaps rather than confirming what was
+already here.
+
+[**LongHorizon-Harness**](https://blog.mushroom.cv/blog/longhorizon-harness-amap-ml-ai-agent-long-task/)
+names long-task failure as *cumulative collapse* rather than a single bad step,
+with three causes: context pollution, state drift, and a verification gap where
+executor and auditor are the same entity, so "claimed done" passes for verified.
+Its numbers are worth the attention — same model, same backend, WeaveBench 51.8%
+→ 80.7% with 24% fewer tokens — because they say the ceiling was the harness,
+not the model. That is the premise this plugin is built on.
+
+[**LoopX**](https://blog.mushroom.cv/blog/loopx-loop-engineering-state-kernel-long-running-agents/)
+argues the failure is loss of *control state*: what the objective is, which
+decisions are settled, what is waiting on a person, where the last run stopped.
+It keeps five durable primitives — Goal, Gates, Todos, Evidence, Quota.
+
+| Their primitive | Here | Status |
+|---|---|---|
+| Goal | `.devloop/GOAL.md` | present |
+| Evidence | `EVENTS.jsonl`, `PROGRESS.md`, revision-checked writes | present |
+| Todos | `STATE.json` `tasks[]` | present, but no claim or lease |
+| Quota | seven budget circuits | present, and charged at dispatch rather than after a verified result |
+| **Gates** | `supervisor: { taskId, reason }` | **an error code, not a question** |
+
+The three causes LongHorizon names are already addressed, and the third more
+strictly than it asks: a fresh worktree and a one-shot CLI per task keep history
+out; the host owns state and models only propose; and a review is bound to the
+exact implementation commit, so a verdict expires the moment the branch moves.
+
+What reading them changed:
+
+- **A halt says what broke, not what to decide.** `reason: "empty_task"` is an
+  error code. LoopX's point is that a gate must be *a concrete question with a
+  concrete answer*, not a signal that someone is needed. This is also why a
+  resumed workspace currently needs the profile restarted: without a gate to
+  wait on, the loop has nothing to do but stop.
+- **Acceptance criteria are written, validated, persisted, sent to models — and
+  never executed.** `contract.acceptance` reaches prompts only. LongHorizon's
+  auditor inspects real artifacts; here the closest mechanical check is
+  `assertTaskChangesAllowed`, which polices *where* a task wrote, not *whether
+  it works*.
+- **Quota is charged on dispatch.** A run that fails in a second costs the same
+  attempt budget as one that worked for forty minutes. LoopX spends only after a
+  validated writeback.
+
+Where this design is weaker than either: both assume the executor can report its
+own usage. `dsh --profile headless` cannot, so the daily cost cap only sees what
+the planner and reviewer spent — a missing instrument, not a decision. Deferred
+work is tracked in [`docs/V0.4-TODO.md`](./docs/V0.4-TODO.md).
+
 ## Requirements
 
 - Node `^22.19.0 || >=24.0.0` (DSH engines; Node 23 is not in the Harness range)
