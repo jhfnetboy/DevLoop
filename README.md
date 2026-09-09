@@ -416,14 +416,31 @@ separate change.
 dsh plugin --profile web remove dsh-devloop
 ```
 
-## Reference implementations (not vendored)
+## Acknowledgements
 
-Local clones used while writing 0.1 (outside this repo):
+**[H97y/dsh-devflow](https://github.com/H97y/dsh-devflow)** (MIT) came first, and
+this plugin exists because of it. It had already shown that a DSH plugin could
+carry a state machine, git worktrees, per-stage models, an auto-pump, review,
+merge, a progress surface and a human queue — roughly 70% of the same ground.
+The choice recorded in [ADR-0003](./docs/adr/0003-reference-dsh-devflow-do-not-copy.md)
+was to rebuild rather than fork, so that the domain model could follow this
+project's own decisions instead of inheriting a requirement-pool one. That is a
+statement about which model to grow, not a criticism: rebuilding was only
+affordable because someone had already proven the shape works.
 
-- `deepseek-ai/deepseek-harness` — plugin / bundle API
-- `H97y/dsh-devflow` — winner reference for tick + worktree + pipeline ideas
+Ideas taken from it, as ideas rather than code: the tree-outside plugin with
+`dsh.bundle` and `cordis.patch.yml`, file-backed state driven by an in-process
+tick, one fresh agent session per task, worktree isolation with a stall
+watchdog, per-stage model configuration, and a queue for decisions a human owes
+the loop. No code was copied and no `.devflow` state schema was carried over.
 
-We rebuild; we do not copy that product’s requirement-pool model.
+**[deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness)**
+provides the plugin and bundle API this runs on. DevLoop is a plugin, not a fork
+([ADR-0001](./docs/adr/0001-dsh-plugin-not-independent-runtime.md),
+[ADR-0002](./docs/adr/0002-do-not-fork-dsh-core.md)).
+
+Reusable improvements found here are meant to go back to `dsh-devflow` or DSH as
+pull requests rather than stay put.
 
 ## License
 
