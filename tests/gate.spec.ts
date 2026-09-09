@@ -1,10 +1,13 @@
+import { execFile } from 'node:child_process'
+import { existsSync } from 'node:fs'
+import { promisify } from 'node:util'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { runCli } from '../src/command.ts'
 import { resolveConfig } from '../src/config.ts'
 import { applyAnswer, gateFor } from '../src/gate.ts'
-import { emptyState, saveState } from '../src/persist.ts'
+import { emptyState, loadState, saveState } from '../src/persist.ts'
 import type { LoopState } from '../src/types.ts'
 import { baseState, makeTask, mkdtempInRepo, withTasks } from './helpers.ts'
 
@@ -218,11 +221,60 @@ describe('the answer command', () => {
 
   it('prints the question and the exact commands that answer it', async () => {
     const root = await armed({ ...emptyState(NOW), ...held('empty_task', { lastReviewVerdict: 'PASS' }) })
-    const result = await runCli(['status', root])
+    const result = await runCli(['status', root], { invokedAs: 'devloop' })
     expect(result.code).toBe(1)
     expect(result.out).toContain('Did it need any change?')
-    expect(result.out).toContain('devloop answer retry')
-    expect(result.out).toContain('devloop answer accept')
+    expect(result.out).toContain(`devloop answer retry  ${root}`)
+    expect(result.out).toContain(`devloop answer accept ${root}`)
+  })
+
+  /**
+   * The gate exists to hand an operator the exact command to type. It was
+   * handing back `devloop answer retry`, and nothing puts `devloop` on `PATH`:
+   * npm and pnpm do not link a package's own `bin` into its own
+   * `node_modules/.bin`, and `dsh plugin add` does not either. So the one line
+   * that was the point of the feature was the one line that could not be run.
+   *
+   * Asserting the wording would not have caught that, and did not. This takes
+   * the printed line and feeds it back to the CLI: whatever it prints has to be
+   * something this CLI accepts.
+   */
+  it('prints commands that this CLI actually accepts', async () => {
+    const root = await armed({ ...emptyState(NOW), ...held('empty_task', { lastReviewVerdict: 'PASS' }) })
+    const status = await runCli(['status', root], { invokedAs: 'node /some/where/devloop.js' })
+
+    const printed = status.out.split('\n').filter(line => line.includes(' answer '))
+    expect(printed).toHaveLength(3)
+
+    for (const line of printed) {
+      const words = line.trim().split(/\s+/)
+      // Strip the invocation the operator would type, keep the arguments.
+      expect(words.slice(0, 2)).toEqual(['node', '/some/where/devloop.js'])
+      const [answer, key, target] = words.slice(2)
+      expect(answer, line).toBe('answer')
+      expect(target, line).toBe(root)
+
+      const replayed = await runCli([answer, key!, target!])
+      // Not "it worked" — it must not have been rejected as bad usage. Exit 2 is
+      // this CLI's code for "that is not a command I take".
+      expect(replayed.code, `${line} -> ${replayed.err}`).not.toBe(2)
+      expect(replayed.err, line).not.toContain('is not an answer')
+      expect(replayed.err, line).not.toContain('unknown option')
+      expect(replayed.err, line).not.toContain('expected at most one')
+    }
+  })
+
+  // Without an override it must still name a file that exists, not `devloop`
+  // and not whatever happened to start the process — under this runner that
+  // would be a vitest worker.
+  it('names its own bin by default, not the process that started it', async () => {
+    const root = await armed({ ...emptyState(NOW), ...held('empty_task') })
+    const status = await runCli(['status', root])
+    const line = status.out.split('\n').find(l => l.includes(' answer retry'))
+    const binPath = line?.trim().split(/\s+/)[1]
+    expect(binPath, line).toBeDefined()
+    expect(binPath, line).toMatch(/bin[/\\]devloop\.(ts|js)$/)
+    expect(existsSync(binPath!), `${String(binPath)} must exist`).toBe(true)
   })
 
   it('applies the answer and records it in the journal', async () => {
@@ -306,6 +358,73 @@ describe('the answer command', () => {
     expect(result.out).toContain('The recorded state could not be read back')
     expect(result.out).toContain('EVENTS.jsonl')
   })
+})
+
+/**
+ * The two tests above run against `src/`, so they say nothing about the layout
+ * an operator actually runs. `selfInvocation` computes a path relative to this
+ * module, and the built tree puts that module somewhere else — `lib/command.js`
+ * next to `lib/bin/devloop.js`. Nothing asserted the answer is right there.
+ *
+ * This one spends a subprocess to buy a different claim than the replay test:
+ * not that the printed command is accepted, but that running it — as a person
+ * would, against the published artifact — moves the state.
+ */
+describe('the built CLI prints a command that does something', () => {
+  const repo = join(import.meta.dirname, '..')
+  const bin = join(repo, 'lib', 'bin', 'devloop.js')
+  const scratch: string[] = []
+
+  beforeAll(async () => {
+    // `pnpm test` does not build, and Deploy.md runs test before build, so a
+    // fresh clone would otherwise fail here for the wrong reason. ~1.5s.
+    if (!existsSync(bin)) await promisify(execFile)('pnpm', ['build'], { cwd: repo })
+  }, 60_000)
+
+  afterEach(async () => {
+    await Promise.all(scratch.splice(0).map(dir => rm(dir, { recursive: true, force: true })))
+  })
+
+  it('runs its own printed answer against a real workspace', async () => {
+    const root = await mkdtempInRepo('devloop-built-')
+    scratch.push(root)
+    await mkdir(join(root, '.devloop'))
+    await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
+    await saveState(root, { ...emptyState(NOW), ...held('empty_task', { lastReviewVerdict: 'PASS' }) })
+    const before = (await loadState(root, Date.now())).revision
+
+    const status = await run([bin, 'status', root])
+    expect(status.code, status.err).toBe(1)
+
+    const line = status.out.split('\n').find(l => l.includes(' answer accept '))
+    expect(line, status.out).toBeDefined()
+    const words = line!.trim().split(/\s+/)
+    // Everything up to and including the workspace is the command; the rest of
+    // the line is the summary a person reads.
+    const argv = words.slice(0, words.indexOf(root) + 1)
+    expect(argv[0]).toBe('node')
+    expect(argv[1]).toBe(bin)
+
+    const answered = await run(argv.slice(1))
+    // Not the exit code beyond "this was a command at all": what it exits with
+    // after accepting is a claim about halt semantics, which is not what this
+    // test is named for and would send the next reader looking at the printed
+    // command when it was the semantics that changed.
+    expect(answered.code, answered.err).not.toBe(2)
+    expect(answered.out).toContain('answered accept')
+    // The claim this test exists for: the command moved the state.
+    expect((await loadState(root, Date.now())).revision).toBeGreaterThan(before)
+  }, 60_000)
+
+  async function run(argv: string[]): Promise<{ code: number; out: string; err: string }> {
+    try {
+      const { stdout, stderr } = await promisify(execFile)('node', argv)
+      return { code: 0, out: stdout, err: stderr }
+    } catch (error) {
+      const e = error as { code?: number; stdout?: string; stderr?: string }
+      return { code: e.code ?? 1, out: e.stdout ?? '', err: e.stderr ?? '' }
+    }
+  }
 })
 
 async function journalLines(root: string): Promise<{ revision: number; action: string; state: LoopState }[]> {
