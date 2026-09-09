@@ -13,6 +13,7 @@ import {
   parseRemoteUrl,
   pullRequestBody,
   isValidBranchName,
+  maskUrl,
   quoteAlternate,
   repoSlug,
   scrubbedEnvNames,
@@ -217,6 +218,51 @@ describe('parseRemoteUrl', () => {
     expect(() => parseRemoteUrl('/srv/local/repo.git')).toThrow(/unsupported remote URL/)
     expect(() => parseRemoteUrl('https://github.com/acme')).toThrow(/owner\/name/)
     expect(() => parseRemoteUrl('file:///tmp/x/y')).toThrow(/unsupported remote protocol/)
+  })
+
+  it('never lets a credential in the URL reach an error message', () => {
+    // Reported by an external review of the merged branch, reproduced first:
+    // the token appeared verbatim in the thrown message, which the service logs.
+    const secret = 'ghp_SECRETTOKEN123'
+    for (const url of [
+      `https://user:${secret}@github.com/owner/repo/extra`,
+      `https://user:${secret}@github.com/owner/repo.git`,
+      `https://${secret}@github.com/owner`,
+      // No scheme: the secret still reaches config, argv and logs, which is
+      // reason enough — git actually dials a host named `user` here.
+      `user:${secret}@github.com:owner/repo.git`,
+    ]) {
+      let message = ''
+      try {
+        parseRemoteUrl(url)
+        message = 'ACCEPTED'
+      } catch (error) {
+        message = error instanceof Error ? error.message : String(error)
+      }
+      expect(message).not.toContain(secret)
+      // Silently accepting it would put the token in argv and in config too.
+      expect(message).toMatch(/must not embed credentials/)
+    }
+  })
+
+  it('masks only the userinfo, leaving the URL readable', () => {
+    expect(maskUrl('https://user:tok@github.com/a/b.git')).toBe('https://***@github.com/a/b.git')
+    expect(maskUrl('user:tok@github.com:a/b.git')).toBe('***@github.com:a/b.git')
+    expect(maskUrl('https://github.com/a/b.git')).toBe('https://github.com/a/b.git')
+    // An scp remote without a secret must survive untouched.
+    expect(maskUrl('git@github.com:a/b.git')).toBe('git@github.com:a/b.git')
+  })
+
+  it('still accepts the ordinary scp remote', () => {
+    // The control for the case above: a rule wide enough to reject every scp
+    // form would make that test pass while breaking the normal way to configure
+    // this backend.
+    expect(parseRemoteUrl('git@github.com:owner/repo.git')).toEqual({
+      host: 'github.com', owner: 'owner', name: 'repo',
+    })
+    expect(parseRemoteUrl('github.com:owner/repo')).toEqual({
+      host: 'github.com', owner: 'owner', name: 'repo',
+    })
   })
 
   it('refuses a URL whose path is not exactly owner/repo', () => {
