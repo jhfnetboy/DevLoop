@@ -44,7 +44,7 @@ export function evaluateBudget(
   // Checked for every action, not just a delegate: once the tick latches, the
   // intended delegate has already been rewritten to idle, and a check that only
   // ran for a delegate would never be reached again.
-  const refused = refusedTaskId(usage, limits)
+  const refused = refusedTaskId(state, limits)
   if (refused !== undefined) {
     return fail(`dispatch_refused:${refused}`, refused)
   }
@@ -241,9 +241,18 @@ function ownCount(record: Readonly<Record<string, number>>, id: string): number 
   return Object.hasOwn(record, id) ? record[id] ?? 0 : 0
 }
 
-function refusedTaskId(usage: BudgetUsage, limits: BudgetLimits): string | undefined {
-  for (const [taskId, refused] of Object.entries(usage.refusedDispatches)) {
-    if (refused >= limits.maxRefusedDispatches) return taskId
+/**
+ * Same shape as `timedOutTaskId`, and for the same reason: the counter outlives
+ * the task, so a merged task — or one an operator dropped from the plan — would
+ * go on halting every action for ever, and would hide the reason that is
+ * actually blocking the loop now.
+ */
+function refusedTaskId(state: LoopState, limits: BudgetLimits): string | undefined {
+  for (const [taskId, refused] of Object.entries(state.usage.refusedDispatches)) {
+    if (typeof refused !== 'number' || refused < limits.maxRefusedDispatches) continue
+    const task = state.tasks.find(entry => entry.id === taskId)
+    if (!task || TERMINAL_STATUS.has(task.status)) continue
+    return taskId
   }
   return undefined
 }

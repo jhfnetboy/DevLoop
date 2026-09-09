@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { RoutedBackend, type AgentBackend, type AgentRunInput, type AgentRunResult } from '../src/backend.ts'
-import { refundAction } from '../src/budget.ts'
+import { evaluateBudget, refundAction } from '../src/budget.ts'
 import { ClaudeCliBackend } from '../src/cli.ts'
 import { resolveConfig } from '../src/config.ts'
 import { ForgePrBackend } from '../src/forge.ts'
@@ -250,6 +250,52 @@ describe('the attempt budget survives a misconfiguration', () => {
     expect(resumed.usage.refusedDispatches['other']).toBe(1)
     // The whole point: the next tick must actually dispatch.
     expect(runTick(resumed, limits, 2_001_000).action).toEqual({ type: 'delegate', taskId: 'd1' })
+  })
+
+  /**
+   * `timedOutTaskId` already skips a task that is finished or gone. This one
+   * scanned the raw counter, so a task that had since been merged — or dropped
+   * from the plan entirely — went on halting the whole loop for every action,
+   * for ever.
+   */
+  it('stops speaking for a task that is finished or no longer in the plan', () => {
+    const done = {
+      ...withTasks(baseState(), [makeTask({ id: 'd1', status: 'done' })]),
+      usage: { ...baseState().usage, refusedDispatches: { d1: limits.maxRefusedDispatches } },
+    }
+    expect(evaluateBudget(done, limits, 1_000, { type: 'idle' }).ok).toBe(true)
+
+    const gone = {
+      ...withTasks(baseState(), [makeTask({ id: 'other', status: 'ready' })]),
+      usage: { ...baseState().usage, refusedDispatches: { removed: limits.maxRefusedDispatches } },
+    }
+    expect(evaluateBudget(gone, limits, 1_000, { type: 'idle' }).ok).toBe(true)
+
+    // The control: a live task with the same count must still trip it.
+    const live = {
+      ...withTasks(baseState(), [makeTask({ id: 'd1', status: 'rework' })]),
+      usage: { ...baseState().usage, refusedDispatches: { d1: limits.maxRefusedDispatches } },
+    }
+    expect(evaluateBudget(live, limits, 1_000, { type: 'idle' })).toMatchObject({
+      ok: false, reason: 'dispatch_refused:d1',
+    })
+  })
+
+  it('does not let a stale refusal mask the reason that is actually blocking now', () => {
+    // A tripped B, long since fixed and merged; C is the live problem.
+    const state = {
+      ...withTasks(baseState(), [
+        makeTask({ id: 'A', status: 'done' }),
+        makeTask({ id: 'C', status: 'rework', attempts: limits.maxTaskAttempts }),
+      ]),
+      usage: {
+        ...baseState().usage,
+        refusedDispatches: { A: limits.maxRefusedDispatches },
+        taskAttempts: { C: limits.maxTaskAttempts },
+      },
+    }
+    const verdict = evaluateBudget(state, limits, 1_000, { type: 'delegate', taskId: 'C' })
+    expect(verdict).toMatchObject({ ok: false, reason: 'max_task_attempts:C' })
   })
 
   it('still stops a task that keeps failing for real', async () => {
