@@ -1,8 +1,35 @@
-# Release 0.3.0
+# Release 0.3.1
 
-Bounded autonomous engineering loop: structured model results, deterministic state transitions, host-enforced write scope, SHA-bound independent review, durable recovery, and role/tier routing. Tag `v0.3.0` and the GitHub Release are created **after** this commit is on `main`; steps: [Deploy.md](./Deploy.md).
+Bounded autonomous engineering loop: structured model results, deterministic state transitions, host-enforced write scope, SHA-bound independent review, durable recovery, and role/tier routing. Tag `v0.3.1` and the GitHub Release are created **after** this commit is on `main`; steps: [Deploy.md](./Deploy.md).
 
-Package version: **0.3.0**. This document is the release note, not a second semver.
+Package version: **0.3.1**. This document is the release note, not a second semver.
+
+## New in 0.3.1
+
+Three things the loop was missing, found by reading it against two published
+long-running-agent designs ([#24](https://github.com/jhfnetboy/DevLoop/pull/24)):
+
+| Change | PR | Ships |
+|---|---|---|
+| Gates | [#21](https://github.com/jhfnetboy/DevLoop/pull/21) | A halt is a question with answers, not an error code: `devloop answer <retry\|review\|accept\|stop>` |
+| Host-run acceptance | [#22](https://github.com/jhfnetboy/DevLoop/pull/22) | Operator-configured argv checks run in the task worktree **before** a reviewer is paid. Off by default |
+| Quota after a result | [#23](https://github.com/jhfnetboy/DevLoop/pull/23) | A dispatch no provider ever saw is refunded, and counted separately so a broken route is named rather than timed out |
+| Quick start | [#25](https://github.com/jhfnetboy/DevLoop/pull/25) | README leads with running it; `devloop` is spelled as a path, because nothing puts it on `PATH` |
+
+Both `acceptance` and the gate answers are operator decisions: a model never
+chooses what the host executes, and `answer stop` is now recorded rather than
+merely printed, so a halt nobody has read and one somebody declined are
+distinguishable in `.devloop/`.
+
+New config: `acceptance`, `acceptanceTimeoutMinutes` (**per command**, not for
+the list), `budget.maxRefusedDispatches` (default 2). New state fields
+`usage.refusedDispatches` and `acknowledged`; states written by 0.3.0 load
+unchanged.
+
+Known, and written down rather than hidden: the gate prints `devloop answer
+retry`, which is the one line an operator cannot paste, because nothing links a
+package's own `bin` onto `PATH`. Tracked in
+[`V0.4-TODO.md`](./V0.4-TODO.md) with the three candidate fixes.
 
 ## What is in this version
 

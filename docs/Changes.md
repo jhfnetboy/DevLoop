@@ -1,5 +1,18 @@
 # Changes
 
+## 0.3.1 — 2026-09-09
+
+- Gates：halt 不再只是错误码，而是带可执行答案的问题；新增 `devloop answer <retry|review|accept|stop>`
+- `answer review` / `accept` 不再走 `resumeState`，因此不会清掉任务已花的 `reviewCycles` / `taskStartedAt`——只有 `retry` 是重开
+- `answer stop` 记入状态，`.devloop/` 中「无人看过」与「有人看过并决定不动」不再无法区分
+- 宿主执行 `acceptance`（argv 数组，无 shell），在任务 worktree 中、**派发评审之前**运行；默认关闭
+- `acceptanceTimeoutMinutes` 是**每条命令**一份，不是整个列表
+- 未被任何 provider 看到的派发退还 attempt；新增不退还的 `refusedDispatches`，坏路由被点名 `dispatch_refused:<taskId>` 而不是等 15 分钟的通用 `no_progress`
+- 每个 hold 与熔断原因都必须有对应问句，否则编译不通过（`HoldReason` / `CircuitReason` 穷尽表）
+- README 以「快速上手」开篇；`devloop` 以路径形式书写，因为没有任何东西把它放上 `PATH`
+
+Possible impact: 0.3.0 写出的 STATE 可原样加载。新增配置 `acceptance` / `acceptanceTimeoutMinutes` / `budget.maxRefusedDispatches`，均有默认值。
+
 ## 0.3.0 — 2026-08-31
 
 - 新增 opt-in `agentBackend: routed`：plan → `plannerRoute`，delegate → `routing[contract.tier]`，review → `reviewerRoute`
