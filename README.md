@@ -9,7 +9,14 @@ This repository is `dsh-devloop`. It is not another coding agent and it does not
 - Advances the bounded plan → delegate → review → local merge pipeline from validated, versioned model results
 - Adds a human snapshot at `.devloop/PROGRESS.md` after each tick (including latched idle, killSwitch, and unreadable STATE)
 - Each dispatch is a new one-shot CLI; at most one in flight (`busy`). The next tick waits.
-- Optional `tokens` / `costUsd` from the backend fold into budget usage when present; session cost resets when the plugin starts; daily cost resets at UTC midnight
+- `tokens` / `costUsd` from the backend fold into budget usage when present; session cost resets when the plugin starts; daily cost resets at UTC midnight
+- What each CLI can actually report, measured against the installed versions:
+  `claude -p --output-format json` gives token counts **and** a settled
+  `total_cost_usd`; `codex exec --json` gives token counts and **no price**, so
+  none is invented for it; `dsh --profile headless` has no output options at
+  all and reports **neither**. That last one matters: the implementers are
+  where most of the spend is, so `maxCostUsdPerDay` currently only sees what
+  the planner and reviewer cost
 - Still no operator UI (**0.4**)
 - Installs into a DSH profile as a bundle plugin
 - On each tick, if the workspace has `.devloop/GOAL.md`, reads revisioned state and deterministically chooses plan / delegate / review / merge / stop

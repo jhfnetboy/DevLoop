@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import type { AgentBackend, AgentRunInput, AgentRunResult } from './backend.js'
 import { defaultRunner, type HeadlessRun, type HeadlessRunner } from './spawn.js'
 import { parseDevloopResult, protocolRepairInstruction, resultInstructions } from './result.js'
+import { readPlainOutput } from './reading.js'
 
 export type { HeadlessRun, HeadlessRunner }
 
@@ -65,24 +66,33 @@ export class DshHeadlessBackend implements AgentBackend {
         timeoutMs,
         signal: input.signal,
       }
-      let { stdout } = await this.runner(request)
+      // `dsh --profile headless` has no output options, so there is nothing to
+      // read but the prose. Saying that here rather than only in the README is
+      // what keeps its spend from silently looking like zero elsewhere.
+      let reading = readPlainOutput((await this.runner(request)).stdout)
       let outcome
-      if (stdout.includes('<devloop_result>')) {
+      if (reading.text.includes('<devloop_result>')) {
         try {
-          outcome = parseDevloopResult(stdout)
+          outcome = parseDevloopResult(reading.text)
         } catch (error) {
           if (input.action.type === 'delegate') throw error
           const repairArgv = [
             ...argv.slice(0, -1),
             `${prompt}\n${protocolRepairInstruction()}`,
           ]
-          stdout = (await this.runner({ ...request, argv: repairArgv })).stdout
-          outcome = stdout.includes('<devloop_result>') ? parseDevloopResult(stdout) : undefined
+          reading = readPlainOutput((await this.runner({ ...request, argv: repairArgv })).stdout)
+          outcome = reading.text.includes('<devloop_result>') ? parseDevloopResult(reading.text) : undefined
         }
       }
       return {
         status: 'started',
         ...(outcome === undefined ? {} : { outcome }),
+        // Forwarded even though `readPlainOutput` never supplies them. Without
+        // this line the counters are structurally absent, so a future reader
+        // that does report them would be dropped here in silence — and the
+        // test guarding dsh's silence could not tell the difference.
+        ...(reading.tokens === undefined ? {} : { tokens: reading.tokens }),
+        ...(reading.costUsd === undefined ? {} : { costUsd: reading.costUsd }),
         ...(input.route ? { agent: `${input.route.backend}/${input.route.model}` } : {}),
       }
     } catch (error) {

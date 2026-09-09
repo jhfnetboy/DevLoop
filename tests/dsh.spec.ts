@@ -181,3 +181,26 @@ describe('createBackend from config', () => {
     expect(service.backend).toBeInstanceOf(RoutedBackend)
   })
 })
+
+describe('what dsh can report', () => {
+  it('reports neither tokens nor a price, because the CLI offers neither', async () => {
+    // Locks today's limitation as an assertion: the day dsh gains an output
+    // format, this goes red and the README claim above it needs revisiting.
+    const calls: HeadlessRun[] = []
+    const backend = new DshHeadlessBackend(async request => {
+      calls.push(request)
+      return { stdout: 'done', stderr: '' }
+    })
+    const result = await backend.run(runInputFor(
+      '/repo',
+      { type: 'review', taskId: 'd1' },
+      baseState({ tasks: [makeTask({ id: 'd1', status: 'review_pending' })] }),
+      resolveConfig({}).budget,
+    ))
+    expect(result.status).toBe('started')
+    expect(result.tokens).toBeUndefined()
+    expect(result.costUsd).toBeUndefined()
+    // Nothing in the argv asks for a machine-readable form, because none exists.
+    expect(calls[0]?.argv.join(' ')).not.toMatch(/--json|--output-format/)
+  })
+})

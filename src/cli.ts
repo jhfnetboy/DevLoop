@@ -5,6 +5,7 @@ import { headlessPrompt, type HeadlessRunner } from './dsh.js'
 import { assertLocalDevloopDir, DEVLOOP_DIR } from './persist.js'
 import { defaultRunner } from './spawn.js'
 import { parseDevloopResult, protocolRepairInstruction } from './result.js'
+import { readClaudeJson, readCodexJsonl, type ReadCliOutput } from './reading.js'
 
 const PLAN_TIMEOUT_MS = 45 * 60_000
 
@@ -15,10 +16,13 @@ function runTimeoutMs(input: AgentRunInput): number {
 function claudeArgv(input: AgentRunInput): string[] {
   const mode = input.action.type === 'delegate' ? 'acceptEdits' : 'plan'
   const model = input.route ? ['--model', input.route.model] : []
+  // --output-format json is what carries usage and total_cost_usd; without it
+  // the run is invisible to the budget.
+  const shape = ['--output-format', 'json']
   if (input.action.type !== 'delegate') {
-    return ['-p', ...model, '--permission-mode', mode, cliPrompt(input)]
+    return ['-p', ...model, ...shape, '--permission-mode', mode, cliPrompt(input)]
   }
-  return ['-p', ...model, '--permission-mode', mode, '--', cliPrompt(input)]
+  return ['-p', ...model, ...shape, '--permission-mode', mode, '--', cliPrompt(input)]
 }
 
 async function resolveLinkedGitDir(input: AgentRunInput): Promise<string | null> {
@@ -38,7 +42,8 @@ async function resolveLinkedGitDir(input: AgentRunInput): Promise<string | null>
 
 async function codexArgv(input: AgentRunInput): Promise<string[]> {
   const sandbox = input.action.type === 'delegate' ? 'workspace-write' : 'read-only'
-  const argv = ['exec', '--sandbox', sandbox]
+  // --json prints one event per line, including turn.completed.usage.
+  const argv = ['exec', '--json', '--sandbox', sandbox]
   if (input.route) argv.push('--model', input.route.model)
   if (input.action.type !== 'delegate') {
     argv.push(cliPrompt(input))
@@ -117,6 +122,7 @@ async function runCli(
   repairArgv: readonly string[],
   input: AgentRunInput,
   failLabel: string,
+  read: ReadCliOutput,
 ): Promise<AgentRunResult> {
   const cwd = input.worktreeRoot
   if (!cwd || await samePath(cwd, input.workspaceRoot)) {
@@ -124,27 +130,41 @@ async function runCli(
   }
   try {
     const request = { command, argv, cwd, timeoutMs: runTimeoutMs(input), signal: input.signal }
-    let { stdout } = await runner(request)
+    // Both counters accumulate across the repair attempt: a run that had to be
+    // asked twice cost twice, and the budget must see both.
+    let tokens: number | undefined
+    let costUsd: number | undefined
+    const bank = (reading: { tokens?: number; costUsd?: number }): void => {
+      if (reading.tokens !== undefined) tokens = (tokens ?? 0) + reading.tokens
+      if (reading.costUsd !== undefined) costUsd = (costUsd ?? 0) + reading.costUsd
+    }
+
+    let reading = read((await runner(request)).stdout)
+    bank(reading)
     let outcome
-    if (stdout.includes('<devloop_result>')) {
+    if (reading.text.includes('<devloop_result>')) {
       try {
-        outcome = parseDevloopResult(stdout)
+        outcome = parseDevloopResult(reading.text)
       } catch {
         const repaired = [...repairArgv]
         const promptIndex = repaired.length - 1
         repaired[promptIndex] = `${repaired[promptIndex] ?? ''}\n${protocolRepairInstruction()}`
-        stdout = (await runner({ ...request, argv: repaired })).stdout
-        outcome = stdout.includes('<devloop_result>') ? parseDevloopResult(stdout) : undefined
+        reading = read((await runner({ ...request, argv: repaired })).stdout)
+        bank(reading)
+        outcome = reading.text.includes('<devloop_result>') ? parseDevloopResult(reading.text) : undefined
       }
     }
+    // The notes are for a human, so they get the prose, not the transport.
     if (input.action.type === 'plan') {
-      await writeDevloopNote(input.workspaceRoot, 'PLAN.md', stdout)
+      await writeDevloopNote(input.workspaceRoot, 'PLAN.md', reading.text)
     } else if (input.action.type === 'review') {
-      await writeDevloopNote(input.workspaceRoot, 'REVIEW.md', stdout)
+      await writeDevloopNote(input.workspaceRoot, 'REVIEW.md', reading.text)
     }
     return {
       status: 'started',
       ...(outcome === undefined ? {} : { outcome }),
+      ...(tokens === undefined ? {} : { tokens }),
+      ...(costUsd === undefined ? {} : { costUsd }),
       ...(input.route ? { agent: `${input.route.backend}/${input.route.model}` } : {}),
     }
   } catch (error) {
@@ -180,7 +200,7 @@ export class ClaudeCliBackend implements AgentBackend {
 
   async run(input: AgentRunInput): Promise<AgentRunResult> {
     const argv = claudeArgv(input)
-    return runCli(this.runner, this.command, argv, claudeRepairArgv(argv), input, 'claude cli failed')
+    return runCli(this.runner, this.command, argv, claudeRepairArgv(argv), input, 'claude cli failed', readClaudeJson)
   }
 
   async cancel(_taskId: string): Promise<void> {}
@@ -204,7 +224,7 @@ export class CodexCliBackend implements AgentBackend {
 
   async run(input: AgentRunInput): Promise<AgentRunResult> {
     const argv = await codexArgv(input)
-    return runCli(this.runner, this.command, argv, codexRepairArgv(argv), input, 'codex exec failed')
+    return runCli(this.runner, this.command, argv, codexRepairArgv(argv), input, 'codex exec failed', readCodexJsonl)
   }
 
   async cancel(_taskId: string): Promise<void> {}

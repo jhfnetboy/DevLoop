@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { applyRunSignals, emptyUsage, evaluateBudget, recordAction, rollCostWindows } from '../src/budget.ts'
 import { ConfigSchema, resolveConfig } from '../src/config.ts'
+import { runTick } from '../src/tick.ts'
 import type { LoopState } from '../src/types.ts'
+import { baseState, makeTask, withTasks } from './helpers.ts'
 
 const limits = resolveConfig({}).budget
 
@@ -323,3 +325,40 @@ describe('rollCostWindows', () => {
   })
 })
 
+describe('a reported price actually trips the cap', () => {
+  /**
+   * The point of this suite. Until a backend reported a number, `costUsdDay`
+   * stayed at zero, so "under the cap" and "nobody is measuring" produced the
+   * same green. This drives the whole path — backend signal, fold, breaker —
+   * and fails if any link stops carrying the number.
+   */
+  it('stops the loop once a backend has reported past the daily cap', () => {
+    const state = withTasks(baseState(), [makeTask({ id: 'A', status: 'ready' })])
+    expect(runTick(state, limits, 1_000).action).toEqual({ type: 'delegate', taskId: 'A' })
+
+    const spent = {
+      ...state,
+      usage: applyRunSignals(state.usage, 'A', 1_000, { costUsd: limits.maxCostUsdPerDay }),
+    }
+    expect(spent.usage.costUsdDay).toBe(limits.maxCostUsdPerDay)
+    expect(runTick(spent, limits, 2_000).action).toEqual({ type: 'stop', reason: 'budget' })
+  })
+
+  it('stops on reported tokens once one task has read too much', () => {
+    const state = withTasks(baseState(), [makeTask({ id: 'A', status: 'ready' })])
+    const spent = {
+      ...state,
+      usage: applyRunSignals(state.usage, 'A', 1_000, { tokens: limits.maxTokensPerTask }),
+    }
+    expect(runTick(spent, limits, 2_000).action).toEqual({ type: 'stop', reason: 'budget' })
+  })
+
+  it('treats a backend that reports nothing as free, which is why one must', () => {
+    // dsh --profile headless has no way to report usage, so its spend is
+    // invisible here. Recorded as a fact, not as an aspiration.
+    const state = withTasks(baseState(), [makeTask({ id: 'A', status: 'ready' })])
+    const silent = { ...state, usage: applyRunSignals(state.usage, 'A', 1_000, {}) }
+    expect(silent.usage.costUsdDay).toBe(0)
+    expect(runTick(silent, limits, 2_000).action).toEqual({ type: 'delegate', taskId: 'A' })
+  })
+})

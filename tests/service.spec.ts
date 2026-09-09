@@ -597,6 +597,8 @@ describe('DevloopService', () => {
     expect(calls[0]?.cwd).toBe(planWorktreePath(root))
     expect(calls[0]?.argv).toEqual([
       '-p',
+      '--output-format',
+      'json',
       '--permission-mode',
       'plan',
       expect.stringContaining('GOAL.md'),
