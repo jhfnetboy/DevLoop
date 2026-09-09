@@ -1,0 +1,58 @@
+name: test
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# A newer push to the same branch makes the older run's answer stale.
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    # Measured on the first run: the whole job takes 49s, of which `pnpm test`
+    # is 36s — six times faster than the same suites on the development machine,
+    # because they are disk-bound rather than CPU-bound. This bound exists to
+    # catch a hang, not to police normal slowness.
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # Matches the engines range; Node 23 is outside it.
+          node-version: 22
+
+      - name: Install pnpm
+        run: corepack enable && corepack prepare --activate
+
+      - name: Locate the pnpm store
+        id: store
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ steps.store.outputs.path }}
+          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-${{ runner.os }}-
+
+      - run: pnpm install --frozen-lockfile
+
+      # Not strictly required: the suites give each temporary repository its own
+      # identity, and they pass with a fresh HOME and no global config here.
+      # Kept because the runner is an environment this could not be measured in,
+      # and a missing identity fails as a wall of unrelated commit errors.
+      - name: Give git an identity
+        run: |
+          git config --global user.email "ci@devloop.invalid"
+          git config --global user.name "devloop ci"
+
+      - run: pnpm build
+
+      - run: pnpm test
+
+      - name: Check for whitespace errors
+        run: git diff --check
