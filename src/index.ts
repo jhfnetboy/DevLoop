@@ -13,7 +13,7 @@ export type { AgentAction, AgentBackend, AgentRunInput, AgentRunResult, BackendR
 export { Config, ConfigSchema, resolveConfig } from './config.js'
 export type { BudgetLimits, RoutingTable, ForgeConfig } from './config.js'
 export { decideNextAction, actionKey, reviewAllowsMerge } from './loop.js'
-export { evaluateBudget, emptyUsage, recordAction, applyRunSignals, rollCostWindows } from './budget.js'
+export { evaluateBudget, emptyUsage, recordAction, refundAction, applyRunSignals, rollCostWindows } from './budget.js'
 export { reviewTierFor, assertReviewerAllowed, routeFor, nextEscalation, contractForTask, RoutingError } from './router.js'
 export { parseDevloopResult, validateDevloopResult, resultInstructions, RESULT_VERSION } from './result.js'
 export type { DevloopResult, PlanResult, PlannedTask, ImplementationResult, ReviewResult } from './result.js'

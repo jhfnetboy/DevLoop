@@ -169,6 +169,30 @@ describe('applyAnswer', () => {
     expect(g.manual).toContain('PLAN.md')
   })
 
+  // The complaint was never about typos at the write sites; it was that a hold
+  // with no question reaches an operator as "the loop stopped and needs a
+  // decision". These two were doing exactly that, written by
+  // `transitionFailureReason` and answered by nobody.
+  it('has a real question for every reason this repo writes', () => {
+    const generic = 'The loop stopped and needs a decision'
+    for (const reason of [
+      'invalid_agent_result', 'result_transition_failed', 'backend_failed',
+      'parent_commit_failed', 'missing_review_worktree', 'missing_agent_result',
+      'acceptance_failed:pnpm test', 'dispatch_refused:A', 'task_timeout:A',
+      'no_progress', 'duplicate_action:delegate:A',
+    ]) {
+      const g = gate(reason)
+      expect(g.question, reason).not.toContain(generic)
+      expect(g.evidence.length, reason).toBeGreaterThan(0)
+    }
+  })
+
+  // The fallback still exists, and should: `stop:*`, `escalate:*` and a resume
+  // that refused are open strings no closed family covers.
+  it('still falls back for a reason no code here writes', () => {
+    expect(gate('escalate:something_new').question).toContain('needs a decision')
+  })
+
   it('refuses an answer that needs a task when the halt names none', () => {
     const corrupt: LoopState = { ...baseState(), killSwitch: true, supervisor: { taskId: null, reason: 'invalid_state' } }
     const g = gateFor(corrupt, limits, NOW)!

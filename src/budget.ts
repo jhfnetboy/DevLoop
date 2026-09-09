@@ -1,14 +1,15 @@
 import type { BudgetLimits } from './config.js'
-import type { BudgetUsage, LoopAction, LoopState } from './types.js'
+import type { BudgetUsage, CircuitReason, LoopAction, LoopState } from './types.js'
 import { actionKey } from './loop.js'
 
 export type CircuitVerdict =
   | { readonly ok: true }
-  | { readonly ok: false; readonly reason: string; readonly taskId: string | null }
+  | { readonly ok: false; readonly reason: CircuitReason; readonly taskId: string | null }
 
 export function emptyUsage(now: number): BudgetUsage {
   return {
     taskAttempts: counts(),
+    refusedDispatches: counts(),
     reviewCycles: counts(),
     taskStartedAt: counts(),
     tokens: counts(),
@@ -38,6 +39,14 @@ export function evaluateBudget(
   const timedOut = timedOutTaskId(state, limits, now)
   if (timedOut !== undefined) {
     return fail(`task_timeout:${timedOut}`, timedOut)
+  }
+
+  // Checked for every action, not just a delegate: once the tick latches, the
+  // intended delegate has already been rewritten to idle, and a check that only
+  // ran for a delegate would never be reached again.
+  const refused = refusedTaskId(state, limits)
+  if (refused !== undefined) {
+    return fail(`dispatch_refused:${refused}`, refused)
   }
 
   if (next.type === 'delegate') {
@@ -90,6 +99,7 @@ export function recordAction(usage: BudgetUsage, action: LoopAction, now: number
   const key = actionKey(action)
   const lastActions = [...usage.lastActions, key].slice(-20)
   const taskAttempts = counts(usage.taskAttempts)
+  const refusedDispatches = counts(usage.refusedDispatches)
   const taskStartedAt = counts(usage.taskStartedAt)
   const reviewCycles = counts(usage.reviewCycles)
   if (action.type === 'delegate') {
@@ -107,6 +117,7 @@ export function recordAction(usage: BudgetUsage, action: LoopAction, now: number
     ...rolled,
     lastActions,
     taskAttempts,
+    refusedDispatches,
     taskStartedAt,
     reviewCycles,
     lastProgressAt: progressed ? now : rolled.lastProgressAt,
@@ -132,6 +143,50 @@ function utcDay(ms: number): string {
 }
 
 /** Fold optional backend token/cost signals into usage. Missing signals are a no-op. */
+/**
+ * Give back what a dispatch that never ran should not have been charged.
+ *
+ * `recordAction` charges when work is sent out, which is right: a run that
+ * starts and fails has still been attempted. But a dispatch refused before any
+ * provider saw it — a bad route, a missing adapter, a precondition the operator
+ * has to fix — spent nothing, and letting it eat a task's attempts means the
+ * budget runs out on a misconfiguration that retrying cannot fix.
+ *
+ * Never goes below zero, and touches nothing else: the duplicate-action window
+ * and the task's start time still record that the loop tried.
+ */
+export function refundAction(usage: BudgetUsage, action: LoopAction): BudgetUsage {
+  if (action.type === 'delegate') {
+    return {
+      ...usage,
+      taskAttempts: decrement(usage.taskAttempts, action.taskId),
+      // The refund is what makes the attempt free; this is what keeps it
+      // counted. Without it the task nets back to zero every cycle and
+      // `max_task_attempts` can never fire for the misconfiguration the
+      // refund exists to forgive.
+      refusedDispatches: increment(usage.refusedDispatches, action.taskId),
+    }
+  }
+  if (action.type === 'review') {
+    return { ...usage, reviewCycles: decrement(usage.reviewCycles, action.taskId) }
+  }
+  return usage
+}
+
+function increment(counts_: Readonly<Record<string, number>>, taskId: string): Record<string, number> {
+  const next = counts(counts_)
+  next[taskId] = ownCount(next, taskId) + 1
+  return next
+}
+
+function decrement(counts_: Readonly<Record<string, number>>, taskId: string): Record<string, number> {
+  const next = counts(counts_)
+  const current = ownCount(next, taskId)
+  if (current <= 0) return next
+  next[taskId] = current - 1
+  return next
+}
+
 export function applyRunSignals(
   usage: BudgetUsage,
   taskId: string | null,
@@ -186,7 +241,23 @@ function ownCount(record: Readonly<Record<string, number>>, id: string): number 
   return Object.hasOwn(record, id) ? record[id] ?? 0 : 0
 }
 
-function fail(reason: string, taskId: string | null = null): CircuitVerdict {
+/**
+ * Same shape as `timedOutTaskId`, and for the same reason: the counter outlives
+ * the task, so a merged task — or one an operator dropped from the plan — would
+ * go on halting every action for ever, and would hide the reason that is
+ * actually blocking the loop now.
+ */
+function refusedTaskId(state: LoopState, limits: BudgetLimits): string | undefined {
+  for (const [taskId, refused] of Object.entries(state.usage.refusedDispatches)) {
+    if (typeof refused !== 'number' || refused < limits.maxRefusedDispatches) continue
+    const task = state.tasks.find(entry => entry.id === taskId)
+    if (!task || TERMINAL_STATUS.has(task.status)) continue
+    return taskId
+  }
+  return undefined
+}
+
+function fail(reason: CircuitReason, taskId: string | null = null): CircuitVerdict {
   return { ok: false, reason, taskId }
 }
 

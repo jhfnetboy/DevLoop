@@ -308,21 +308,21 @@ export class ForgePrBackend implements AgentBackend {
 
   async run(input: AgentRunInput): Promise<AgentRunResult> {
     if (input.action.type !== 'review') {
-      return { status: 'failed', detail: 'forge_role: this backend only serves review' }
+      return { status: 'failed', detail: 'forge_role: this backend only serves review', reachedProvider: false }
     }
     const contract = input.contract
-    if (!contract) return { status: 'failed', detail: 'forge_input: review needs a task contract' }
+    if (!contract) return { status: 'failed', detail: 'forge_input: review needs a task contract', reachedProvider: false }
     const token = worktreeTaskToken(contract.taskId)
-    if (!token) return { status: 'failed', detail: 'forge_input: unsafe task id' }
+    if (!token) return { status: 'failed', detail: 'forge_input: unsafe task id', reachedProvider: false }
     const sha = contract.implementationSha
     if (sha === undefined || !SHA.test(sha)) {
-      return { status: 'failed', detail: 'forge_input: review needs an implementation SHA' }
+      return { status: 'failed', detail: 'forge_input: review needs an implementation SHA', reachedProvider: false }
     }
     if (this.options.reviewers.length === 0) {
-      return { status: 'failed', detail: 'forge_config: reviewers must list at least one authorized login' }
+      return { status: 'failed', detail: 'forge_config: reviewers must list at least one authorized login', reachedProvider: false }
     }
     if (this.options.pushUrl.length === 0) {
-      return { status: 'failed', detail: 'forge_config: pushUrl must name the repository to publish to' }
+      return { status: 'failed', detail: 'forge_config: pushUrl must name the repository to publish to', reachedProvider: false }
     }
 
     const branch = `${WORKTREE_BRANCH_PREFIX}${token}`

@@ -72,6 +72,25 @@ export type HoldReason =
   // the same way the budget circuits' interpolated reasons are.
   | `acceptance_failed:${string}`
 
+/**
+ * Reasons a budget circuit trips. Closed for the same reason `HoldReason` is:
+ * the gate switches on these, and one added without a question there would
+ * reach an operator as "the loop stopped and needs a decision".
+ */
+export type CircuitReason =
+  | 'daily_cost_cap'
+  | 'session_cost_cap'
+  | 'max_tokens_per_task'
+  | 'no_progress'
+  | `task_timeout:${string}`
+  | `dispatch_refused:${string}`
+  | `max_task_attempts:${string}`
+  | `max_review_cycles:${string}`
+  | `duplicate_action:${string}`
+
+/** A reason with its interpolated tail removed, as the gate matches it. */
+export type BaseReason<R extends string> = R extends `${infer B}:${string}` ? B : R
+
 export interface SupervisorHold {
   readonly taskId: string | null
   readonly reason: string
@@ -94,6 +113,15 @@ export interface Acknowledgement {
 
 export interface BudgetUsage {
   readonly taskAttempts: Readonly<Record<string, number>>
+  /**
+   * Dispatches a provider refused outright, counted for the task's lifetime.
+   *
+   * Deliberately not refunded: `taskAttempts` is what a run is allowed to
+   * spend, and handing it back is the point of a refund. This is the record
+   * that the loop kept trying, which is what stops a misconfiguration from
+   * retrying until a generic no-progress timer notices.
+   */
+  readonly refusedDispatches: Readonly<Record<string, number>>
   readonly reviewCycles: Readonly<Record<string, number>>
   readonly taskStartedAt: Readonly<Record<string, number>>
   readonly tokens: Readonly<Record<string, number>>

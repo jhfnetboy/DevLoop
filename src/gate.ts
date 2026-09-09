@@ -1,6 +1,6 @@
 import type { BudgetLimits } from './config.js'
 import { diagnoseHalt, integrityHold, liftHold, resumeState } from './resume.js'
-import type { LoopState, Task } from './types.js'
+import type { BaseReason, CircuitReason, HoldReason, LoopState, Task } from './types.js'
 
 /** One thing the operator can say back, and what saying it does. */
 export interface GateOption {
@@ -59,99 +59,198 @@ export function gateFor(state: LoopState, limits: BudgetLimits, now: number): Ga
   const taskId = diagnosis.taskId
   const task = taskId === null ? undefined : state.tasks.find(entry => entry.id === taskId)
   const base = reason.split(':')[0] ?? reason
-
-  switch (base) {
-    case 'empty_task':
-      return gate(reason, taskId, 'The task branch has no commits, but review passed it. Did it need any change?', [
-        `${label(taskId)} is still at the commit it started from`,
-        'a review verdict of PASS is recorded against it',
-      ], [RETRY, ACCEPT, STOP])
-
-    case 'acceptance_failed':
-      return gate(reason, taskId, 'The task did not pass the checks this workspace requires. Redo it, or leave it?', [
-        `${label(taskId)} failed: ${reason.slice('acceptance_failed:'.length).trim() || 'an acceptance check'}`,
-        'the commit exists but was never offered for review',
-      ], [RETRY, STOP], 'Run the same command in .devloop/worktrees/<task> to see the output.')
-
-    case 'scope_violation':
-    case 'scope_check_failed':
-      return gate(reason, taskId, 'The worker wrote outside the paths this task was allowed. Retry, or change the plan?', [
-        `${label(taskId)} touched a path outside its allowedPaths`,
-        'nothing was committed, so the workspace is unchanged',
-      ], [RETRY, STOP], 'To let the task write there, widen allowedPaths in the plan and retry.')
-
-    case 'no_review_pass':
-      return gate(reason, taskId, 'The task is ready to merge with no passing review. Review it again, or redo it?', [
-        `${label(taskId)} is merge_ready`,
-        `its last verdict was ${task?.lastReviewVerdict ?? 'none'}`,
-      ], [REVIEW, RETRY, STOP])
-
-    case 'stale_review_sha':
-    case 'unknown_review_sha':
-      return gate(reason, taskId, 'The review does not match the commit under review. Review the current commit, or redo the task?', [
-        `${label(taskId)} moved after its review was requested`,
-        'a verdict is only accepted for the exact commit it names',
-      ], [REVIEW, RETRY, STOP])
-
-    case 'reviewer_identity_conflict':
-      return gate(reason, taskId, 'The reviewer was the same identity that implemented the task. Review it again?', [
-        `${label(taskId)} was reviewed by its own implementer`,
-        'a verdict from the implementer is never accepted',
-      ], [REVIEW, STOP], 'Point reviewerRoute at a different provider than the tier that implements.')
-
-    case 'security_high_risk':
-      return gate(reason, taskId, 'This task is marked high risk, so policy sends it to a person. Proceed how?', [
-        `${label(taskId)} has risk: high`,
-        'high-risk tasks are never merged without a human deciding',
-      ], [STOP], 'Read the diff yourself, then merge it by hand or lower the risk in the plan and retry.')
-
-    case 'max_task_attempts':
-    case 'repeated_test_failure':
-      return gate(reason, taskId, 'The task has used its attempts without succeeding. Spend more, or leave it?', [
-        `${label(taskId)} reached ${limits.maxTaskAttempts} attempts`,
-        'retrying clears its counters and starts the budget again',
-      ], [RETRY, STOP])
-
-    case 'max_review_cycles':
-      return gate(reason, taskId, 'Review keeps sending the task back. Redo it, or leave it?', [
-        `${label(taskId)} reached ${limits.maxReviewCycles} review cycles`,
-      ], [RETRY, STOP])
-
-    case 'daily_cost_cap':
-    case 'session_cost_cap':
-    case 'max_tokens_per_task':
-      return gate(reason, taskId, 'The loop reached a spending limit. Raise it, or stop here?', [
-        `the ${base.replace(/_/g, ' ')} was reached`,
-        'the limit is a decision, so nothing here clears it on its own',
-      ], [STOP], 'Raise the limit in the profile and restart, or clear the window with: devloop resume --reset-cost')
-
-    case 'blocked_task':
-      return gate(reason, taskId, 'The task reported itself blocked. Redo it, or leave it?', [
-        `${label(taskId)} is blocked`,
-        task?.lastReviewVerdict ? `its last verdict was ${task.lastReviewVerdict}` : 'no verdict is recorded',
-      ], [RETRY, STOP])
-
-    case 'merge_wedged':
-    case 'unknown_base':
-      return gate(reason, taskId, 'The merge could not be completed safely. Redo the task, or fix the tree by hand?', [
-        `merging ${label(taskId)} was refused: ${reason}`,
-        'the workspace was left untouched',
-      ], [RETRY, STOP], 'Check the primary worktree is clean and on a branch, then retry.')
-
-    // Not folded into the default: the reviewer asked for a different *plan*,
-    // and `retry` means running the same task again under the same plan — an
-    // answer to a question nobody asked.
-    case 'review_requested_replan':
-      return gate(reason, taskId, 'The reviewer asked for the plan to change, not for the task to run again. Replan, or leave it?', [
-        `review of ${label(taskId)} returned REPLAN`,
-        'the work is untouched; it is the plan that was rejected',
-      ], [STOP], 'Edit the task in .devloop/PLAN.md to reflect the review, then: devloop resume --task ' + (taskId ?? '<id>'))
-
-    default:
-      return gate(reason, taskId, 'The loop stopped and needs a decision. Redo the task, or leave it?', [
-        `the recorded reason is ${reason}`,
-      ], taskId === null ? [STOP] : [RETRY, STOP])
+  const compose = KNOWN_GATES[base as KnownReasonBase]
+  if (compose === undefined) {
+    // Genuinely open: `stop:*`, `escalate:*` and the message from a resume that
+    // refused. Both closed families are covered by KNOWN_GATES, so a reason
+    // reaching here is one no code in this repo writes as a hold or a circuit.
+    return gate(reason, taskId, 'The loop stopped and needs a decision. Redo the task, or leave it?', [
+      `the recorded reason is ${reason}`,
+    ], taskId === null ? [STOP] : [RETRY, STOP])
   }
+  return compose({ reason, taskId, task, limits, base })
+}
+
+interface GateContext {
+  readonly reason: string
+  readonly taskId: string | null
+  readonly task: Task | undefined
+  readonly limits: BudgetLimits
+  readonly base: string
+}
+
+/**
+ * Every reason this repo writes, and the question it becomes.
+ *
+ * Exhaustive over both closed families by construction: adding a member to
+ * `HoldReason` or `CircuitReason` without an entry here is a compile error, not
+ * a halt that reaches an operator as "the loop stopped and needs a decision".
+ * That generic gate was the whole complaint; typing the write sites alone only
+ * caught misspellings.
+ */
+type KnownReasonBase = BaseReason<HoldReason> | BaseReason<CircuitReason>
+
+const KNOWN_GATES: Record<KnownReasonBase, (ctx: GateContext) => Gate> = {
+  empty_task: ({ reason, taskId }) =>
+    gate(reason, taskId, 'The task branch has no commits, but review passed it. Did it need any change?', [
+      `${label(taskId)} is still at the commit it started from`,
+      'a review verdict of PASS is recorded against it',
+    ], [RETRY, ACCEPT, STOP]),
+
+  scope_violation: scopeGate,
+  scope_check_failed: scopeGate,
+
+  no_review_pass: ({ reason, taskId, task }) =>
+    gate(reason, taskId, 'The task is ready to merge with no passing review. Review it again, or redo it?', [
+      `${label(taskId)} is merge_ready`,
+      `its last verdict was ${task?.lastReviewVerdict ?? 'none'}`,
+    ], [REVIEW, RETRY, STOP]),
+
+  stale_review_sha: staleShaGate,
+  unknown_review_sha: staleShaGate,
+
+  reviewer_identity_conflict: ({ reason, taskId }) =>
+    gate(reason, taskId, 'The reviewer was the same identity that implemented the task. Review it again?', [
+      `${label(taskId)} was reviewed by its own implementer`,
+      'a verdict from the implementer is never accepted',
+    ], [REVIEW, STOP], 'Point reviewerRoute at a different provider than the tier that implements.'),
+
+  security_high_risk: ({ reason, taskId }) =>
+    gate(reason, taskId, 'This task is marked high risk, so policy sends it to a person. Proceed how?', [
+      `${label(taskId)} has risk: high`,
+      'high-risk tasks are never merged without a human deciding',
+    ], [STOP], 'Read the diff yourself, then merge it by hand or lower the risk in the plan and retry.'),
+
+  max_task_attempts: attemptsGate,
+  repeated_test_failure: attemptsGate,
+
+  max_review_cycles: ({ reason, taskId, limits }) =>
+    gate(reason, taskId, 'Review keeps sending the task back. Redo it, or leave it?', [
+      `${label(taskId)} reached ${String(limits.maxReviewCycles)} review cycles`,
+    ], [RETRY, STOP]),
+
+  daily_cost_cap: costGate,
+  session_cost_cap: costGate,
+  max_tokens_per_task: costGate,
+
+  blocked_task: ({ reason, taskId, task }) =>
+    gate(reason, taskId, 'The task reported itself blocked. Redo it, or leave it?', [
+      `${label(taskId)} is blocked`,
+      task?.lastReviewVerdict ? `its last verdict was ${task.lastReviewVerdict}` : 'no verdict is recorded',
+    ], [RETRY, STOP]),
+
+  merge_wedged: mergeGate,
+  unknown_base: mergeGate,
+
+  dispatch_refused: ({ reason, taskId, limits }) =>
+    gate(reason, taskId, 'The provider refused to start this task, so nothing has run. Fix the route, or leave it?', [
+      `dispatching ${label(taskId)} was refused ${String(limits.maxRefusedDispatches)} times without reaching a model`,
+      'nothing was spent, and nothing will change on its own',
+    ], [RETRY, STOP], "Check agentBackend and the task's route resolve to a provider that exists, then retry."),
+
+  // The reviewer asked for a different *plan*, and `retry` means running the
+  // same task again under the plan that was just rejected — an answer to a
+  // question nobody asked.
+  review_requested_replan: ({ reason, taskId }) =>
+    gate(reason, taskId, 'The reviewer asked for the plan to change, not for the task to run again. Replan, or leave it?', [
+      `review of ${label(taskId)} returned REPLAN`,
+      'the work is untouched; it is the plan that was rejected',
+    ], [STOP], `Edit the task in .devloop/PLAN.md to reflect the review, then: devloop resume --task ${taskId ?? '<id>'}`),
+
+  acceptance_failed: ({ reason, taskId }) =>
+    gate(reason, taskId, 'The task did not pass the checks this workspace requires. Redo it, or leave it?', [
+      `${label(taskId)} failed: ${reason.slice('acceptance_failed:'.length).trim() || 'an acceptance check'}`,
+      'the commit exists but was never offered for review',
+    ], [RETRY, STOP], 'Run the same command in .devloop/worktrees/<task> to see the output.'),
+
+  // These two were written by `transitionFailureReason` and had no question at
+  // all until the table made their absence a compile error.
+  invalid_agent_result: ({ reason, taskId }) =>
+    gate(reason, taskId, 'The agent returned a result for the wrong task or the wrong kind of work. Redo it, or leave it?', [
+      `the result rejected for ${label(taskId)} did not match what was dispatched`,
+      'nothing was recorded from it, so the task is where it was',
+    ], [RETRY, STOP]),
+
+  result_transition_failed: ({ reason, taskId }) =>
+    gate(reason, taskId, 'The result could not be applied to the recorded state. Redo the task, or leave it?', [
+      `applying the result for ${label(taskId)} was refused`,
+      'the state is unchanged, so retrying is safe',
+    ], [RETRY, STOP]),
+
+  backend_failed: ({ reason, taskId }) =>
+    gate(reason, taskId, 'The backend failed after a model had already been reached. Redo the task, or leave it?', [
+      `the dispatch for ${label(taskId)} failed after reaching a provider`,
+      'the attempt was spent, because it was one',
+    ], [RETRY, STOP]),
+
+  parent_commit_failed: ({ reason, taskId }) =>
+    gate(reason, taskId, "The task's work could not be committed. Redo it, or fix the worktree by hand?", [
+      `committing ${label(taskId)} failed`,
+      'nothing was merged, so the workspace is unchanged',
+    ], [RETRY, STOP], 'Check the task worktree for a lock or a conflicted index, then retry.'),
+
+  missing_review_worktree: ({ reason, taskId }) =>
+    gate(reason, taskId, 'The worktree the review needed is gone. Redo the task, or leave it?', [
+      `${label(taskId)} has no worktree to review`,
+      'a review is only accepted against the tree it names',
+    ], [RETRY, STOP]),
+
+  missing_agent_result: ({ reason, taskId }) =>
+    gate(reason, taskId, 'The agent started and returned no result. Redo the task, or leave it?', [
+      `the dispatch for ${label(taskId)} produced no result to record`,
+    ], [RETRY, STOP]),
+
+  no_progress: ({ reason, taskId }) =>
+    gate(reason, taskId, 'The loop stopped making progress. Redo the task it was on, or leave it?', [
+      'no action changed anything for longer than the profile allows',
+      taskId === null ? 'no single task is named, so this is about the loop' : `the last task was ${taskId}`,
+    ], taskId === null ? [STOP] : [RETRY, STOP]),
+
+  duplicate_action: ({ reason, taskId }) =>
+    gate(reason, taskId, 'The loop kept choosing the same action without it changing anything. Redo the task, or leave it?', [
+      `the repeated action was ${reason.slice('duplicate_action:'.length) || 'the same one'}`,
+    ], taskId === null ? [STOP] : [RETRY, STOP]),
+
+  task_timeout: ({ reason, taskId }) =>
+    gate(reason, taskId, 'The task used its whole lifetime without finishing. Spend more, or leave it?', [
+      `${label(taskId)} ran past the lifetime the profile allows`,
+      'retrying clears its counters and starts the budget again',
+    ], [RETRY, STOP]),
+}
+
+function scopeGate({ reason, taskId }: GateContext): Gate {
+  return gate(reason, taskId, 'The worker wrote outside the paths this task was allowed. Retry, or change the plan?', [
+    `${label(taskId)} touched a path outside its allowedPaths`,
+    'nothing was committed, so the workspace is unchanged',
+  ], [RETRY, STOP], 'To let the task write there, widen allowedPaths in the plan and retry.')
+}
+
+function staleShaGate({ reason, taskId }: GateContext): Gate {
+  return gate(reason, taskId, 'The review does not match the commit under review. Review the current commit, or redo the task?', [
+    `${label(taskId)} moved after its review was requested`,
+    'a verdict is only accepted for the exact commit it names',
+  ], [REVIEW, RETRY, STOP])
+}
+
+function attemptsGate({ reason, taskId, limits }: GateContext): Gate {
+  return gate(reason, taskId, 'The task has used its attempts without succeeding. Spend more, or leave it?', [
+    `${label(taskId)} reached ${String(limits.maxTaskAttempts)} attempts`,
+    'retrying clears its counters and starts the budget again',
+  ], [RETRY, STOP])
+}
+
+function mergeGate({ reason, taskId }: GateContext): Gate {
+  return gate(reason, taskId, 'The merge could not be completed safely. Redo the task, or fix the tree by hand?', [
+    `merging ${label(taskId)} was refused: ${reason}`,
+    'the workspace was left untouched',
+  ], [RETRY, STOP], 'Check the primary worktree is clean and on a branch, then retry.')
+}
+
+function costGate({ reason, taskId, base }: GateContext): Gate {
+  return gate(reason, taskId, 'The loop reached a spending limit. Raise it, or stop here?', [
+    `the ${base.replace(/_/g, ' ')} was reached`,
+    'the limit is a decision, so nothing here clears it on its own',
+  ], [STOP], 'Raise the limit in the profile and restart, or clear the window with: devloop resume --reset-cost')
 }
 
 /**

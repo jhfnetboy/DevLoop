@@ -205,9 +205,20 @@ What reading them changed:
   auditor inspects real artifacts; the closest mechanical check here was
   `assertTaskChangesAllowed`, which polices *where* a task wrote, not *whether
   it works*. Fixed: see [Acceptance checks](#acceptance-checks).
-- **Quota is charged on dispatch.** A run that fails in a second costs the same
-  attempt budget as one that worked for forty minutes. LoopX spends only after a
-  validated writeback.
+- **Quota was charged on dispatch even when nothing ran.** LoopX spends only
+  after a validated writeback. Charging strictly that late would let a backend
+  that never returns retry for ever, so the narrower rule is used: a dispatch
+  refused *before any provider saw it* — a bad route, a missing adapter, a
+  precondition the operator has to fix — is refunded. A run that reached a model
+  and failed still costs an attempt, because it was one.
+
+  A refund alone was not enough. Handing the attempt back nets the task's count
+  to zero every cycle, so `max_task_attempts` — the circuit that names a stuck
+  task within seconds — could never fire for exactly the misconfiguration the
+  refund exists to forgive, and the loop leaned on a generic no-progress timer
+  that halts everything and names nothing. `refusedDispatches` counts refusals
+  for the task's lifetime and is never refunded: the attempt stays free, and the
+  loop still says which task's route is broken.
 
 Where this design is weaker than either: both assume the executor can report its
 own usage. `dsh --profile headless` cannot, so the daily cost cap only sees what

@@ -123,6 +123,8 @@ describe('ClaudeCliBackend', () => {
     await expect(backend.run(planInput(null))).resolves.toEqual({
       status: 'failed',
       detail: 'refusing to run T3 CLI at workspace root',
+      // Nothing ran, so this must not cost the task an attempt.
+      reachedProvider: false,
     })
     expect(calls).toHaveLength(0)
   })
@@ -133,6 +135,8 @@ describe('ClaudeCliBackend', () => {
     await expect(backend.run(planInput('/repo'))).resolves.toEqual({
       status: 'failed',
       detail: 'refusing to run T3 CLI at workspace root',
+      // Nothing ran, so this must not cost the task an attempt.
+      reachedProvider: false,
     })
     expect(calls).toHaveLength(0)
   })
@@ -493,6 +497,8 @@ describe('CodexCliBackend', () => {
     await expect(backend.run(planInput(null))).resolves.toEqual({
       status: 'failed',
       detail: 'refusing to run T3 CLI at workspace root',
+      // Nothing ran, so this must not cost the task an attempt.
+      reachedProvider: false,
     })
     expect(calls).toHaveLength(0)
   })

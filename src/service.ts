@@ -20,7 +20,7 @@ import { DshHeadlessBackend } from './dsh.js'
 import { CordisHarnessHost, HarnessSubagentBackend } from './harness.js'
 import { DEVLOOP_DIR, loadState, saveState, withStateLock, workspaceArmed, writeBudgetSnapshot, type LockResult } from './persist.js'
 import { writeProgress } from './progress.js'
-import { applyRunSignals, rollCostWindows } from './budget.js'
+import { applyRunSignals, refundAction, rollCostWindows } from './budget.js'
 import { runTick, type TickResult } from './tick.js'
 import type { HoldReason, LoopState } from './types.js'
 import { RUNNER_REAP_MS } from './spawn.js'
@@ -365,6 +365,9 @@ export default class DevloopService extends Service {
                 )
               }
             } else if (dispatched?.status === 'failed') {
+              if (dispatched.reachedProvider === false) {
+                await persistRefund(this.config.root, action, dispatched.detail, this.ctx.logger)
+              }
               await persistBackendFailure(this.config.root, action, dispatched.detail, this.ctx.logger)
             } else if (dispatched?.status === 'started' && !dispatched.outcome) {
               await persistAgentHold(
@@ -650,6 +653,38 @@ async function persistAgentTransition(
   if (!folded.ok) throw new Error('result_transition_lock_busy')
 }
 
+/**
+ * Hand back an attempt for a dispatch that never reached a provider. Advisory:
+ * if the lock is busy the charge simply stands, which costs one attempt rather
+ * than risking a write that races the loop.
+ *
+ * Deliberately does not retry the lock, unlike `persistAgentHold` and
+ * `persistParentCommitHold` beside it. Those two are the loop's only way to
+ * reach a human, so losing one wedges the run; a lost refund overcharges by a
+ * single attempt, and `refusedDispatches` — which this also writes — is what
+ * actually stops a broken route, so the bound holds either way.
+ */
+async function persistRefund(
+  root: string,
+  action: AgentAction,
+  detail: string | undefined,
+  log: { error(message: string, ...rest: unknown[]): void; info(message: string, ...rest: unknown[]): void },
+): Promise<void> {
+  try {
+    const folded = await withStateLock(root, async () => {
+      const now = Date.now()
+      const current = await loadState(root, now)
+      if (current.killSwitch || current.supervisor) return
+      const next = { ...current, usage: refundAction(current.usage, action) }
+      if (next.usage === current.usage) return
+      await saveState(root, next, { expectedRevision: current.revision, action: 'budget:refund' })
+    })
+    if (!folded.ok) log.info(`[dsh-devloop] refund deferred: ${detail ?? 'lock held'}`)
+  } catch (error) {
+    log.error('[dsh-devloop] refund failed', error)
+  }
+}
+
 async function persistBackendFailure(
   root: string,
   action: AgentAction,
@@ -664,6 +699,11 @@ async function persistBackendFailure(
     const now = Date.now()
     const current = await loadState(root, now)
     if (current.killSwitch || current.supervisor) return
+    // This reads the refunded count, so a refused dispatch leaves `attempts` at
+    // 0 and the tick's dispatch-status latch freezes on `rework:0:0`. That is
+    // why `dispatch_refused` is checked for every action rather than only for a
+    // delegate: by the time it matters, the latch has already rewritten the
+    // intended delegate to idle.
     const tasks = current.tasks.map(task => task.id === action.taskId
       ? { ...task, status: 'rework' as const, attempts: current.usage.taskAttempts[action.taskId] ?? task.attempts }
       : task)

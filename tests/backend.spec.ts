@@ -56,6 +56,8 @@ describe('RoutedBackend', () => {
     )).resolves.toEqual({
       status: 'failed',
       detail: 'review route must differ from implementer route codex/gpt-5.4',
+      // Nothing ran, so this must not cost the task an attempt.
+      reachedProvider: false,
     })
   })
 

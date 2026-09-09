@@ -153,6 +153,11 @@ export function resumeState(state: LoopState, options: ResumeOptions, now: numbe
       usage: {
         ...next.usage,
         taskAttempts: without(next.usage.taskAttempts, target.id),
+        // The refusal record outlives a refund on purpose, but not a deliberate
+        // reopen: `dispatch_refused` tells the operator to go and fix a route,
+        // and a counter that survived their answer would halt the next tick for
+        // the thing they just fixed.
+        refusedDispatches: without(next.usage.refusedDispatches, target.id),
         reviewCycles: without(next.usage.reviewCycles, target.id),
         tokens: without(next.usage.tokens, target.id),
         // Dropping the start time restarts the task's lifetime, which would
