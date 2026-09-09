@@ -3,15 +3,19 @@ import { ConfigSchema, resolveConfig, type BudgetLimits } from './config.js'
 import { loadState, readBudgetSnapshot, saveState, withStateLock, workspaceArmed } from './persist.js'
 import { writeProgress } from './progress.js'
 import { diagnoseHalt, resumeState, type HaltDiagnosis, type ResumeOptions } from './resume.js'
+import { applyAnswer, gateFor, type Gate, type GateOption } from './gate.js'
 
 const USAGE = `devloop — inspect and unstick a DevLoop workspace
 
   devloop status [<root>]
+  devloop answer <retry|review|accept|stop> [<root>]
   devloop resume [<root>] [--task <id>] [--reset-cost]
 
 <root> defaults to the current directory.
 
-status  Say whether the loop is halted, why, and whether resuming would help.
+status  Say whether the loop is halted, what decision it is waiting on, and
+        which answers it can act on.
+answer  Reply to that question. The loop asks it; this is how you speak back.
 resume  Lift the halt and clear the circuits that are keyed on stale history.
         --task <id>    give that task another attempt, clearing its counters
         --reset-cost   also clear the spend windows (a cap is not a glitch,
@@ -47,7 +51,7 @@ async function main(
     write(USAGE)
     return command === undefined ? 2 : 0
   }
-  if (command !== 'status' && command !== 'resume') {
+  if (command !== 'status' && command !== 'resume' && command !== 'answer') {
     fail(`devloop: unknown command ${command}\n\n${USAGE}`)
     return 2
   }
@@ -84,6 +88,19 @@ async function main(
       positional.push(arg)
     }
   }
+  let choice: GateOption['key'] | undefined
+  if (command === 'answer') {
+    const given = positional.shift()
+    if (given === undefined) {
+      fail('devloop: answer needs one of retry, review, accept, stop\n')
+      return 2
+    }
+    if (given !== 'retry' && given !== 'review' && given !== 'accept' && given !== 'stop') {
+      fail(`devloop: ${given} is not an answer; use retry, review, accept or stop\n`)
+      return 2
+    }
+    choice = given
+  }
   if (positional.length > 1) {
     fail('devloop: expected at most one <root>\n')
     return 2
@@ -97,12 +114,59 @@ async function main(
   const budget = await effectiveBudget(root)
 
   if (command === 'status') {
-    const state = await loadState(root, Date.now())
-    const diagnosis = diagnoseHalt(state, budget.limits, Date.now(), options.resume)
-    write(render(state.revision, diagnosis, budget.source))
+    const now = Date.now()
+    const state = await loadState(root, now)
+    const diagnosis = diagnoseHalt(state, budget.limits, now, options.resume)
+    write(render(state.revision, diagnosis, budget.source, gateFor(state, budget.limits, now)))
     // Non-zero for a loop that is stopped *or* that would stop on its next
     // tick: both need a human, and only one of them is visible in STATE.
     return diagnosis.halted || diagnosis.wouldHaltAgain !== null ? 1 : 0
+  }
+
+  if (command === 'answer') {
+    let outcome
+    try {
+      outcome = await withStateLock(root, async () => {
+        const now = Date.now()
+        const current = await loadState(root, now)
+        const gate = gateFor(current, budget.limits, now)
+        if (gate === null) throw new Error('answer: the loop is not waiting on anything')
+        const next = applyAnswer(current, gate, choice as GateOption['key'], now)
+        const saved = await saveState(root, next, {
+          expectedRevision: current.revision,
+          action: `answer:${choice ?? ''}`,
+        })
+        try {
+          await writeProgress(root, saved, now)
+        } catch {
+          fail('devloop: state saved but PROGRESS.md could not be rewritten\n')
+        }
+        return { gate, saved, declined: choice === 'stop' }
+      })
+    } catch (error) {
+      fail(`devloop: ${error instanceof Error ? error.message : String(error)}\n`)
+      return 1
+    }
+    if (!outcome.ok) {
+      fail('devloop: another process holds the state lock; stop the profile and retry\n')
+      return 1
+    }
+    const { gate, saved, declined } = outcome.value
+    // `stop` lifts nothing on purpose, so it is not "still blocked" — it is the
+    // answer. Exit 0 keeps a successful command distinguishable from a busy
+    // lock or a failed save, both of which exit 1.
+    if (declined) {
+      write(`left halted: ${gate.reason} (recorded at revision ${saved.revision})\n`)
+      return 0
+    }
+    write(`answered ${choice} for ${gate.reason} at revision ${saved.revision}\n`)
+    const after = diagnoseHalt(saved, budget.limits, Date.now())
+    if (after.wouldHaltAgain !== null) {
+      write(`  still blocked by: ${after.wouldHaltAgain}\n`)
+      return 1
+    }
+    write('restart the DSH profile to start ticking again\n')
+    return 0
   }
 
   let outcome
@@ -165,7 +229,7 @@ async function effectiveBudget(root: string): Promise<{ limits: BudgetLimits; so
   }
 }
 
-function render(revision: number, diagnosis: HaltDiagnosis, source: string): string {
+function render(revision: number, diagnosis: HaltDiagnosis, source: string, gate: Gate | null): string {
   const lines = [`revision ${revision} (${source})`]
   if (!diagnosis.halted) {
     lines.push('not halted')
@@ -175,7 +239,9 @@ function render(revision: number, diagnosis: HaltDiagnosis, source: string): str
   }
   if (diagnosis.integrityHold !== null) {
     lines.push(`STATE.json cannot be trusted; repair it before resuming`)
-    return `${lines.join('\n')}\n`
+    // The gate still prints: an integrity hold is the one halt no answer can
+    // lift, so its recovery instructions are the only guidance there is.
+    return `${[...lines, ...gateLines(gate)].join('\n')}\n`
   }
   if (diagnosis.wouldHaltAgain !== null) {
     lines.push(`resuming as-is would stop again: ${diagnosis.wouldHaltAgain}`)
@@ -183,5 +249,16 @@ function render(revision: number, diagnosis: HaltDiagnosis, source: string): str
   } else if (diagnosis.halted) {
     lines.push('resuming would let the loop continue')
   }
-  return `${lines.join('\n')}\n`
+  return `${[...lines, ...gateLines(gate)].join('\n')}\n`
+}
+
+function gateLines(gate: Gate | null): string[] {
+  if (gate === null) return []
+  const lines = ['', gate.question]
+  for (const item of gate.evidence) lines.push(`  - ${item}`)
+  for (const option of gate.options) {
+    lines.push(`  devloop answer ${option.key.padEnd(6)}  ${option.summary}`)
+  }
+  if (gate.manual !== null) lines.push(`  by hand: ${gate.manual}`)
+  return lines
 }

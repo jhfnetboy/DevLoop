@@ -21,7 +21,7 @@ import { DEVLOOP_DIR, loadState, saveState, withStateLock, workspaceArmed, write
 import { writeProgress } from './progress.js'
 import { applyRunSignals, rollCostWindows } from './budget.js'
 import { runTick, type TickResult } from './tick.js'
-import type { LoopState } from './types.js'
+import type { HoldReason, LoopState } from './types.js'
 import { RUNNER_REAP_MS } from './spawn.js'
 import { applyAgentResult } from './transition.js'
 import { prepareDelegateWorktree, preparePlanWorktree, removePlanWorktree, mergeTaskWorktree, deleteMergedTaskBranch, worktreePath, worktreeTaskToken, readContractBaseSha, commitDirtyTaskWorktree, assertTaskChangesAllowed, taskWorktreeHeadSha } from './worktree.js'
@@ -667,7 +667,7 @@ async function persistBackendFailure(
 async function persistAgentHold(
   root: string,
   taskId: string | null,
-  reason: string,
+  reason: HoldReason,
   log: { error(message: string, ...rest: unknown[]): void },
 ): Promise<boolean> {
   for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -691,7 +691,7 @@ async function persistAgentHold(
   return false
 }
 
-function implementationFailureReason(error: unknown): string {
+function implementationFailureReason(error: unknown): HoldReason {
   const message = error instanceof Error ? error.message : ''
   if (message.startsWith('scope_violation:')) return 'scope_violation'
   if (message.startsWith('scope_check:')) return 'scope_check_failed'
@@ -699,7 +699,7 @@ function implementationFailureReason(error: unknown): string {
   return 'parent_commit_failed'
 }
 
-function transitionFailureReason(error: unknown): string {
+function transitionFailureReason(error: unknown): HoldReason {
   const message = error instanceof Error ? error.message : ''
   if (message.includes('stale_review_sha')) return 'stale_review_sha'
   if (message.includes('reviewer_identity_matches_implementer')) return 'reviewer_identity_conflict'
@@ -730,7 +730,7 @@ function mergeHoldReason(error: unknown): 'empty_task' | 'merge_wedged' | 'unkno
   return null
 }
 
-function holdTask(state: LoopState, taskId: string, reason: string): LoopState {
+function holdTask(state: LoopState, taskId: string, reason: HoldReason): LoopState {
   return {
     ...state,
     supervisor: { taskId, reason },
