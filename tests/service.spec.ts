@@ -1079,12 +1079,15 @@ describe('the default backend leaves the source alone', () => {
     // The Quick start's own path: GOAL.md and no tasks yet.
     const root = await armed([])
     const before = await entriesOutsideDevloop(root)
+    const startedAt = (await loadState(root, Date.now())).revision
     await tick(root, 5)
 
     expect(await entriesOutsideDevloop(root)).toEqual(before)
     expect(await gitBranchesNamed(root, 'devloop/')).toEqual([])
-    // The control: the loop really ran rather than being inert for some other reason.
-    expect((await loadState(root, Date.now())).revision).toBeGreaterThan(0)
+    // The control, and it has to be a comparison: `revision > 0` was already
+    // true before the first tick, so it would have held for a loop that never
+    // ran and proved nothing about the assertions above.
+    expect((await loadState(root, Date.now())).revision).toBeGreaterThan(startedAt)
     await rm(root, { recursive: true, force: true })
   })
 
