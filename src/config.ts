@@ -1,4 +1,5 @@
 import s from '@deepseek-ai/schemastery'
+import { assertAcceptanceChecks } from './acceptance.js'
 import { assertForgeOptions } from './forge.js'
 import type { ModelTier, Route } from './types.js'
 
@@ -36,6 +37,13 @@ export interface ForgeConfig {
 
 export interface Config {
   readonly root: string
+  /**
+   * Commands run in a task's worktree before it goes to review, as argv lists.
+   * Empty by default: running them runs code a worker wrote, which is a choice
+   * an operator makes rather than one this inherits.
+   */
+  readonly acceptance: string[][]
+  readonly acceptanceTimeoutMinutes: number
   readonly enabled: boolean
   readonly tickIntervalMs: number
   readonly agentBackend: 'noop' | 'routed' | 'dsh' | 'claude' | 'codex'
@@ -56,6 +64,8 @@ const routeSchema = (tier: ModelTier, backend: string, model: string) =>
 
 export const ConfigSchema: s<Config> = s.object({
   root: s.string().default(process.cwd()),
+  acceptance: s.array(s.array(s.string())).default([]),
+  acceptanceTimeoutMinutes: s.number().step(1).min(1).max(600).default(15),
   enabled: s.boolean().default(true),
   tickIntervalMs: s.number().step(1).min(500).default(2000),
   agentBackend: s.union([
@@ -130,6 +140,7 @@ export function resolveConfig(raw: unknown): Config {
   assertFiniteCost(config.budget.maxCostUsdPerSession, 'budget.maxCostUsdPerSession')
   assertFiniteCost(config.budget.maxCostUsdPerDay, 'budget.maxCostUsdPerDay')
   assertForgeOptions(config.forge)
+  assertAcceptanceChecks(config.acceptance)
   const lifetime = Math.max(
     config.budget.taskLifetimeMinutes,
     config.budget.taskTimeoutMinutes * config.budget.maxTaskAttempts,
