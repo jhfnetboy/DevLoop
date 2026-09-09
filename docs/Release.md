@@ -1,10 +1,10 @@
-# Release 0.3.1
+# Release 0.4.0
 
-Bounded autonomous engineering loop: structured model results, deterministic state transitions, host-enforced write scope, SHA-bound independent review, durable recovery, and role/tier routing. Tag `v0.3.1` and the GitHub Release are created **after** this commit is on `main`; steps: [Deploy.md](./Deploy.md).
+Bounded autonomous engineering loop: structured model results, deterministic state transitions, host-enforced write scope, SHA-bound independent review, durable recovery, and role/tier routing. Tag `v0.4.0` and the GitHub Release are created **after** this commit is on `main`; steps: [Deploy.md](./Deploy.md).
 
-Package version: **0.3.1**. This document is the release note, not a second semver.
+Package version: **0.4.0**. This document is the release note, not a second semver.
 
-## New in 0.3.1
+## New in 0.4.0
 
 Three things the loop was missing, found by reading it against two published
 long-running-agent designs ([#24](https://github.com/jhfnetboy/DevLoop/pull/24)):
@@ -26,10 +26,18 @@ the list), `budget.maxRefusedDispatches` (default 2). New state fields
 `usage.refusedDispatches` and `acknowledged`; states written by 0.3.0 load
 unchanged.
 
+A minor, not a patch: `devloop answer`, host-run acceptance and the new budget
+circuit are new surface. Upgrading from 0.3.0 changes no behaviour on its own —
+`acceptance` defaults to empty, so nothing runs until an operator lists
+commands — but the surface is new, and the version should say so. The deferred
+list that used to be called `V0.4-TODO.md` is now
+[`V0.5-TODO.md`](./V0.5-TODO.md); it was renamed rather than reset, because the
+reasons attached to each deferred item are the point of it.
+
 Known, and written down rather than hidden: the gate prints `devloop answer
 retry`, which is the one line an operator cannot paste, because nothing links a
 package's own `bin` onto `PATH`. Tracked in
-[`V0.4-TODO.md`](./V0.4-TODO.md) with the three candidate fixes.
+[`V0.5-TODO.md`](./V0.5-TODO.md) with the three candidate fixes.
 
 ## What is in this version
 
@@ -61,5 +69,5 @@ Host-side checks (`dsh plugin add`, `--dump-config`) are listed in [UserCaseTest
 - `STATE.json` is an atomic snapshot; `EVENTS.jsonl` is the append-only, monotonic recovery authority after a torn or missing snapshot.
 - Token/cost melt the circuit only when the backend fills `AgentRunResult`; otherwise the loop uses wall-clock `lastProgressAt`. Session cost resets after the first successful STATE persist of this process; daily cost resets at UTC midnight.
 - The automated E2E uses a scripted provider, and the release candidate also completed a real-provider plan → implement → exact-SHA review → merge run without operator state edits.
-- No operator UI (**0.4**).
+- No operator UI (**0.5**).
 - npm registry: not published in this cut unless `npm whoami` works. Install from GitHub or the Release tarball. See [Install.md](./Install.md).

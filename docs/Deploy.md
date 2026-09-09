@@ -24,45 +24,47 @@ Pack and inspect (this repo’s pnpm `10.6.3` has no `pack --dry-run`; `*.tgz` i
 
 ```bash
 pnpm pack
-tar -tzf dsh-devloop-0.3.1.tgz
-rm -f dsh-devloop-0.3.1.tgz
+tar -tzf dsh-devloop-0.4.0.tgz
+rm -f dsh-devloop-0.4.0.tgz
 ```
 
 Expected contents: `package.json`, `cordis.patch.yml`, `lib/**`, `templates/**`, `docs/Install.md`, `docs/Release.md`, `docs/Deploy.md`, plus npm defaults (`README.md`, `LICENSE`). No `src/`, no tests, no `.devloop/`.
 
 ## GitHub Release
 
-Do this immediately after the version bump is on `main`, in the same sitting, so Install.md’s `#v0.3.1` commands are not a 404:
+Do this immediately after the version bump is on `main`, in the same sitting, so Install.md’s `#v0.4.0` commands are not a 404:
 
 ```bash
 git checkout main
 git pull --ff-only origin main
-git tag -a v0.3.1 -m "dsh-devloop 0.3.1"
-git push origin v0.3.1
+git tag -a v0.4.0 -m "dsh-devloop 0.4.0"
+git push origin v0.4.0
 pnpm pack
-gh release create v0.3.1 \
-  --title "0.3.1" \
+gh release create v0.4.0 \
+  --title "0.4.0" \
   --notes-file docs/Release.md \
-  dsh-devloop-0.3.1.tgz
+  dsh-devloop-0.4.0.tgz
 ```
 
-Pin installs to `'github:jhfnetboy/DevLoop#v0.3.1'` (quotes required on zsh). Attach the `.tgz` so operators can skip git `prepare` / build approval.
+Pin installs to `'github:jhfnetboy/DevLoop#v0.4.0'` (quotes required on zsh). Attach the `.tgz` so operators can skip git `prepare` / build approval.
 
 ## npm registry (when logged in)
 
-Only when `npm whoami` succeeds, `HEAD` **is** the release tag (`git rev-parse HEAD` equals `git rev-parse v0.3.1`), the tree is clean, and `pnpm test` is green.
+Only when `npm whoami` succeeds, `HEAD` **is** the release tag (`git rev-parse HEAD` equals `git rev-parse v0.4.0`), the tree is clean, and `pnpm test` is green.
 
-Publish the **inspected tarball** from `main` while it still points at the tag commit (do not `git checkout v0.3.1`: detached HEAD makes pnpm 10.6.3 fail with `ERR_PNPM_GIT_UNKNOWN_BRANCH`):
+Check `npm whoami --registry=https://registry.npmjs.org/`, not bare `npm whoami`: a machine configured against a mirror answers for the mirror, which reports "not logged in" for an account that is, and cannot accept a publish either way. `publishConfig` in `package.json` pins the publish registry, so the flags below are belt and braces rather than the thing that makes it work.
+
+Publish the **inspected tarball** from `main` while it still points at the tag commit (do not `git checkout v0.4.0`: detached HEAD makes pnpm 10.6.3 fail with `ERR_PNPM_GIT_UNKNOWN_BRANCH`):
 
 ```bash
 git checkout main
 git pull --ff-only origin main
-test "$(git rev-parse HEAD)" = "$(git rev-parse v0.3.1^{commit})"
+test "$(git rev-parse HEAD)" = "$(git rev-parse v0.4.0^{commit})"
 pnpm pack
-pnpm publish ./dsh-devloop-0.3.1.tgz --access public
+pnpm publish ./dsh-devloop-0.4.0.tgz --access public
 ```
 
-This package is unscoped; the tarball is public. Then operators can `dsh plugin --profile web add dsh-devloop@0.3.1` with no git `prepare`.
+This package is unscoped; the tarball is public. Then operators can `dsh plugin --profile web add dsh-devloop@0.4.0` with no git `prepare`.
 
 If `npm whoami` fails, do not invent a token. GitHub Release + `github:` spec is the supported distribution until login exists.
 
@@ -70,4 +72,4 @@ If `npm whoami` fails, do not invent a token. GitHub Release + `github:` spec is
 
 - Force-push tags
 - Publish from a dirty working tree
-- Treat the later 0.4 operator surface as shipped because this tag exists
+- Treat the later 0.5 operator surface as shipped because this tag exists

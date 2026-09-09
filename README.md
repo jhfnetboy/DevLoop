@@ -72,7 +72,7 @@ when an answer is not enough.
 Everything above this line is how to run it. Everything below is why it is built
 this way.
 
-## What 0.3.1 does
+## What 0.4.0 does
 
 - Advances the bounded plan → delegate → review → local merge pipeline from validated, versioned model results
 - Adds a human snapshot at `.devloop/PROGRESS.md` after each tick (including latched idle, killSwitch, and unreadable STATE)
@@ -85,7 +85,7 @@ this way.
   all and reports **neither**. That last one matters: the implementers are
   where most of the spend is, so `maxCostUsdPerDay` currently only sees what
   the planner and reviewer cost
-- Still no operator UI (**0.4**)
+- Still no operator UI (**0.5**)
 - Installs into a DSH profile as a bundle plugin
 - On each tick, if the workspace has `.devloop/GOAL.md`, reads revisioned state and deterministically chooses plan / delegate / review / merge / stop
 - Enforces budget / circuit-breaker rules in-process
@@ -117,9 +117,11 @@ Routing is opt-in. The safe default remains `noop`; fixed `dsh` / `claude` / `co
 
 ## Progress vs that target
 
-**0.3 is the current release candidate.** It combines the unattended scheduler,
+**0.4.0 is the current release.** 0.3 combined the unattended scheduler,
 role-aware one-shot dispatch, host-enforced task boundaries, SHA-bound review,
-durable recovery, and human-readable progress snapshots.
+durable recovery, and human-readable progress snapshots; 0.4 makes a halt
+answerable, runs the operator's own checks before a reviewer is paid, and stops
+charging for a dispatch no provider ever saw.
 
 | Slice | Status | Meaning |
 |---|---|---|
@@ -130,8 +132,9 @@ durable recovery, and human-readable progress snapshots.
 | **0.2.4** | **Done** (PR #11 on `main`) | Mechanical merge only after Review PASS; then delete worktree |
 | **0.2.5** | **Done** (PR #12 on `main`) | Spawn `claude` / `codex` as T3; DSH Flash/Pro remain T1/T2 |
 | **0.2.6** | **Done** (on `main`) | Host commit, Claude `--`, Codex gitdir |
-| **0.3** | **This slice** | Continuous scheduler ticks, role/tier routing, one-shot dispatch, budget signals, PROGRESS.md |
-| **0.4** | **Not started** | Operator UI / human queue / budget panel — **not** required for the autonomous loop |
+| **0.3** | **Done** (tag `v0.3.0`) | Continuous scheduler ticks, role/tier routing, one-shot dispatch, budget signals, PROGRESS.md |
+| **0.4** | **This slice** | Gates, host-run acceptance, quota charged for work that happened |
+| **0.5** | **Not started** | Operator UI / human queue / budget panel — **not** required for the autonomous loop |
 
 Path to the goal you described:
 
@@ -143,7 +146,7 @@ v0.2.3
   → 0.3 unattended scheduler        # this slice: continuous bounded ticks
 ```
 
-The prerequisite slices are on `main`. **0.4 is a later operator surface**,
+The prerequisite slices are on `main`. **0.5 is a later operator surface**,
 after the bounded autonomous loop is released and observed in real projects.
 
 ## How it fits
@@ -217,7 +220,7 @@ In routed mode, plan / delegate / review use independent configured routes. Merg
 
 The goal is: expensive models plan and review, cheap models implement, a program loop keeps the factory inside budget.
 
-| Goal slice | 0.3.1 |
+| Goal slice | 0.4.0 |
 |---|---|
 | DSH plugin, not a new runtime | Yes. Bundle + Cordis Service. |
 | Program loop, one transition per tick | Yes. Pure `decideNextAction` plus `runTick`, driven by `setInterval`. |
@@ -227,7 +230,7 @@ The goal is: expensive models plan and review, cheap models implement, a program
 | Expensive models actually review | Yes when opted in. Review is bound to the implementation SHA and an independent provider/model identity. |
 | Unattended milestone completion | Yes for the bounded plan → delegate → review → local merge chain; push and release remain explicit operator actions. |
 
-0.3 advances the bounded pipeline from validated machine results under budget. The operator UI, general API broker, and pstack-style multi-candidate arena remain 0.4.
+0.3 advanced the bounded pipeline from validated machine results under budget, and 0.4 makes its halts answerable. The operator UI, general API broker, and pstack-style multi-candidate arena remain 0.5.
 
 ## Measured against other long-running agent designs
 
@@ -291,7 +294,7 @@ What reading them changed:
 Where this design is weaker than either: both assume the executor can report its
 own usage. `dsh --profile headless` cannot, so the daily cost cap only sees what
 the planner and reviewer spent — a missing instrument, not a decision. Deferred
-work is tracked in [`docs/V0.4-TODO.md`](./docs/V0.4-TODO.md).
+work is tracked in [`docs/V0.5-TODO.md`](./docs/V0.5-TODO.md).
 
 ## Requirements
 
@@ -312,12 +315,12 @@ Git installs run `prepare` → `pnpm build`, so the published entry is `lib/`.
 
 ## Install into DSH
 
-Pinned GitHub tag (needs git tag `v0.3.1`; until then `github:jhfnetboy/DevLoop`). Git install runs `prepare` → `pnpm build`. pnpm ≥10 may ignore that build and still exit 0 — if it prints `Ignored build scripts`, approve `dsh-devloop` (`onlyBuiltDependencies` on pnpm 10.1–10.25, `allowBuilds` on ≥10.26, or `pnpm approve-builds`) and re-run `add` (not `pnpm rebuild`), even when `add` succeeded:
+Pinned GitHub tag (needs git tag `v0.4.0`; until then `github:jhfnetboy/DevLoop`). Git install runs `prepare` → `pnpm build`. pnpm ≥10 may ignore that build and still exit 0 — if it prints `Ignored build scripts`, approve `dsh-devloop` (`onlyBuiltDependencies` on pnpm 10.1–10.25, `allowBuilds` on ≥10.26, or `pnpm approve-builds`) and re-run `add` (not `pnpm rebuild`), even when `add` succeeded:
 
 Quote the spec: zsh treats `#` as a glob (`no matches found`).
 
 ```bash
-dsh plugin --profile web add 'github:jhfnetboy/DevLoop#v0.3.1'
+dsh plugin --profile web add 'github:jhfnetboy/DevLoop#v0.4.0'
 ```
 
 From this checkout (after `pnpm build`):

@@ -1,4 +1,4 @@
-# User-case tests (0.1–0.3.1)
+# User-case tests (0.1–0.4.0)
 
 Default `agentBackend: noop` does not spawn workers. These cases map product flows to automated specs. Manual checks after install are listed at the end.
 
@@ -22,7 +22,7 @@ Default `agentBackend: noop` does not spawn workers. These cases map product flo
 ## Manual after GitHub publish
 
 1. `pnpm install && pnpm test && pnpm build`
-2. After GitHub Release `v0.3.1` exists, install as in [`Install.md`](./Install.md) (`'github:jhfnetboy/DevLoop#v0.3.1'` — quote it on zsh — or the Release tarball). Until then, `github:jhfnetboy/DevLoop` tracks `main` (or this PR branch). `v0.2.3` does not accept `agentBackend: claude` / `codex`.
+2. After GitHub Release `v0.4.0` exists, install as in [`Install.md`](./Install.md) (`'github:jhfnetboy/DevLoop#v0.4.0'` — quote it on zsh — or the Release tarball). Until then, `github:jhfnetboy/DevLoop` tracks `main` (or this PR branch). `v0.2.3` does not accept `agentBackend: claude` / `codex`.
 3. Confirm an unarmed repo stays idle
 4. Copy the bundled `templates/GOAL.md` (from `node_modules/dsh-devloop` after install, or this checkout) to `<repo>/.devloop/GOAL.md` and confirm the host logs a `plan` tick
 5. Default `agentBackend` must not spawn `dsh` / `claude` / `codex`; opt-in values may spawn that CLI
