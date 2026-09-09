@@ -34,14 +34,20 @@ describe('Plan 0.1.2 plugin bundle 1:1', () => {
       name: string
       dsh: { bundle: { patch: string } }
     }
-    expect(pkg.name).toBe('dsh-devloop')
+    expect(pkg.name).toBe('@jhfnetboy/dsh-devloop')
     expect(pkg.dsh.bundle.patch).toBe('./cordis.patch.yml')
   })
 
-  it('inserts the devloop row', () => {
+  it('inserts the devloop row, quoted so the YAML still parses', () => {
     const patch = readFileSync(join(root, 'cordis.patch.yml'), 'utf8')
     expect(patch).toContain('id: devloop')
-    expect(patch).toContain('name: dsh-devloop')
+    // The name is what DSH resolves to load this plugin, and it now starts with
+    // `@`, which YAML reserves: unquoted, the file does not parse at all and the
+    // plugin cannot be installed. A `toContain('name: @scope/pkg')` check passes
+    // on exactly that broken file, so assert the quoting instead.
+    expect(patch).toContain('name: "@jhfnetboy/dsh-devloop"')
+    const name = /^\s*name:\s*(.+)$/m.exec(patch)?.[1]?.trim()
+    expect(name?.startsWith('"'), `name must be quoted, got ${String(name)}`).toBe(true)
   })
 })
 

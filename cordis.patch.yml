@@ -3,4 +3,5 @@
 # profile's own cordis.patch.yml if the workspace is not the DSH cwd.
 - insert:
     - id: devloop
-      name: dsh-devloop
+      # Quoted: a plain YAML scalar may not start with `@`, which is reserved.
+      name: "@jhfnetboy/dsh-devloop"

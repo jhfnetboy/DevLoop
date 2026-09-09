@@ -100,7 +100,7 @@ The package is a DSH **bundle**:
 
 ```text
 package.json          dsh.bundle.patch
-cordis.patch.yml      insert id: devloop, name: dsh-devloop
+cordis.patch.yml      insert id: devloop, name: "@jhfnetboy/dsh-devloop"
 src/index.ts          Cordis plugin (Service + Config schema)
 ```
 

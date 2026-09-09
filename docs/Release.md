@@ -1,10 +1,10 @@
-# Release 0.4.0
+# Release 0.4.1
 
-Bounded autonomous engineering loop: structured model results, deterministic state transitions, host-enforced write scope, SHA-bound independent review, durable recovery, and role/tier routing. Tag `v0.4.0` and the GitHub Release are created **after** this commit is on `main`; steps: [Deploy.md](./Deploy.md).
+Bounded autonomous engineering loop: structured model results, deterministic state transitions, host-enforced write scope, SHA-bound independent review, durable recovery, and role/tier routing. Tag `v0.4.1` and the GitHub Release are created **after** this commit is on `main`; steps: [Deploy.md](./Deploy.md).
 
-Package version: **0.4.0**. This document is the release note, not a second semver.
+Package version: **0.4.1**. This document is the release note, not a second semver.
 
-## New in 0.4.0
+## New in 0.4.1
 
 Three things the loop was missing, found by reading it against two published
 long-running-agent designs ([#24](https://github.com/jhfnetboy/DevLoop/pull/24)):

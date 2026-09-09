@@ -1,8 +1,8 @@
 # Install
 
-For operators who want `dsh-devloop` in a DeepSeek Harness profile. Maintainer cut/tag steps: [Deploy.md](./Deploy.md). What this version includes: [Release.md](./Release.md).
+For operators who want `@jhfnetboy/dsh-devloop` in a DeepSeek Harness profile. Maintainer cut/tag steps: [Deploy.md](./Deploy.md). What this version includes: [Release.md](./Release.md).
 
-Pinned `#v0.4.0` commands and the Release tarball link need the GitHub Release created **after** the version bump is on `main` (see Deploy.md). Until that Release exists, install from current `main` (moving branch, not a pin):
+Pinned `#v0.4.1` commands and the Release tarball link need the GitHub Release created **after** the version bump is on `main` (see Deploy.md). Until that Release exists, install from current `main` (moving branch, not a pin):
 
 ```bash
 dsh plugin --profile web add github:jhfnetboy/DevLoop
@@ -17,17 +17,17 @@ dsh plugin --profile web add github:jhfnetboy/DevLoop
 
 ## GitHub git spec (runs `prepare`)
 
-After `v0.4.0` exists, pin the tag:
+After `v0.4.1` exists, pin the tag:
 
 Quote the spec: zsh treats `#` as a glob (`no matches found`).
 
 ```bash
-dsh plugin --profile web add 'github:jhfnetboy/DevLoop#v0.4.0'
+dsh plugin --profile web add 'github:jhfnetboy/DevLoop#v0.4.1'
 ```
 
 Git installs fetch source, not `lib/`. This package’s `prepare` script runs `pnpm build`. pnpm ≥10 will not run that until you allow the package to run scripts.
 
-On pnpm 10.1–10.25, `strictDepBuilds` is often unset: **`pnpm add` can exit 0 and only print `Ignored build scripts: dsh-devloop`**. That is not a successful plugin install. DSH will then load a checkout with no `lib/` and fail on restart. Approve the build whenever pnpm reports an ignored (or blocked) build for this package, even after a successful `add`. Then run a **fresh** `dsh plugin ... add` (same spec). Do not use `pnpm rebuild`: this package only has `prepare`, and `src/` is not in the installed tree, so rebuild cannot produce `lib/`.
+On pnpm 10.1–10.25, `strictDepBuilds` is often unset: **`pnpm add` can exit 0 and only print `Ignored build scripts: @jhfnetboy/dsh-devloop`**. That is not a successful plugin install. DSH will then load a checkout with no `lib/` and fail on restart. Approve the build whenever pnpm reports an ignored (or blocked) build for this package, even after a successful `add`. Then run a **fresh** `dsh plugin ... add` (same spec). Do not use `pnpm rebuild`: this package only has `prepare`, and `src/` is not in the installed tree, so rebuild cannot produce `lib/`.
 
 **Use the key and field name pnpm printed** — do not assume a single YAML shape.
 
@@ -37,14 +37,14 @@ pnpm 10.1–10.25:
 
 ```yaml
 onlyBuiltDependencies:
-  - dsh-devloop
+  - @jhfnetboy/dsh-devloop
 ```
 
 pnpm ≥10.26:
 
 ```yaml
 allowBuilds:
-  dsh-devloop: true
+  "@jhfnetboy/dsh-devloop": true
 ```
 
 You can also approve from the profile directory:
@@ -53,7 +53,7 @@ You can also approve from the profile directory:
 pnpm --dir ~/.dsh/profiles/web approve-builds
 ```
 
-Allow `dsh-devloop` when prompted, then re-run the same `dsh plugin --profile web add ...` so pnpm fetches the git package with `prepare` allowed. Do not use `pnpm rebuild`. Treat that allowance as permission to execute this package’s install-time scripts on your machine.
+Allow `@jhfnetboy/dsh-devloop` when prompted, then re-run the same `dsh plugin --profile web add ...` so pnpm fetches the git package with `prepare` allowed. Do not use `pnpm rebuild`. Treat that allowance as permission to execute this package’s install-time scripts on your machine.
 
 Restart the profile (`dsh web`) and confirm the layer:
 
@@ -61,24 +61,24 @@ Restart the profile (`dsh web`) and confirm the layer:
 dsh --profile web --dump-config | grep -A2 devloop
 ```
 
-You should see a `# == dsh-devloop` layer and an inserted row `id: devloop`.
+You should see a `# == @jhfnetboy/dsh-devloop` layer and an inserted row `id: devloop`.
 
 ## GitHub Release tarball (no `prepare`)
 
-After the [v0.4.0 Release](https://github.com/jhfnetboy/DevLoop/releases/tag/v0.4.0) exists, download `dsh-devloop-0.4.0.tgz`, then:
+After the [v0.4.1 Release](https://github.com/jhfnetboy/DevLoop/releases/tag/v0.4.1) exists, download `jhfnetboy-dsh-devloop-0.4.1.tgz`, then:
 
 ```bash
-dsh plugin --profile web add ./dsh-devloop-0.4.0.tgz
+dsh plugin --profile web add ./jhfnetboy-dsh-devloop-0.4.1.tgz
 ```
 
 The tarball already contains `lib/`, so pnpm does not need a build allowance.
 
 ## npm registry
 
-Not published yet. When `dsh-devloop@0.4.0` is on npm:
+Not published yet. When `@jhfnetboy/dsh-devloop@0.4.1` is on npm:
 
 ```bash
-dsh plugin --profile web add dsh-devloop@0.4.0
+dsh plugin --profile web add @jhfnetboy/dsh-devloop@0.4.1
 ```
 
 ## Local checkout
@@ -86,7 +86,7 @@ dsh plugin --profile web add dsh-devloop@0.4.0
 ```bash
 git clone https://github.com/jhfnetboy/DevLoop.git
 cd DevLoop
-git checkout v0.4.0   # or main, until the tag exists
+git checkout v0.4.1   # or main, until the tag exists
 pnpm install
 pnpm test
 pnpm build
@@ -132,15 +132,15 @@ After a GitHub or tarball install:
 
 ```bash
 mkdir -p /path/to/your/project/.devloop
-cp ~/.dsh/profiles/web/node_modules/dsh-devloop/templates/GOAL.md \
+cp ~/.dsh/profiles/web/node_modules/@jhfnetboy/dsh-devloop/templates/GOAL.md \
   /path/to/your/project/.devloop/GOAL.md
 ```
 
-Or fetch the template without a clone (use `main` instead of `v0.4.0` until the tag exists):
+Or fetch the template without a clone (use `main` instead of `v0.4.1` until the tag exists):
 
 ```bash
 mkdir -p /path/to/your/project/.devloop
-curl -fsSL https://raw.githubusercontent.com/jhfnetboy/DevLoop/v0.4.0/templates/GOAL.md \
+curl -fsSL https://raw.githubusercontent.com/jhfnetboy/DevLoop/v0.4.1/templates/GOAL.md \
   -o /path/to/your/project/.devloop/GOAL.md
 ```
 
@@ -151,5 +151,5 @@ Backends must finish with the exact machine envelope included in their prompt. V
 ## Uninstall
 
 ```bash
-dsh plugin --profile web remove dsh-devloop
+dsh plugin --profile web remove @jhfnetboy/dsh-devloop
 ```

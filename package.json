@@ -1,6 +1,6 @@
 {
-  "name": "dsh-devloop",
-  "version": "0.4.0",
+  "name": "@jhfnetboy/dsh-devloop",
+  "version": "0.4.1",
   "publishConfig": {
     "registry": "https://registry.npmjs.org/",
     "access": "public"

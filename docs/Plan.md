@@ -15,7 +15,7 @@ The active, testable 0.3 release checklist is [`V0.3-TODO.md`](./V0.3-TODO.md).
 | ID | 事项 | 验收 |
 |---|---|---|
 | 0.1.1 | 文档：Solution / Design / Features / ADR / 术语 | 与文末技术决策一致 |
-| 0.1.2 | npm 包 `dsh-devloop`：`dsh.bundle` + `cordis.patch.yml` + Service | `pnpm build` 产出可被 DSH 加载的入口 |
+| 0.1.2 | npm 包 `@jhfnetboy/dsh-devloop`：`dsh.bundle` + `cordis.patch.yml` + Service | `pnpm build` 产出可被 DSH 加载的入口 |
 | 0.1.3 | `decideNextAction` 纯函数 | 单测覆盖 STOP / plan / delegate / review / merge / escalate |
 | 0.1.4 | Budget / circuit breaker | 单测覆盖超时、次数、重复动作、日预算 |
 | 0.1.5 | Tier router + reviewer 必须高于 implementer | 单测覆盖升级路径与非法自审 |
