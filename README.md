@@ -4,6 +4,74 @@ DeepSeek Harness plugin: **expensive models plan and review, cheap models implem
 
 This repository is `dsh-devloop`. It is not another coding agent and it does not fork DSH core. Design and decisions: [docs/](https://github.com/jhfnetboy/DevLoop/tree/main/docs).
 
+## Quick start
+
+Five commands to a loop that ticks. The default backend (`noop`) calls no model
+and writes nothing but `.devloop/`, so this is safe against a real project: you
+get the loop, its state and its questions, and nothing touches your source until
+you set `agentBackend` yourself.
+
+```bash
+# 1. Build (Node ^22.19 || >=24, pnpm, and a working `dsh` — see Requirements)
+pnpm install && pnpm build
+
+# 2. Add the plugin to a DSH profile
+dsh plugin --profile web add /absolute/path/to/DevLoop
+
+# 3. Arm the project you want worked on — the loop stays idle without GOAL.md
+mkdir -p /path/to/project/.devloop
+cp templates/GOAL.md /path/to/project/.devloop/GOAL.md
+$EDITOR /path/to/project/.devloop/GOAL.md
+
+# 4. Start the profile from that project
+cd /path/to/project && dsh web
+
+# 5. Ask what the loop is doing
+node lib/bin/devloop.js status /path/to/project
+```
+
+`devloop status` is the one command worth remembering. It exits non-zero when
+the loop is stopped **or** would stop on its next tick, and when it is waiting on
+a person it prints the question and the exact commands that answer it:
+
+```
+revision 3 (default budgets)
+halted:
+  killSwitch is set
+  last action was stop:budget
+  supervisor hold: empty_task
+resuming would let the loop continue
+
+The task branch has no commits, but review passed it. Did it need any change?
+  - task t1 is still at the commit it started from
+  - a review verdict of PASS is recorded against it
+  devloop answer retry   give the task another attempt from a clean worktree
+  devloop answer accept  agree the task needed no change and mark it done
+  devloop answer stop    leave the loop halted; nothing changes
+```
+
+Those three `devloop answer …` lines are printed by the loop itself, and they
+are spelled the short way — which is the one thing here you cannot paste yet.
+Nothing links a package's own `bin` into its own `node_modules/.bin`, and
+`dsh plugin add` does not put it on `PATH` either, so `devloop` is spelled as a
+path. From this checkout that is `node lib/bin/devloop.js`; against a profile
+that already has the plugin, use its copy:
+
+```bash
+node ~/.dsh/profiles/web/node_modules/dsh-devloop/lib/bin/devloop.js status /path/to/project
+```
+
+Worth an alias if you use it often.
+
+Then, in order: [Install into DSH](#install-into-dsh) for the pinned-tag install
+and the pnpm build-script caveat, [Arm a project](#arm-a-project) for what each
+tick writes, [Acceptance checks](#acceptance-checks) to stop trusting a worker's
+own claim of success, and [Unsticking a halted loop](#unsticking-a-halted-loop)
+when an answer is not enough.
+
+Everything above this line is how to run it. Everything below is why it is built
+this way.
+
 ## What 0.3.0 does
 
 - Advances the bounded plan → delegate → review → local merge pipeline from validated, versioned model results
@@ -442,6 +510,9 @@ They run in the task's own worktree, after the host commits the work and
 reviewer anything. The first failure stops the rest and holds the task, which
 surfaces as a question naming the command that failed.
 
+`acceptanceTimeoutMinutes` is **per command, not for the list**: the two above
+are allowed 15 minutes each, so a task can spend 30 before the checks give up.
+
 Given as argv lists, not shell strings: there is no shell, so nothing in a path
 or a task title can become another command. The model's own `acceptance` text
 stays what it always was — criteria for a human and a reviewer to read. **A model
@@ -459,8 +530,10 @@ recovery: whatever tripped is still tripped, so the next tick stops for the same
 reason. `devloop` does the whole job.
 
 ```bash
-pnpm exec devloop status ~/dev/myproj    # why it stopped, and whether resuming helps
-pnpm exec devloop resume ~/dev/myproj --task AUTH-001
+# `pnpm exec devloop` does not work: the bin is not linked into this package's
+# own node_modules/.bin. Run the file, or alias it. See Quick start.
+node lib/bin/devloop.js status ~/dev/myproj    # why it stopped, and whether resuming helps
+node lib/bin/devloop.js resume ~/dev/myproj --task AUTH-001
 ```
 
 `status` exits non-zero while halted, so it drops straight into a script.
