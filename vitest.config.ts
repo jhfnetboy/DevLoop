@@ -14,6 +14,9 @@ import { defineConfig } from 'vitest/config'
  * whatever threshold it happens to sit at, which is why it is generous here and
  * why the worker count is capped: a red that means "the machine was busy" gets
  * ignored, and then stops catching regressions too.
+ *
+ * The same suites take 36s on a GitHub runner, which is the clearest evidence
+ * that the number measures the machine and not the code.
  */
 export default defineConfig({
   test: {

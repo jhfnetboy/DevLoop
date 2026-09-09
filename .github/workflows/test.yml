@@ -13,7 +13,9 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-latest
-    # The git-heavy suites take about four minutes here; this bound exists to
+    # Measured on the first run: the whole job takes 49s, of which `pnpm test`
+    # is 36s — six times faster than the same suites on the development machine,
+    # because they are disk-bound rather than CPU-bound. This bound exists to
     # catch a hang, not to police normal slowness.
     timeout-minutes: 20
     steps:
