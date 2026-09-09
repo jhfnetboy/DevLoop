@@ -94,6 +94,15 @@ export interface Acknowledgement {
 
 export interface BudgetUsage {
   readonly taskAttempts: Readonly<Record<string, number>>
+  /**
+   * Dispatches a provider refused outright, counted for the task's lifetime.
+   *
+   * Deliberately not refunded: `taskAttempts` is what a run is allowed to
+   * spend, and handing it back is the point of a refund. This is the record
+   * that the loop kept trying, which is what stops a misconfiguration from
+   * retrying until a generic no-progress timer notices.
+   */
+  readonly refusedDispatches: Readonly<Record<string, number>>
   readonly reviewCycles: Readonly<Record<string, number>>
   readonly taskStartedAt: Readonly<Record<string, number>>
   readonly tokens: Readonly<Record<string, number>>

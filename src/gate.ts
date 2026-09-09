@@ -138,6 +138,12 @@ export function gateFor(state: LoopState, limits: BudgetLimits, now: number): Ga
         'the workspace was left untouched',
       ], [RETRY, STOP], 'Check the primary worktree is clean and on a branch, then retry.')
 
+    case 'dispatch_refused':
+      return gate(reason, taskId, 'The provider refused to start this task, so nothing has run. Fix the route, or leave it?', [
+        `dispatching ${label(taskId)} was refused ${String(limits.maxRefusedDispatches)} times without reaching a model`,
+        'nothing was spent, and nothing will change on its own',
+      ], [RETRY, STOP], 'Check agentBackend and the task\'s route resolve to a provider that exists, then retry.')
+
     // Not folded into the default: the reviewer asked for a different *plan*,
     // and `retry` means running the same task again under the same plan — an
     // answer to a question nobody asked.

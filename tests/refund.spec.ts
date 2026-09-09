@@ -7,6 +7,7 @@ import { refundAction } from '../src/budget.ts'
 import { ClaudeCliBackend } from '../src/cli.ts'
 import { resolveConfig } from '../src/config.ts'
 import { ForgePrBackend } from '../src/forge.ts'
+import { gateFor } from '../src/gate.ts'
 import { emptyState, loadState, saveState } from '../src/persist.ts'
 import DevloopService from '../src/service.ts'
 import { runTick } from '../src/tick.ts'
@@ -140,6 +141,87 @@ describe('the attempt budget survives a misconfiguration', () => {
     expect(after.usage.taskAttempts['d1'] ?? 0).toBe(0)
     // Still bounded: the loop recorded that it tried.
     expect(after.usage.lastActions).toContain('delegate:d1')
+    await rm(root, { recursive: true, force: true })
+  })
+
+  /**
+   * The case the single-tick test above cannot see. A refunded attempt is free,
+   * so a route that refuses every dispatch used to net back to zero forever:
+   * `max_task_attempts` never fired, the tick's dispatch-status latch froze on
+   * `rework:0:0`, and the task stopped being dispatched at all — visible only
+   * when a generic no-progress timer eventually halted the whole loop.
+   */
+  it('names the broken task instead of waiting for a generic no-progress stop', async () => {
+    const root = await mkdtempInRepo('devloop-refused-')
+    await mkdir(join(root, '.devloop'))
+    await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
+    await initGitRepo(root)
+    await saveState(root, {
+      ...emptyState(Date.now()),
+      tasks: [makeTask({ id: 'd1', status: 'ready' })],
+    })
+    const unreachable: AgentBackend = {
+      async run(_input: AgentRunInput): Promise<AgentRunResult> {
+        return { status: 'failed', detail: 'no backend adapter registered', reachedProvider: false }
+      },
+      async cancel() {}, async health() { return 'ok' },
+    }
+    const service = new DevloopService(new Context(), resolveConfig({ root, enabled: false }), unreachable)
+    services.push(service)
+
+    for (let beat = 0; beat < 6; beat += 1) await service.tick()
+    const after = await loadState(root, Date.now())
+
+    // Still free: the point of the refund survives.
+    expect(after.usage.taskAttempts['d1'] ?? 0).toBe(0)
+    // But no longer invisible.
+    expect(after.usage.refusedDispatches['d1']).toBeGreaterThanOrEqual(limits.maxRefusedDispatches)
+    expect(after.supervisor?.reason).toBe('dispatch_refused:d1')
+    // Named, not generic: the whole loop is not stopped for one bad route.
+    expect(after.supervisor?.taskId).toBe('d1')
+    await rm(root, { recursive: true, force: true })
+  })
+
+  it('asks the operator to fix the route, since retrying it cannot', () => {
+    const held = {
+      ...withTasks(baseState(), [makeTask({ id: 'd1', status: 'rework' })]),
+      killSwitch: true,
+      lastAction: { type: 'stop' as const, reason: 'budget' as const },
+      supervisor: { taskId: 'd1', reason: 'dispatch_refused:d1' },
+    }
+    const gate = gateFor(held, limits, 1_000_000)
+    expect(gate?.question).toMatch(/refused/i)
+    expect(gate?.manual).toMatch(/route/i)
+  })
+
+  /**
+   * The control. Without it, "stop refunding at all" also passes the test
+   * above — and that is the behaviour this whole PR exists to remove.
+   */
+  it('still spends an attempt when the dispatch did reach a model and failed there', async () => {
+    const root = await mkdtempInRepo('devloop-reached-')
+    await mkdir(join(root, '.devloop'))
+    await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
+    await initGitRepo(root)
+    await saveState(root, {
+      ...emptyState(Date.now()),
+      tasks: [makeTask({ id: 'd1', status: 'ready' })],
+    })
+    const reached: AgentBackend = {
+      async run(_input: AgentRunInput): Promise<AgentRunResult> {
+        // reachedProvider left unset: the model was reached and failed there.
+        return { status: 'failed', detail: 'the model errored' }
+      },
+      async cancel() {}, async health() { return 'ok' },
+    }
+    const service = new DevloopService(new Context(), resolveConfig({ root, enabled: false }), reached)
+    services.push(service)
+
+    await service.tick()
+    const after = await loadState(root, Date.now())
+    expect(after.usage.taskAttempts['d1']).toBe(1)
+    expect(after.usage.refusedDispatches['d1'] ?? 0).toBe(0)
+    expect(after.tasks[0]?.attempts).toBe(1)
     await rm(root, { recursive: true, force: true })
   })
 

@@ -657,6 +657,12 @@ async function persistAgentTransition(
  * Hand back an attempt for a dispatch that never reached a provider. Advisory:
  * if the lock is busy the charge simply stands, which costs one attempt rather
  * than risking a write that races the loop.
+ *
+ * Deliberately does not retry the lock, unlike `persistAgentHold` and
+ * `persistParentCommitHold` beside it. Those two are the loop's only way to
+ * reach a human, so losing one wedges the run; a lost refund overcharges by a
+ * single attempt, and `refusedDispatches` — which this also writes — is what
+ * actually stops a broken route, so the bound holds either way.
  */
 async function persistRefund(
   root: string,
@@ -693,6 +699,11 @@ async function persistBackendFailure(
     const now = Date.now()
     const current = await loadState(root, now)
     if (current.killSwitch || current.supervisor) return
+    // This reads the refunded count, so a refused dispatch leaves `attempts` at
+    // 0 and the tick's dispatch-status latch freezes on `rework:0:0`. That is
+    // why `dispatch_refused` is checked for every action rather than only for a
+    // delegate: by the time it matters, the latch has already rewritten the
+    // intended delegate to idle.
     const tasks = current.tasks.map(task => task.id === action.taskId
       ? { ...task, status: 'rework' as const, attempts: current.usage.taskAttempts[action.taskId] ?? task.attempts }
       : task)

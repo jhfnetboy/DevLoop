@@ -5,6 +5,8 @@ import type { ModelTier, Route } from './types.js'
 
 export interface BudgetLimits {
   readonly maxTaskAttempts: number
+  /** Refused dispatches a task may collect before the loop names the problem. */
+  readonly maxRefusedDispatches: number
   readonly maxReviewCycles: number
   readonly taskTimeoutMinutes: number
   readonly taskLifetimeMinutes: number
@@ -83,6 +85,7 @@ export const ConfigSchema: s<Config> = s.object({
   }),
   budget: s.object({
     maxTaskAttempts: s.number().step(1).min(1).default(3),
+    maxRefusedDispatches: s.number().step(1).min(1).default(2),
     maxReviewCycles: s.number().step(1).min(1).default(2),
     taskTimeoutMinutes: s.number().step(1).min(1).default(45),
     taskLifetimeMinutes: s.number().step(1).min(1).default(135),
@@ -94,6 +97,7 @@ export const ConfigSchema: s<Config> = s.object({
     noProgressMinutes: s.number().step(1).min(1).default(15),
   }).default({
     maxTaskAttempts: 3,
+    maxRefusedDispatches: 2,
     maxReviewCycles: 2,
     taskTimeoutMinutes: 45,
     taskLifetimeMinutes: 135,

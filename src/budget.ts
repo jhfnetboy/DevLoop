@@ -9,6 +9,7 @@ export type CircuitVerdict =
 export function emptyUsage(now: number): BudgetUsage {
   return {
     taskAttempts: counts(),
+    refusedDispatches: counts(),
     reviewCycles: counts(),
     taskStartedAt: counts(),
     tokens: counts(),
@@ -38,6 +39,14 @@ export function evaluateBudget(
   const timedOut = timedOutTaskId(state, limits, now)
   if (timedOut !== undefined) {
     return fail(`task_timeout:${timedOut}`, timedOut)
+  }
+
+  // Checked for every action, not just a delegate: once the tick latches, the
+  // intended delegate has already been rewritten to idle, and a check that only
+  // ran for a delegate would never be reached again.
+  const refused = refusedTaskId(usage, limits)
+  if (refused !== undefined) {
+    return fail(`dispatch_refused:${refused}`, refused)
   }
 
   if (next.type === 'delegate') {
@@ -90,6 +99,7 @@ export function recordAction(usage: BudgetUsage, action: LoopAction, now: number
   const key = actionKey(action)
   const lastActions = [...usage.lastActions, key].slice(-20)
   const taskAttempts = counts(usage.taskAttempts)
+  const refusedDispatches = counts(usage.refusedDispatches)
   const taskStartedAt = counts(usage.taskStartedAt)
   const reviewCycles = counts(usage.reviewCycles)
   if (action.type === 'delegate') {
@@ -107,6 +117,7 @@ export function recordAction(usage: BudgetUsage, action: LoopAction, now: number
     ...rolled,
     lastActions,
     taskAttempts,
+    refusedDispatches,
     taskStartedAt,
     reviewCycles,
     lastProgressAt: progressed ? now : rolled.lastProgressAt,
@@ -146,12 +157,26 @@ function utcDay(ms: number): string {
  */
 export function refundAction(usage: BudgetUsage, action: LoopAction): BudgetUsage {
   if (action.type === 'delegate') {
-    return { ...usage, taskAttempts: decrement(usage.taskAttempts, action.taskId) }
+    return {
+      ...usage,
+      taskAttempts: decrement(usage.taskAttempts, action.taskId),
+      // The refund is what makes the attempt free; this is what keeps it
+      // counted. Without it the task nets back to zero every cycle and
+      // `max_task_attempts` can never fire for the misconfiguration the
+      // refund exists to forgive.
+      refusedDispatches: increment(usage.refusedDispatches, action.taskId),
+    }
   }
   if (action.type === 'review') {
     return { ...usage, reviewCycles: decrement(usage.reviewCycles, action.taskId) }
   }
   return usage
+}
+
+function increment(counts_: Readonly<Record<string, number>>, taskId: string): Record<string, number> {
+  const next = counts(counts_)
+  next[taskId] = ownCount(next, taskId) + 1
+  return next
 }
 
 function decrement(counts_: Readonly<Record<string, number>>, taskId: string): Record<string, number> {
@@ -214,6 +239,13 @@ function counts(source: Readonly<Record<string, number>> = {}): Record<string, n
 
 function ownCount(record: Readonly<Record<string, number>>, id: string): number {
   return Object.hasOwn(record, id) ? record[id] ?? 0 : 0
+}
+
+function refusedTaskId(usage: BudgetUsage, limits: BudgetLimits): string | undefined {
+  for (const [taskId, refused] of Object.entries(usage.refusedDispatches)) {
+    if (refused >= limits.maxRefusedDispatches) return taskId
+  }
+  return undefined
 }
 
 function fail(reason: string, taskId: string | null = null): CircuitVerdict {

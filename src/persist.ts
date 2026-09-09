@@ -459,7 +459,11 @@ function isLoopState(value: unknown): value is LoopState {
 }
 
 function normalizeLoadedState(state: LoopState): LoopState {
-  return { ...state, revision: state.revision ?? 0 }
+  return {
+    ...state,
+    revision: state.revision ?? 0,
+    usage: { ...state.usage, refusedDispatches: state.usage.refusedDispatches ?? {} },
+  }
 }
 
 const TASK_STATUSES = new Set<TaskStatus>([
@@ -512,6 +516,10 @@ function isUsageShape(value: unknown): boolean {
     && isNonNegInt(usage.lastProgressAt)
     && isStringArray(usage.lastActions)
     && isNonNegIntRecord(usage.taskAttempts)
+    // Absent in states written before the counter existed; normalized to empty
+    // on load rather than rejected, because a missing counter is not a corrupt
+    // state and an integrity hold is not something an operator can answer.
+    && (usage.refusedDispatches === undefined || isNonNegIntRecord(usage.refusedDispatches))
     && isNonNegIntRecord(usage.reviewCycles)
     && isNonNegIntRecord(usage.taskStartedAt)
 }

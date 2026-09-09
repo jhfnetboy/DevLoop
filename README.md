@@ -212,6 +212,14 @@ What reading them changed:
   precondition the operator has to fix — is refunded. A run that reached a model
   and failed still costs an attempt, because it was one.
 
+  A refund alone was not enough. Handing the attempt back nets the task's count
+  to zero every cycle, so `max_task_attempts` — the circuit that names a stuck
+  task within seconds — could never fire for exactly the misconfiguration the
+  refund exists to forgive, and the loop leaned on a generic no-progress timer
+  that halts everything and names nothing. `refusedDispatches` counts refusals
+  for the task's lifetime and is never refunded: the attempt stays free, and the
+  loop still says which task's route is broken.
+
 Where this design is weaker than either: both assume the executor can report its
 own usage. `dsh --profile headless` cannot, so the daily cost cap only sees what
 the planner and reviewer spent — a missing instrument, not a decision. Deferred
