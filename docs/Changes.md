@@ -1,6 +1,6 @@
 # Changes
 
-## 0.3.1 — 2026-09-09
+## 0.4.0 — 2026-09-09
 
 - Gates：halt 不再只是错误码，而是带可执行答案的问题；新增 `devloop answer <retry|review|accept|stop>`
 - `answer review` / `accept` 不再走 `resumeState`，因此不会清掉任务已花的 `reviewCycles` / `taskStartedAt`——只有 `retry` 是重开

@@ -72,7 +72,7 @@ when an answer is not enough.
 Everything above this line is how to run it. Everything below is why it is built
 this way.
 
-## What 0.3.1 does
+## What 0.4.0 does
 
 - Advances the bounded plan → delegate → review → local merge pipeline from validated, versioned model results
 - Adds a human snapshot at `.devloop/PROGRESS.md` after each tick (including latched idle, killSwitch, and unreadable STATE)
@@ -217,7 +217,7 @@ In routed mode, plan / delegate / review use independent configured routes. Merg
 
 The goal is: expensive models plan and review, cheap models implement, a program loop keeps the factory inside budget.
 
-| Goal slice | 0.3.1 |
+| Goal slice | 0.4.0 |
 |---|---|
 | DSH plugin, not a new runtime | Yes. Bundle + Cordis Service. |
 | Program loop, one transition per tick | Yes. Pure `decideNextAction` plus `runTick`, driven by `setInterval`. |
@@ -291,7 +291,7 @@ What reading them changed:
 Where this design is weaker than either: both assume the executor can report its
 own usage. `dsh --profile headless` cannot, so the daily cost cap only sees what
 the planner and reviewer spent — a missing instrument, not a decision. Deferred
-work is tracked in [`docs/V0.4-TODO.md`](./docs/V0.4-TODO.md).
+work is tracked in [`docs/V0.5-TODO.md`](./docs/V0.5-TODO.md).
 
 ## Requirements
 
@@ -312,12 +312,12 @@ Git installs run `prepare` → `pnpm build`, so the published entry is `lib/`.
 
 ## Install into DSH
 
-Pinned GitHub tag (needs git tag `v0.3.1`; until then `github:jhfnetboy/DevLoop`). Git install runs `prepare` → `pnpm build`. pnpm ≥10 may ignore that build and still exit 0 — if it prints `Ignored build scripts`, approve `dsh-devloop` (`onlyBuiltDependencies` on pnpm 10.1–10.25, `allowBuilds` on ≥10.26, or `pnpm approve-builds`) and re-run `add` (not `pnpm rebuild`), even when `add` succeeded:
+Pinned GitHub tag (needs git tag `v0.4.0`; until then `github:jhfnetboy/DevLoop`). Git install runs `prepare` → `pnpm build`. pnpm ≥10 may ignore that build and still exit 0 — if it prints `Ignored build scripts`, approve `dsh-devloop` (`onlyBuiltDependencies` on pnpm 10.1–10.25, `allowBuilds` on ≥10.26, or `pnpm approve-builds`) and re-run `add` (not `pnpm rebuild`), even when `add` succeeded:
 
 Quote the spec: zsh treats `#` as a glob (`no matches found`).
 
 ```bash
-dsh plugin --profile web add 'github:jhfnetboy/DevLoop#v0.3.1'
+dsh plugin --profile web add 'github:jhfnetboy/DevLoop#v0.4.0'
 ```
 
 From this checkout (after `pnpm build`):

@@ -2,7 +2,7 @@
 
 For operators who want `dsh-devloop` in a DeepSeek Harness profile. Maintainer cut/tag steps: [Deploy.md](./Deploy.md). What this version includes: [Release.md](./Release.md).
 
-Pinned `#v0.3.1` commands and the Release tarball link need the GitHub Release created **after** the version bump is on `main` (see Deploy.md). Until that Release exists, install from current `main` (moving branch, not a pin):
+Pinned `#v0.4.0` commands and the Release tarball link need the GitHub Release created **after** the version bump is on `main` (see Deploy.md). Until that Release exists, install from current `main` (moving branch, not a pin):
 
 ```bash
 dsh plugin --profile web add github:jhfnetboy/DevLoop
@@ -17,12 +17,12 @@ dsh plugin --profile web add github:jhfnetboy/DevLoop
 
 ## GitHub git spec (runs `prepare`)
 
-After `v0.3.1` exists, pin the tag:
+After `v0.4.0` exists, pin the tag:
 
 Quote the spec: zsh treats `#` as a glob (`no matches found`).
 
 ```bash
-dsh plugin --profile web add 'github:jhfnetboy/DevLoop#v0.3.1'
+dsh plugin --profile web add 'github:jhfnetboy/DevLoop#v0.4.0'
 ```
 
 Git installs fetch source, not `lib/`. This package’s `prepare` script runs `pnpm build`. pnpm ≥10 will not run that until you allow the package to run scripts.
@@ -65,20 +65,20 @@ You should see a `# == dsh-devloop` layer and an inserted row `id: devloop`.
 
 ## GitHub Release tarball (no `prepare`)
 
-After the [v0.3.1 Release](https://github.com/jhfnetboy/DevLoop/releases/tag/v0.3.1) exists, download `dsh-devloop-0.3.1.tgz`, then:
+After the [v0.4.0 Release](https://github.com/jhfnetboy/DevLoop/releases/tag/v0.4.0) exists, download `dsh-devloop-0.4.0.tgz`, then:
 
 ```bash
-dsh plugin --profile web add ./dsh-devloop-0.3.1.tgz
+dsh plugin --profile web add ./dsh-devloop-0.4.0.tgz
 ```
 
 The tarball already contains `lib/`, so pnpm does not need a build allowance.
 
 ## npm registry
 
-Not published yet. When `dsh-devloop@0.3.1` is on npm:
+Not published yet. When `dsh-devloop@0.4.0` is on npm:
 
 ```bash
-dsh plugin --profile web add dsh-devloop@0.3.1
+dsh plugin --profile web add dsh-devloop@0.4.0
 ```
 
 ## Local checkout
@@ -86,7 +86,7 @@ dsh plugin --profile web add dsh-devloop@0.3.1
 ```bash
 git clone https://github.com/jhfnetboy/DevLoop.git
 cd DevLoop
-git checkout v0.3.1   # or main, until the tag exists
+git checkout v0.4.0   # or main, until the tag exists
 pnpm install
 pnpm test
 pnpm build
@@ -136,11 +136,11 @@ cp ~/.dsh/profiles/web/node_modules/dsh-devloop/templates/GOAL.md \
   /path/to/your/project/.devloop/GOAL.md
 ```
 
-Or fetch the template without a clone (use `main` instead of `v0.3.1` until the tag exists):
+Or fetch the template without a clone (use `main` instead of `v0.4.0` until the tag exists):
 
 ```bash
 mkdir -p /path/to/your/project/.devloop
-curl -fsSL https://raw.githubusercontent.com/jhfnetboy/DevLoop/v0.3.1/templates/GOAL.md \
+curl -fsSL https://raw.githubusercontent.com/jhfnetboy/DevLoop/v0.4.0/templates/GOAL.md \
   -o /path/to/your/project/.devloop/GOAL.md
 ```
 
