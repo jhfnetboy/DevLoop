@@ -26,8 +26,8 @@ $EDITOR /path/to/project/.devloop/GOAL.md
 # 4. Start the profile from that project
 cd /path/to/project && dsh web
 
-# 5. Ask what the loop is doing, from anywhere
-devloop status /path/to/project
+# 5. Ask what the loop is doing
+node lib/bin/devloop.js status /path/to/project
 ```
 
 `devloop status` is the one command worth remembering. It exits non-zero when
@@ -49,6 +49,19 @@ The task branch has no commits, but review passed it. Did it need any change?
   devloop answer accept  agree the task needed no change and mark it done
   devloop answer stop    leave the loop halted; nothing changes
 ```
+
+Those three `devloop answer …` lines are printed by the loop itself, and they
+are spelled the short way — which is the one thing here you cannot paste yet.
+Nothing links a package's own `bin` into its own `node_modules/.bin`, and
+`dsh plugin add` does not put it on `PATH` either, so `devloop` is spelled as a
+path. From this checkout that is `node lib/bin/devloop.js`; against a profile
+that already has the plugin, use its copy:
+
+```bash
+node ~/.dsh/profiles/web/node_modules/dsh-devloop/lib/bin/devloop.js status /path/to/project
+```
+
+Worth an alias if you use it often.
 
 Then, in order: [Install into DSH](#install-into-dsh) for the pinned-tag install
 and the pnpm build-script caveat, [Arm a project](#arm-a-project) for what each
@@ -517,8 +530,10 @@ recovery: whatever tripped is still tripped, so the next tick stops for the same
 reason. `devloop` does the whole job.
 
 ```bash
-pnpm exec devloop status ~/dev/myproj    # why it stopped, and whether resuming helps
-pnpm exec devloop resume ~/dev/myproj --task AUTH-001
+# `pnpm exec devloop` does not work: the bin is not linked into this package's
+# own node_modules/.bin. Run the file, or alias it. See Quick start.
+node lib/bin/devloop.js status ~/dev/myproj    # why it stopped, and whether resuming helps
+node lib/bin/devloop.js resume ~/dev/myproj --task AUTH-001
 ```
 
 `status` exits non-zero while halted, so it drops straight into a script.

@@ -1,4 +1,6 @@
-import { chmod, lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import { tmpdir } from 'node:os'
 import { isAbsolute, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -1043,6 +1045,65 @@ describe('DevloopService', () => {
   })
 })
 
+/**
+ * The README's Quick start sells this, so it needs an anchor: with the default
+ * backend you get the loop, its state and its questions, and your source is not
+ * touched. It is true today only because `NoopBackend` returns no outcome, so a
+ * fresh workspace never grows a task — and the first version of this test found
+ * the promise was being stated too broadly, because a workspace that already
+ * has one does reach `prepareDelegateWorktree`, which creates a git branch.
+ */
+describe('the default backend leaves the source alone', () => {
+  const services: DevloopService[] = []
+  afterEach(() => {
+    for (const service of services.splice(0)) service.stop()
+  })
+
+  async function armed(tasks: ReturnType<typeof makeTask>[]): Promise<string> {
+    const root = await mkdtempInRepo('devloop-noop-')
+    await mkdir(join(root, '.devloop'))
+    await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
+    await initGitRepo(root)
+    await writeFile(join(root, 'source.ts'), 'export const untouched = 1\n', 'utf8')
+    await saveState(root, { ...emptyState(Date.now()), tasks })
+    return root
+  }
+
+  async function tick(root: string, beats: number): Promise<void> {
+    const service = new DevloopService(new Context(), resolveConfig({ root, enabled: false }))
+    services.push(service)
+    for (let beat = 0; beat < beats; beat += 1) await service.tick()
+  }
+
+  it('does nothing at all to a workspace that has only a goal', async () => {
+    // The Quick start's own path: GOAL.md and no tasks yet.
+    const root = await armed([])
+    const before = await entriesOutsideDevloop(root)
+    await tick(root, 5)
+
+    expect(await entriesOutsideDevloop(root)).toEqual(before)
+    expect(await gitBranchesNamed(root, 'devloop/')).toEqual([])
+    // The control: the loop really ran rather than being inert for some other reason.
+    expect((await loadState(root, Date.now())).revision).toBeGreaterThan(0)
+    await rm(root, { recursive: true, force: true })
+  })
+
+  it('creates a branch but no source edits once a task exists', async () => {
+    const root = await armed([makeTask({ id: 'd1', status: 'ready' })])
+    const before = await entriesOutsideDevloop(root)
+    await tick(root, 5)
+
+    // What the README promises, and the part that matters to an operator.
+    expect(await entriesOutsideDevloop(root)).toEqual(before)
+    expect(await readFile(join(root, 'source.ts'), 'utf8')).toBe('export const untouched = 1\n')
+    // And the part it would have been dishonest to leave out: the worktree is
+    // prepared before any backend is consulted, so the branch appears even
+    // though no model was ever called.
+    expect(await gitBranchesNamed(root, 'devloop/')).toEqual(['devloop/d1'])
+    await rm(root, { recursive: true, force: true })
+  })
+})
+
 describe('acceptance gates the review, not just the log', () => {
   const services: DevloopService[] = []
   afterEach(() => {
@@ -1146,3 +1207,13 @@ describe('acceptance gates the review, not just the log', () => {
     await rm(root, { recursive: true, force: true })
   })
 })
+
+async function entriesOutsideDevloop(root: string): Promise<string[]> {
+  const names = await readdir(root)
+  return names.filter(name => name !== '.devloop' && name !== '.git').sort()
+}
+
+async function gitBranchesNamed(root: string, prefix: string): Promise<string[]> {
+  const { stdout } = await promisify(execFile)('git', ['branch', '--format=%(refname:short)'], { cwd: root })
+  return stdout.split('\n').map(line => line.trim()).filter(name => name.startsWith(prefix)).sort()
+}
