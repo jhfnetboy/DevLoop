@@ -10,6 +10,7 @@ import { ForgePrBackend } from '../src/forge.ts'
 import { gateFor } from '../src/gate.ts'
 import { emptyState, loadState, saveState } from '../src/persist.ts'
 import DevloopService from '../src/service.ts'
+import { resumeState } from '../src/resume.ts'
 import { runTick } from '../src/tick.ts'
 import { baseState, initGitRepo, makeTask, mkdtempInRepo, withTasks } from './helpers.ts'
 
@@ -223,6 +224,32 @@ describe('the attempt budget survives a misconfiguration', () => {
     expect(after.usage.refusedDispatches['d1'] ?? 0).toBe(0)
     expect(after.tasks[0]?.attempts).toBe(1)
     await rm(root, { recursive: true, force: true })
+  })
+
+  /**
+   * The halt has to be answerable. `dispatch_refused` says the operator must go
+   * and fix a route, so the answer that follows is `retry` — and if the counter
+   * that caused the halt survived it, the very next tick would halt again and
+   * the CLI could never get the loop moving.
+   */
+  it('lets a retry run once the operator has fixed what the halt named', () => {
+    const halted = {
+      ...withTasks(baseState(), [makeTask({ id: 'd1', status: 'rework' })]),
+      killSwitch: true,
+      lastAction: { type: 'stop' as const, reason: 'budget' as const },
+      supervisor: { taskId: 'd1', reason: 'dispatch_refused:d1' },
+      usage: {
+        ...baseState().usage,
+        refusedDispatches: { d1: limits.maxRefusedDispatches, other: 1 },
+      },
+    }
+    const resumed = resumeState(halted, { taskId: 'd1' }, 2_000_000)
+    // Cleared for the task the operator reopened...
+    expect(resumed.usage.refusedDispatches['d1'] ?? 0).toBe(0)
+    // ...and only that one: another task's record is not collateral.
+    expect(resumed.usage.refusedDispatches['other']).toBe(1)
+    // The whole point: the next tick must actually dispatch.
+    expect(runTick(resumed, limits, 2_001_000).action).toEqual({ type: 'delegate', taskId: 'd1' })
   })
 
   it('still stops a task that keeps failing for real', async () => {
