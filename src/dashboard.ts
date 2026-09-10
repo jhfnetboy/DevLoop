@@ -93,6 +93,8 @@ export interface ProjectSummary {
   readonly halted: boolean
   /** Halted by an operator's pause rather than by the loop itself. */
   readonly paused: boolean
+  /** The goal is done: a halt that is the loop finishing, not failing. */
+  readonly completed: boolean
   readonly haltReasons: readonly string[]
   readonly question: string | null
   readonly taskCounts: Readonly<Record<string, number>>
@@ -163,6 +165,7 @@ async function readProject(
     lastAction: null,
     halted: false,
     paused: false,
+    completed: false,
     haltReasons: [],
     question: null,
     taskCounts: {},
@@ -194,6 +197,7 @@ async function readProject(
       lastAction: actionKey(state.lastAction),
       halted: diagnosis.halted,
       paused: state.paused !== undefined,
+      completed: state.goalCompleted,
       haltReasons: diagnosis.reasons,
       question: gate?.question ?? null,
       taskCounts: countByStatus(state.tasks),

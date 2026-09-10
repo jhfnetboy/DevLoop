@@ -143,3 +143,20 @@ describe('devloop pause', () => {
     expect(resumed.out).toContain('cleared: paused by an operator')
   })
 })
+
+describe('a finished goal', () => {
+  it('poses no question: finishing is not a fault to decide about', async () => {
+    const done: LoopState = {
+      ...emptyState(Date.now()),
+      goalCompleted: true,
+      killSwitch: true,
+      lastAction: { type: 'stop', reason: 'goal_complete' },
+      tasks: [makeTask({ id: 'A', status: 'done' })],
+    }
+    // It is still a halt — the loop is not going to do anything — just not one
+    // that asks something. The dashboard used to show "redo the task, or leave
+    // it?" for a project that had simply succeeded.
+    expect(diagnoseHalt(done, limits, Date.now()).halted).toBe(true)
+    expect(gateFor(done, limits, Date.now())).toBeNull()
+  })
+})

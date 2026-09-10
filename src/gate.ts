@@ -58,6 +58,10 @@ export function gateFor(state: LoopState, limits: BudgetLimits, now: number): Ga
   // A pause asks nothing: the operator stopped a healthy loop and the only
   // reply is to resume it. Posing a question here would invent a decision.
   if (state.paused && state.supervisor === null) return null
+  // A finished goal asks nothing either. The generic question below — "redo the
+  // task, or leave it?" — read to an operator as if a finished project had gone
+  // wrong. Reopening work is `resume --task`, a deliberate act, not an answer.
+  if (state.goalCompleted && state.supervisor === null) return null
 
   const reason = state.supervisor?.reason ?? diagnosis.wouldHaltAgain ?? 'unknown'
   const taskId = diagnosis.taskId

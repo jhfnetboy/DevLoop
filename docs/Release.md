@@ -1,8 +1,28 @@
-# Release 0.5.0
+# Release 0.5.1
 
-Bounded autonomous engineering loop: structured model results, deterministic state transitions, host-enforced write scope, SHA-bound independent review, durable recovery, and role/tier routing. Tag `v0.5.0` and the GitHub Release are created **after** this commit is on `main`; steps: [Deploy.md](./Deploy.md).
+Bounded autonomous engineering loop: structured model results, deterministic state transitions, host-enforced write scope, SHA-bound independent review, durable recovery, and role/tier routing. Tag `v0.5.1` and the GitHub Release are created **after** this commit is on `main`; steps: [Deploy.md](./Deploy.md).
 
-Package version: **0.5.0**. This document is the release note, not a second semver.
+Package version: **0.5.1**. This document is the release note, not a second semver.
+
+## New in 0.5.1
+
+Two fixes found by the first real run: a throwaway repository, everything on
+DeepSeek through the dashboard. Plan, a Flash implementation, a Pro review
+(PASS), the merge and `goal_complete` all ran in under a minute.
+
+- **A finished goal no longer asks a question.** The loop stopped on
+  `goal_complete` and the gate fell through to its generic "redo the task, or
+  leave it?" with a single `stop` answer. The dashboard therefore showed a
+  project that had simply succeeded as *halted, waiting for you*. `gateFor` now
+  returns null for a completed goal, and the page says 已完成.
+- **An unarmed root is left alone.** The budget snapshot was written at start,
+  so the directory DSH was launched in grew a `.devloop/` whether or not it was
+  a project. Under launchd that directory is `$HOME`. The snapshot is now written
+  on the first armed tick.
+
+Both have regression tests that were checked to fail without the fix. One of
+them passed without the fix the first time it was written, because it read the
+file before the fire-and-forget write had landed.
 
 ## New in 0.5.0
 
@@ -108,4 +128,4 @@ Host-side checks (`dsh plugin add`, `--dump-config`) are listed in [UserCaseTest
 - Token/cost melt the circuit only when the backend fills `AgentRunResult`; otherwise the loop uses wall-clock `lastProgressAt`. Session cost resets after the first successful STATE persist of this process; daily cost resets at UTC midnight.
 - The automated E2E uses a scripted provider, and the release candidate also completed a real-provider plan → implement → exact-SHA review → merge run without operator state edits.
 - The operator UI is the dashboard; it sees only the spend backends report, and cannot edit an existing goal.
-- npm registry: `@jhfnetboy/dsh-devloop@0.5.0` is published. GitHub and the Release tarball remain supported. See [Install.md](./Install.md).
+- npm registry: `@jhfnetboy/dsh-devloop@0.5.1` is published. GitHub and the Release tarball remain supported. See [Install.md](./Install.md).
