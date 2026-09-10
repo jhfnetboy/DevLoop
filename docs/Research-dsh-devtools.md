@@ -37,7 +37,7 @@ nine plugins on a shared shell, organized as before / during / after an agent
 run, published, screenshotted, each with a stated risk level. Three real risks
 the name framing hides:
 
-1. **`dsh-run-lab` already is the arena in `V0.5-TODO.md`** — shipped, with
+1. **`dsh-run-lab` already is the arena in `V0.6-TODO.md`** — shipped, with
    isolation, metrics, repeat-N, a CLI and an E2E. Our arena is behind before it
    starts. The question is not how to build it but whether to.
 2. **`dsh-debrief` + `dsh-output-gallery` + `dsh-context-xray` occupy the
@@ -232,7 +232,7 @@ reads provider-reported `inputTokens` / `outputTokens` / `cacheReadTokens` /
 `cacheWriteTokens` off `assistant/message` events and carries
 `precision: 'exact' | 'unavailable'`, with an explicit refusal to estimate.
 
-This is the mechanical answer to our largest instrument gap. `V0.5-TODO.md` says
+This is the mechanical answer to our largest instrument gap. `V0.6-TODO.md` says
 usage reporting is deferred because *"`dsh --profile headless` has no output
 options, so T1/T2 spend is invisible to the cost cap — the tier that spends the
 most."* That diagnosis is incomplete. `src/harness.ts` already ships
@@ -313,7 +313,7 @@ rather than deferred, and §7 Q2 has to be answered before any of it starts.
    away, silent until a user clicked Close. Its header states the deliberate
    blind spot: no scope analysis, so it under-reports and never false-positives.
    A check that names its incident and admits what it cannot see is what
-   `V0.5-TODO.md` does for deferrals.
+   `V0.6-TODO.md` does for deferrals.
 2. **`verify-hmr.mjs` verifies the install, not the build**: the profile's
    dependency really is `link:<this dir>`, `node_modules/<name>` really realpaths
    here, the running server's graph revision matches the local bundle hash. The
@@ -341,7 +341,7 @@ rather than deferred, and §7 Q2 has to be answered before any of it starts.
 | A2 | Redact secret-shaped values, and strip ANSI, before anything persists | dev-loop `log.ts` | prerequisite for A1 |
 | A3 | Pass explicit `env` / `unsetEnv` on the acceptance path | our own gap | `runAcceptanceChecks` passes neither, so a check inherits `process.env` whole — API keys included — while running against code a worker wrote (`unsetEnv` exists and is used only by `forge.ts`) |
 | A4 | A `session/event` usage tap for `HarnessSubagentBackend` | `dsh-debrief` `core/tokens.ts` | `BackendResult` has `tokens`/`costUsd`; the in-process backend fills neither, and this is the tier the cost cap cannot see |
-| A5 | Let a gate **wait** instead of halting: queued-latest + re-entrancy beside `busy`, so an answer wakes a waiting loop rather than needing a restarted profile | dev-loop `WatchScheduler` | `V0.5-TODO.md`'s own words: a loop waiting on a gate has not halted. A halt that poses an answerable question and then kills its timer is an error with better prose |
+| A5 | Let a gate **wait** instead of halting: queued-latest + re-entrancy beside `busy`, so an answer wakes a waiting loop rather than needing a restarted profile | dev-loop `WatchScheduler` | `V0.6-TODO.md`'s own words: a loop waiting on a gate has not halted. A halt that poses an answerable question and then kills its timer is an error with better prose |
 
 **Tier B — 0.5 feature work, in this order.**
 
@@ -361,7 +361,7 @@ rather than deferred, and §7 Q2 has to be answered before any of it starts.
 |---|---|---|
 | C1 | `.devloop/TRUST.json` | profile config already records which commands an operator consented to and when; a second source of truth lets the loop advance while the operator believes checks are running |
 | C2 | Depend on `dsh-toolkit-ui` | unsupported 0.2.0 as our only GUI; implement the optional registry contract, adopt Output Gallery's artifact-rendering rules if a panel ever ships, keep `devloop status` |
-| C3 | Repeat-N in the loop | blocked on task claims and leases, which `V0.5-TODO.md` deferred for want of a consumer; repeat-N is that consumer — see Q4 |
+| C3 | Repeat-N in the loop | blocked on task claims and leases, which `V0.6-TODO.md` deferred for want of a consumer; repeat-N is that consumer — see Q4 |
 | C4 | Copy isolation | no git analogue for scope-check, commit, `baseSha` binding or `empty_task`; the arena requires a repo |
 | C5 | `compare()` winner scoring | unweighted counting presented as judgment, and there is no gate option that means "take branch B" |
 | C6 | HTTP API + `trustedRequest` | no HTTP surface; worth copying the day there is one |
@@ -372,7 +372,7 @@ rather than deferred, and §7 Q2 has to be answered before any of it starts.
 Their code is MIT; this repo is Apache-2.0, which can carry MIT files with the
 notice retained — but nothing above requires copying one. Every item is a shape:
 a return type, a truncation strategy, a config key set, an event subscription.
-Reimplement, and credit the source in `docs/` the way `V0.5-TODO.md` credits
+Reimplement, and credit the source in `docs/` the way `V0.6-TODO.md` credits
 LongHorizon-Harness and LoopX. Verbatim copies would need the MIT header and a
 NOTICE entry.
 
