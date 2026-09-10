@@ -67,8 +67,9 @@ Worth an alias if you use it often.
 Then, in order: [Install into DSH](#install-into-dsh) for the pinned-tag install
 and the pnpm build-script caveat, [Arm a project](#arm-a-project) for what each
 tick writes, [Acceptance checks](#acceptance-checks) to stop trusting a worker's
-own claim of success, and [Unsticking a halted loop](#unsticking-a-halted-loop)
-when an answer is not enough.
+own claim of success, [Unsticking a halted loop](#unsticking-a-halted-loop)
+when an answer is not enough, and [Dashboard](#dashboard) to do all of it from a
+browser, including from another device.
 
 Everything above this line is how to run it. Everything below is why it is built
 this way.
@@ -600,6 +601,37 @@ resumed at revision 12
 the loop halts, so restart the DSH profile afterwards (`launchctl kickstart -k`
 for a launchd-managed loop). Re-arming a running service without a restart is a
 separate change.
+
+## Dashboard
+
+In the `web` profile the plugin also serves a page at `/devloop/` on DSH's own
+web server: every project it runs, each loop's tasks and pending question, its
+budget and last events, and buttons for the same verbs as the CLI — answer,
+resume, pause — plus registering a repository and starting its loop by writing
+its goal. Design and the security reasoning: [docs/Dashboard.md](docs/Dashboard.md).
+
+It sits behind DSH's own login, so open the `?token=` URL `dsh web` prints once
+in a browser, then go to `/devloop/`. The cookie lasts 30 days and survives DSH
+restarts; it is bound to the host and port you used, so keep using the same
+one.
+
+From another device, keep DSH on loopback and let Tailscale carry the tailnet
+to it — `--host 0.0.0.0` would expose it to every network the machine is on:
+
+```bash
+tailscale serve --bg --tcp 3080 tcp://127.0.0.1:3080
+dsh web --no-open --trusted-host <tailnet-ip> --trusted-host <machine>.<tailnet>.ts.net
+```
+
+`--tcp` rather than `--http`, because an HTTP serve answers only to the MagicDNS
+name and a browser pointed at the IP gets Tailscale's 404. Log in once with the
+printed token URL with its host replaced by the tailnet address, then open
+`http://<tailnet-ip>:3080/devloop/`.
+
+Every write carries the revision the page was showing and is refused if the
+loop has moved on since, so an answer is never applied to a question you did
+not see. Page writes are journalled as `…@dashboard`. The page cannot edit an
+existing goal, and removing a project deletes nothing — pause it first.
 
 ## Uninstall
 

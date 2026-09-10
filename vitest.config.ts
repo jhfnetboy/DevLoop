@@ -1,3 +1,4 @@
+import { join } from 'node:path'
 import { defineConfig } from 'vitest/config'
 
 /**
@@ -30,5 +31,11 @@ export default defineConfig({
     // Names a slow suite in the output instead of leaving it to be discovered
     // by a timeout.
     slowTestThreshold: 5_000,
+    // The service reads the operator's project registry under $DSH_HOME and
+    // starts a loop for every project in it. A test must never find the real
+    // one: it would tick loops against the operator's own repositories.
+    env: {
+      DSH_HOME: join(import.meta.dirname, '.tmp', 'dsh-home-for-tests'),
+    },
   },
 })

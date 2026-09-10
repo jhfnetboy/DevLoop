@@ -111,6 +111,21 @@ export interface Acknowledgement {
   readonly taskId: string | null
 }
 
+/**
+ * An operator's decision to stop a loop that had nothing wrong with it.
+ *
+ * Every other halt is the loop's own: a circuit tripped, a hold was raised, and
+ * the gate turns that into a question. A pause has no question — the answer is
+ * simply to resume — so it is recorded as what it is rather than borrowing a
+ * hold reason, and `killSwitch` is set beside it so every existing halted path
+ * (tick short-circuit, stale-result refusal, `stop` decision) applies unchanged.
+ */
+export interface Pause {
+  readonly at: string
+  /** Which surface did it: the audit trail for a loop paused from another device. */
+  readonly via: 'cli' | 'dashboard'
+}
+
 export interface BudgetUsage {
   readonly taskAttempts: Readonly<Record<string, number>>
   /**
@@ -154,6 +169,8 @@ export interface LoopState {
   readonly lastDispatchStatus?: string | null
   /** Set by `answer stop`; cleared the moment the hold is actually lifted. */
   readonly acknowledged?: Acknowledgement
+  /** Set by `devloop pause` or the dashboard; cleared by resume. */
+  readonly paused?: Pause
   readonly updatedAt: string
 }
 

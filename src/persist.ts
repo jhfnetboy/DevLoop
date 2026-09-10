@@ -459,11 +459,25 @@ function isLoopState(value: unknown): value is LoopState {
 }
 
 function normalizeLoadedState(state: LoopState): LoopState {
-  return {
+  const normalized: LoopState = {
     ...state,
     revision: state.revision ?? 0,
     usage: { ...state.usage, refusedDispatches: state.usage.refusedDispatches ?? {} },
   }
+  // A malformed pause record degrades to no record rather than an integrity
+  // hold: `killSwitch` beside it is what actually stops the loop, so dropping
+  // the annotation loses the "who and when", never the halt.
+  if (normalized.paused !== undefined && !isPause(normalized.paused)) {
+    const { paused: _dropped, ...rest } = normalized
+    return rest
+  }
+  return normalized
+}
+
+function isPause(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null) return false
+  const pause = value as { at?: unknown, via?: unknown }
+  return typeof pause.at === 'string' && (pause.via === 'cli' || pause.via === 'dashboard')
 }
 
 const TASK_STATUSES = new Set<TaskStatus>([
