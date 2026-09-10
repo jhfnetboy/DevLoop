@@ -45,17 +45,18 @@ resuming would let the loop continue
 The task branch has no commits, but review passed it. Did it need any change?
   - task t1 is still at the commit it started from
   - a review verdict of PASS is recorded against it
-  devloop answer retry   give the task another attempt from a clean worktree
-  devloop answer accept  agree the task needed no change and mark it done
-  devloop answer stop    leave the loop halted; nothing changes
+  node <plugin>/lib/bin/devloop.js answer retry  /path/to/project   give the task another attempt from a clean worktree
+  node <plugin>/lib/bin/devloop.js answer accept /path/to/project   agree the task needed no change and mark it done
+  node <plugin>/lib/bin/devloop.js answer stop   /path/to/project   leave the loop halted; nothing changes
 ```
 
-Those three `devloop answer …` lines are printed by the loop itself, and they
-are spelled the short way — which is the one thing here you cannot paste yet.
-Nothing links a package's own `bin` into its own `node_modules/.bin`, and
-`dsh plugin add` does not put it on `PATH` either, so `devloop` is spelled as a
-path. From this checkout that is `node lib/bin/devloop.js`; against a profile
-that already has the plugin, use its copy:
+Those `answer` lines are printed by the loop itself, and each one can be pasted
+as it stands: `<plugin>` is printed as the absolute path of the copy you ran,
+and the project root is filled in. It is spelled as a path because nothing puts
+`devloop` on `PATH` — npm and pnpm do not link a package's own `bin` into its
+own `node_modules/.bin`, and `dsh plugin add` does not either. From this
+checkout the path is `lib/bin/devloop.js`; against a profile that already has
+the plugin, it is that profile's copy:
 
 ```bash
 node ~/.dsh/profiles/web/node_modules/@jhfnetboy/dsh-devloop/lib/bin/devloop.js status /path/to/project
@@ -72,7 +73,7 @@ when an answer is not enough.
 Everything above this line is how to run it. Everything below is why it is built
 this way.
 
-## What 0.4.1 does
+## What 0.4.2 does
 
 - Advances the bounded plan → delegate → review → local merge pipeline from validated, versioned model results
 - Adds a human snapshot at `.devloop/PROGRESS.md` after each tick (including latched idle, killSwitch, and unreadable STATE)
@@ -117,7 +118,7 @@ Routing is opt-in. The safe default remains `noop`; fixed `dsh` / `claude` / `co
 
 ## Progress vs that target
 
-**0.4.1 is the current release.** 0.3 combined the unattended scheduler,
+**0.4.2 is the current release.** 0.3 combined the unattended scheduler,
 role-aware one-shot dispatch, host-enforced task boundaries, SHA-bound review,
 durable recovery, and human-readable progress snapshots; 0.4 makes a halt
 answerable, runs the operator's own checks before a reviewer is paid, and stops
@@ -220,7 +221,7 @@ In routed mode, plan / delegate / review use independent configured routes. Merg
 
 The goal is: expensive models plan and review, cheap models implement, a program loop keeps the factory inside budget.
 
-| Goal slice | 0.4.1 |
+| Goal slice | 0.4.2 |
 |---|---|
 | DSH plugin, not a new runtime | Yes. Bundle + Cordis Service. |
 | Program loop, one transition per tick | Yes. Pure `decideNextAction` plus `runTick`, driven by `setInterval`. |
@@ -315,12 +316,12 @@ Git installs run `prepare` → `pnpm build`, so the published entry is `lib/`.
 
 ## Install into DSH
 
-Pinned GitHub tag (needs git tag `v0.4.1`; until then `github:jhfnetboy/DevLoop`). Git install runs `prepare` → `pnpm build`. pnpm ≥10 may ignore that build and still exit 0 — if it prints `Ignored build scripts`, approve `@jhfnetboy/dsh-devloop` (`onlyBuiltDependencies` on pnpm 10.1–10.25, `allowBuilds` on ≥10.26, or `pnpm approve-builds`) and re-run `add` (not `pnpm rebuild`), even when `add` succeeded:
+Pinned GitHub tag (needs git tag `v0.4.2`; until then `github:jhfnetboy/DevLoop`). Git install runs `prepare` → `pnpm build`. pnpm ≥10 may ignore that build and still exit 0 — if it prints `Ignored build scripts`, approve `@jhfnetboy/dsh-devloop` (`onlyBuiltDependencies` on pnpm 10.1–10.25, `allowBuilds` on ≥10.26, or `pnpm approve-builds`) and re-run `add` (not `pnpm rebuild`), even when `add` succeeded:
 
 Quote the spec: zsh treats `#` as a glob (`no matches found`).
 
 ```bash
-dsh plugin --profile web add 'github:jhfnetboy/DevLoop#v0.4.1'
+dsh plugin --profile web add 'github:jhfnetboy/DevLoop#v0.4.2'
 ```
 
 From this checkout (after `pnpm build`):

@@ -1,8 +1,28 @@
-# Release 0.4.1
+# Release 0.4.2
 
-Bounded autonomous engineering loop: structured model results, deterministic state transitions, host-enforced write scope, SHA-bound independent review, durable recovery, and role/tier routing. Tag `v0.4.1` and the GitHub Release are created **after** this commit is on `main`; steps: [Deploy.md](./Deploy.md).
+Bounded autonomous engineering loop: structured model results, deterministic state transitions, host-enforced write scope, SHA-bound independent review, durable recovery, and role/tier routing. Tag `v0.4.2` and the GitHub Release are created **after** this commit is on `main`; steps: [Deploy.md](./Deploy.md).
 
-Package version: **0.4.1**. This document is the release note, not a second semver.
+Package version: **0.4.2**. This document is the release note, not a second semver.
+
+## New in 0.4.2
+
+A patch: no config, no state field, no behaviour a running loop can notice
+changes. Upgrading from 0.4.1 is a drop-in.
+
+| Change | PR | Ships |
+|---|---|---|
+| Runnable answers | [#29](https://github.com/jhfnetboy/DevLoop/pull/29) | `devloop status` prints each `answer` as the absolute invocation of the copy that was run, with the project root filled in, so it pastes as printed. A test feeds every printed line back to the CLI |
+| Prices | this | `priceUsage`, `peakBand`, `toUsd` exported: DeepSeek V4.1 Flash prices (CNY, peak/off-peak), with `deepseek-v4-pro` billed as Flash during the transition. [Pricing.md](./Pricing.md) |
+| Research | this | [Research-dsh-devtools.md](./Research-dsh-devtools.md): what `nzl153/dsh-devtools` does and what to take from it |
+
+The prices are a library with **no caller yet**, and that is deliberate rather
+than unfinished: pricing needs input split by cache hit and miss plus output,
+and `BackendResult` carries a single token total. Nothing is estimated from it —
+an unpriced model or a pre-effective-date dispatch returns a reason, not a
+number, and CNY is never converted to the USD caps without an operator-supplied
+rate.
+
+This is not the 0.5 operator surface, and nothing here should be read as it.
 
 ## New in 0.4.1
 
@@ -70,4 +90,4 @@ Host-side checks (`dsh plugin add`, `--dump-config`) are listed in [UserCaseTest
 - Token/cost melt the circuit only when the backend fills `AgentRunResult`; otherwise the loop uses wall-clock `lastProgressAt`. Session cost resets after the first successful STATE persist of this process; daily cost resets at UTC midnight.
 - The automated E2E uses a scripted provider, and the release candidate also completed a real-provider plan → implement → exact-SHA review → merge run without operator state edits.
 - No operator UI (**0.5**).
-- npm registry: not published in this cut unless `npm whoami` works. Install from GitHub or the Release tarball. See [Install.md](./Install.md).
+- npm registry: `@jhfnetboy/dsh-devloop@0.4.2` is published. GitHub and the Release tarball remain supported. See [Install.md](./Install.md).
