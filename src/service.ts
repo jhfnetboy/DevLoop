@@ -22,6 +22,8 @@ import { DEVLOOP_DIR, loadState, saveState, withStateLock, workspaceArmed, write
 import { writeProgress } from './progress.js'
 import { applyRunSignals, refundAction, rollCostWindows } from './budget.js'
 import { runTick, type TickResult } from './tick.js'
+import { mountDashboard } from './dashboard.js'
+import { dshHome } from './projects.js'
 import type { HoldReason, LoopState } from './types.js'
 import { RUNNER_REAP_MS } from './spawn.js'
 import { applyAgentResult } from './transition.js'
@@ -60,6 +62,13 @@ export default class DevloopService extends Service {
     super(ctx, 'devloop')
     this.config = resolveConfig(rawConfig)
     this.backend = backend ?? this.createBackend()
+    // Mounted whether or not the loop is enabled: a disabled loop's state is
+    // still worth reading. Only the web profile has the services it waits on.
+    mountDashboard(ctx, {
+      ownRoot: this.config.root,
+      home: dshHome(),
+      loopRunning: () => this.timer !== null,
+    })
     if (!this.config.enabled) {
       ctx.logger.info('[dsh-devloop] disabled by config')
       return

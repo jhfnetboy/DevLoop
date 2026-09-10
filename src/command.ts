@@ -237,7 +237,7 @@ async function main(
  * diagnosis built on the wrong budget can claim a recovery that the service
  * then refuses, so which one was used is always printed.
  */
-async function effectiveBudget(root: string): Promise<{ limits: BudgetLimits; source: string }> {
+export async function effectiveBudget(root: string): Promise<{ limits: BudgetLimits; source: string }> {
   const snapshot = await readBudgetSnapshot(root)
   if (snapshot === null) return { limits: resolveConfig({ root }).budget, source: 'default budgets' }
   try {

@@ -29,4 +29,8 @@ export { writeProgress, renderProgress, progressPath, PROGRESS_FILE } from './pr
 export type { LockResult } from './persist.js'
 export { priceUsage, peakBand, isPricedModel, pricedModels, totalTokens, toUsd, DEEPSEEK_V41_FLASH_EFFECTIVE_FROM } from './pricing.js'
 export type { TokenUsage, Price, PriceResult, PriceFailure, PeakBand, Currency } from './pricing.js'
+export { createDashboardHandler, describeProject, summarizeProject, mountDashboard, loadDashboardAssets, DASHBOARD_PATH } from './dashboard.js'
+export type { DashboardDeps, DashboardAssets, ProjectSummary, ProjectDetail, TaskView, EventView, LoopPresence } from './dashboard.js'
+export { listProjects, findProject, projectId, registryPath, dshHome } from './projects.js'
+export type { Project, ProjectList } from './projects.js'
 export type * from './types.js'

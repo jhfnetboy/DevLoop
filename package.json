@@ -18,6 +18,7 @@
   },
   "files": [
     "cordis.patch.yml",
+    "dashboard",
     "lib",
     "templates",
     "docs/Install.md",
