@@ -1,4 +1,4 @@
-// DevLoop dashboard — read-only (phase 1).
+// DevLoop dashboard.
 //
 // Everything a project reports is model-influenced text: task titles, gate
 // evidence, GOAL.md, PROGRESS.md. It is only ever placed with textContent
@@ -65,6 +65,27 @@ function usd(n) {
   return typeof n === 'number' ? `$${n.toFixed(n < 1 ? 4 : 2)}` : '—'
 }
 
+// Writes carry the revision the page was showing. If the loop moved on in the
+// meantime the server refuses (409), because the operator decided about a
+// state that no longer exists.
+async function postJson(path, body) {
+  const res = await fetch(path, {
+    method: 'POST',
+    credentials: 'same-origin',
+    cache: 'no-store',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  const parsed = await res.json().catch(() => null)
+  if (res.status === 401) throw new Error('未登录 DSH')
+  if (!parsed || !parsed.ok) {
+    const error = new Error((parsed && parsed.error && parsed.error.message) || `HTTP ${res.status}`)
+    error.code = parsed && parsed.error && parsed.error.code
+    throw error
+  }
+  return parsed.value
+}
+
 async function getJson(path) {
   const res = await fetch(path, { credentials: 'same-origin', cache: 'no-store' })
   if (res.status === 401) throw new Error('未登录 DSH：先用 dsh 打印的 ?token= 链接打开一次首页')
@@ -81,6 +102,7 @@ function loopBadges(p) {
   // A halt outranks whatever the process timer is doing: "running" next to
   // "halted" would ask the reader to work out which one to believe.
   if (!p.armed) out.push(badge('未启用（没有 GOAL.md）', ''))
+  else if (p.paused) out.push(badge('已暂停', 'warn'))
   else if (p.halted) out.push(badge('已停机', 'bad'))
   else out.push(badge(loopLabel, loopTone))
   if (p.armed && p.halted && p.loop === 'elsewhere') out.push(badge(loopLabel, '', true))
@@ -131,22 +153,29 @@ function gatePanel(p) {
     el('p', { class: 'q' }, g.question),
     g.evidence && g.evidence.length ? el('ul', { class: 'plain' }, g.evidence.map(e => el('li', {}, e))) : null,
     g.options && g.options.length ? el('div', { class: 'options' },
-      g.options.map(o => el('div', { class: 'option' }, el('code', {}, o.key), el('span', {}, o.summary)))) : null,
+      g.options.map(o => el('div', { class: 'option' },
+        actionButton(ANSWER_LABEL[o.key] || o.key, o.key === 'stop' ? '' : 'primary',
+          `回答「${ANSWER_LABEL[o.key] || o.key}」：${o.summary}`,
+          () => postJson(`${API}/projects/${p.id}/answer`, { revision: p.revision, choice: o.key })),
+        el('span', {}, el('code', {}, o.key), ' ', o.summary)))) : null,
     g.manual ? el('p', { class: 'note' }, g.manual) : null,
-    el('p', { class: 'note' }, '现在请在本机用 ', el('code', {}, `devloop answer <选项> ${p.root}`),
-      ' 回答（devloop status 会打印可以直接粘贴的完整命令）。在页面上直接回答是第 2 期的功能。'),
   )
 }
 
 function haltPanel(p) {
   if (!p.halted && !p.supervisor) return null
   return el('section', { class: 'panel' },
-    el('h3', {}, '停机原因'),
+    el('h3', {}, p.paused ? '已暂停' : '停机原因'),
     p.haltReasons && p.haltReasons.length
       ? el('ul', { class: 'plain' }, p.haltReasons.map(r => el('li', {}, r)))
       : el('p', { class: 'muted' }, '—'),
     p.supervisor ? el('p', { class: 'note' }, `supervisor hold：${p.supervisor.reason}${p.supervisor.taskId ? `（任务 ${p.supervisor.taskId}）` : ''}`) : null,
     p.acknowledged ? el('p', { class: 'note' }, `已于 ${time(p.acknowledged.at)} 选择暂不处理（answer stop）`) : null,
+    el('div', { class: 'actions' },
+      actionButton('恢复循环', 'primary',
+        p.paused ? '恢复这个循环？' : '解除停机并清掉基于旧历史的熔断。如果停机原因还在，下一轮会再次停下。继续？',
+        () => postJson(`${API}/projects/${p.id}/resume`, { revision: p.revision }))),
+    el('p', { class: 'note' }, '只重做某个任务（--task）或清零花费（--reset-cost）仍需在本机用 devloop resume。'),
   )
 }
 
@@ -216,10 +245,15 @@ function textPanel(title, text, open) {
 }
 
 function renderProject(p) {
+  const canPause = p.armed && !p.halted && !p.error
   const head = el('div', { class: 'head' },
     el('h1', {}, p.name),
     loopBadges(p),
-    p.revision !== null ? badge(`revision ${p.revision}`, '', true) : null)
+    p.revision !== null ? badge(`revision ${p.revision}`, '', true) : null,
+    el('span', { class: 'spacer' }),
+    canPause ? actionButton('暂停', '',
+      '暂停这个循环？正在跑的那一步会中止，并计为一次尝试；恢复后重做。',
+      () => postJson(`${API}/projects/${p.id}/pause`, { revision: p.revision })) : null)
   const sub = el('div', { class: 'path' }, p.root)
   if (p.error) return [back(), head, sub, el('div', { class: 'banner bad' }, p.error)]
   if (!p.armed) {
@@ -228,12 +262,46 @@ function renderProject(p) {
   }
   const main = [gatePanel(p), haltPanel(p), tasksPanel(p), textPanel('目标 GOAL.md', p.goal, true)]
   const side = [budgetPanel(p), eventsPanel(p), textPanel('PROGRESS.md', p.progress, false)]
-  return [back(), head, sub,
+  return [back(), head, sub, flashNode(),
     el('div', { class: 'kv' },
       el('span', {}, '最近动作 ', el('b', {}, p.lastAction || '—')),
       el('span', {}, '最近进展 ', el('b', {}, ago(p.lastProgressAt) || '—')),
       el('span', {}, '更新 ', el('b', {}, time(p.updatedAt)))),
     el('div', { class: 'sections' }, el('div', {}, main), el('div', {}, side))]
+}
+
+const ANSWER_LABEL = { retry: '重做', review: '重新评审', accept: '接受', stop: '先不处理' }
+
+// The last action's result, kept across the refresh that follows it.
+let flash = null
+
+function flashNode() {
+  if (!flash || Date.now() - flash.at > 30000) return null
+  const node = el('div', { class: `banner ${flash.tone || ''}` }, flash.text)
+  return node
+}
+
+function describeResult(value) {
+  if (value.declined) return `已记录：先不处理（revision ${value.revision}）。`
+  if (value.stillBlocked) return `已写入（revision ${value.revision}），但下一轮还会被挡住：${value.stillBlocked}`
+  return `已写入（revision ${value.revision}）。循环会在下一轮接着跑。`
+}
+
+function actionButton(label, tone, question, run) {
+  const button = el('button', { type: 'button', class: `btn ${tone}` }, label)
+  button.addEventListener('click', async () => {
+    if (!window.confirm(question)) return
+    for (const b of document.querySelectorAll('button.btn')) b.disabled = true
+    try {
+      flash = { text: describeResult(await run()), tone: '', at: Date.now() }
+    } catch (error) {
+      flash = error.code === 'stale'
+        ? { text: '状态已经变了，页面已刷新。请看一眼再决定。', tone: 'bad', at: Date.now() }
+        : { text: `没有执行：${error.message}`, tone: 'bad', at: Date.now() }
+    }
+    await load()
+  })
+  return button
 }
 
 function back() {
@@ -262,7 +330,7 @@ async function load() {
       : renderHome(await getJson(`${API}/projects`))
     // Keep the reader's place: a refresh replaces content, not scroll position.
     const y = window.scrollY
-    app.replaceChildren(...nodes)
+    app.replaceChildren(...nodes.filter(Boolean))
     window.scrollTo(0, y)
     refresh.textContent = `每 ${REFRESH_MS / 1000} 秒刷新 · ${new Date().toLocaleTimeString('zh-CN', { hour12: false })}`
     refresh.classList.remove('stale')
@@ -281,6 +349,6 @@ function start() {
   timer = setInterval(() => { if (!document.hidden) void load() }, REFRESH_MS)
 }
 
-window.addEventListener('hashchange', () => { window.scrollTo(0, 0); start() })
+window.addEventListener('hashchange', () => { flash = null; window.scrollTo(0, 0); start() })
 document.addEventListener('visibilitychange', () => { if (!document.hidden) void load() })
 start()

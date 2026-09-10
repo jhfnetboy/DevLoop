@@ -119,7 +119,7 @@ only where there is a browser to show it.
 |---|---|---|
 | 0 | Remote access and the findings above | none |
 | 1 | Read-only page: project list; per project the tasks, halt reason, pending gate and its options, budget and cost, last events, PROGRESS | none — reads only |
-| 2 | Actions: answer a gate, resume, and an operator pause; resume re-arms the loop's timer in process | the CLI's verbs, plus pause |
+| 2 | Actions: answer a gate, resume, and an operator pause; a halted loop waits instead of disposing its timer | the CLI's verbs, plus `devloop pause` |
 | 3 | Projects: register a git repository, write its GOAL.md, start its loop; unregister. A loop per project, a global daily cost cap and a global concurrency cap across all of them | starting a loop |
 
 ### Phase 1
@@ -130,16 +130,37 @@ registry is read-only — edited by hand — and only the process's own root has
 running loop; other projects' state is shown as found on disk, labelled as not
 running here.
 
-### Phase 2 — decisions to make before building
+### Phase 2 — as built
 
-- **Pause is new state vocabulary.** Nothing lets an operator stop a running
-  loop today: `killSwitch` is set only by the loop on its own way out, and
-  `answer stop` exists only while a gate is pending. A pause has to be a
-  persisted hold with its own reason, so `status`, the gate and `resume` all
-  understand it — not an in-memory flag a restart forgets.
-- **Resume must re-arm.** `DevloopService.stop()` sets `disposed`, so a halted
-  loop cannot restart without restarting the profile (tracked in
-  `V0.5-TODO.md`). Halting and disposal become separate.
+- **One implementation, two surfaces.** `operator.ts` holds `answerGate`,
+  `resumeLoop` and `pauseLoop`; `devloop answer|resume|pause` and the page's
+  three POSTs all call them, under the same lock. The journal labels a page
+  write `answer:retry@dashboard`, so a change made from another device is
+  distinguishable after the fact.
+- **A write names the state it answers.** Every POST carries the revision the
+  page was showing, and a moved state is refused with 409 rather than applied
+  to a question the operator never saw. Bodies must be `application/json` (a
+  cross-site form cannot send that without a preflight), are capped at 4 KB,
+  and `answer` accepts only the four gate keys.
+- **Pause is state, not a flag in memory.** `paused: { at, via }` beside
+  `killSwitch: true` and `lastAction: stop:kill_switch`, so every existing
+  halted path applies unchanged and a restart forgets nothing. It asks no
+  question — `gateFor` returns null for it — because the only reply is resume;
+  and it refuses a loop that is already halted, which would bury the question
+  that halt is asking. A malformed record degrades to none: `killSwitch` is
+  what stops the loop, so dropping the annotation loses the who and when, never
+  the halt. On the page's own project a pause also aborts the dispatch in
+  flight, whose result would be discarded as stale anyway; it still counts as
+  an attempt.
+- **A halted loop keeps its timer.** `stop()` is disposal only. A halted tick
+  peeks at STATE without the lock and returns, writing nothing, while the
+  revision is the one it already saw halted; any answer, resume or pause moves
+  the revision and the next tick acts on it. This closes the `V0.5-TODO.md` item
+  "re-arm a running service after a resume" for the CLI as much as for the page.
+  The test that documented the old limitation passed for the wrong reason — its
+  workspace was not a git repository, so the dispatch it counted never reached
+  a backend with or without a timer — and is replaced by one that watches the
+  journal.
 
 ### Phase 3 — decisions to make before building
 

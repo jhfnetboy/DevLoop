@@ -5,7 +5,8 @@ import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
 import type { BudgetLimits } from './config.js'
 import { effectiveBudget } from './command.js'
-import { gateFor, type Gate } from './gate.js'
+import { gateFor, type Gate, type GateOption } from './gate.js'
+import { answerGate, OperatorError, pauseLoop, resumeLoop, type OperatorFailure } from './operator.js'
 import { actionKey } from './loop.js'
 import { devloopDir, eventsPath, goalPath, loadState, workspaceArmed } from './persist.js'
 import { PROGRESS_FILE } from './progress.js'
@@ -16,9 +17,10 @@ import type { LoopState, Task } from './types.js'
 /**
  * The management page, served by DSH's own webserver behind DSH's own login.
  *
- * Read-only in this phase: every route is a GET, and nothing here opens a file
- * for writing or takes the state lock. What an operator can *do* is still the
- * CLI's business until the page can do it through the same code paths.
+ * Reads are GETs that take no lock and open nothing for writing. The three
+ * writes — answer, resume, pause — are POSTs that call the very functions the
+ * CLI calls (`operator.ts`), under the same lock, and only for the revision the
+ * operator was looking at. The page has no write the CLI does not have.
  *
  * Every request passes `requestRejection` before routing — static assets too —
  * so the page is exactly as reachable as DSH's `/api`: a trusted `Host`, a
@@ -30,6 +32,9 @@ export const DASHBOARD_PATH = '/devloop'
 /** How this process's own loop is doing, as far as the page can tell. */
 export type LoopPresence = 'running' | 'stopped' | 'elsewhere'
 
+/** What the page can do. Each one is a CLI verb of the same name. */
+export type DashboardVerb = 'answer' | 'resume' | 'pause'
+
 export interface DashboardDeps {
   readonly ownRoot: string
   readonly home: string
@@ -38,6 +43,12 @@ export interface DashboardDeps {
   readonly requestRejection: (request: { readonly headers: IncomingHttpHeaders }) => 401 | 403 | undefined
   readonly assets: DashboardAssets
   readonly now?: () => number
+  /**
+   * Told after a write succeeds, so the process running that project's loop
+   * can act at once: abandon the dispatch in flight on a pause, tick on the
+   * rest. A project run by another process notices on its own next tick.
+   */
+  readonly onOperatorAction?: (project: Project, verb: DashboardVerb) => void
 }
 
 export interface DashboardAssets {
@@ -57,6 +68,8 @@ export interface ProjectSummary {
   readonly revision: number | null
   readonly lastAction: string | null
   readonly halted: boolean
+  /** Halted by an operator's pause rather than by the loop itself. */
+  readonly paused: boolean
   readonly haltReasons: readonly string[]
   readonly question: string | null
   readonly taskCounts: Readonly<Record<string, number>>
@@ -75,6 +88,7 @@ export interface ProjectDetail extends ProjectSummary {
   readonly supervisor: LoopState['supervisor']
   readonly killSwitch: boolean | null
   readonly acknowledged: LoopState['acknowledged'] | null
+  readonly pause: LoopState['paused'] | null
   readonly budget: { readonly source: string, readonly limits: BudgetLimits } | null
   readonly lastProgressAt: string | null
   readonly events: readonly EventView[]
@@ -125,6 +139,7 @@ async function readProject(
     revision: null,
     lastAction: null,
     halted: false,
+    paused: false,
     haltReasons: [],
     question: null,
     taskCounts: {},
@@ -155,6 +170,7 @@ async function readProject(
       revision: state.revision,
       lastAction: actionKey(state.lastAction),
       halted: diagnosis.halted,
+      paused: state.paused !== undefined,
       haltReasons: diagnosis.reasons,
       question: gate?.question ?? null,
       taskCounts: countByStatus(state.tasks),
@@ -173,6 +189,7 @@ async function readProject(
         supervisor: state.supervisor,
         killSwitch: state.killSwitch,
         acknowledged: state.acknowledged ?? null,
+        pause: state.paused ?? null,
         budget,
         lastProgressAt: new Date(state.usage.lastProgressAt).toISOString(),
         events: await readEventTail(eventsPath(project.root)),
@@ -192,6 +209,7 @@ function emptyDetail(): Omit<ProjectDetail, keyof ProjectSummary> {
     supervisor: null,
     killSwitch: null,
     acknowledged: null,
+    pause: null,
     budget: null,
     lastProgressAt: null,
     events: [],
@@ -311,12 +329,20 @@ export function createDashboardHandler(deps: DashboardDeps): (req: IncomingMessa
     if (rejection === 403) return send(res, req, 403, 'text/plain; charset=utf-8', 'forbidden\n')
     if (rejection === 401) return send(res, req, 401, 'text/html; charset=utf-8', LOGIN_HINT)
 
+    const path = new URL(req.url ?? '/', 'http://dashboard.invalid').pathname
+    const action = ACTION_ROUTE.exec(path)
+    if (action) {
+      if (req.method !== 'POST') {
+        res.setHeader('allow', 'POST')
+        return send(res, req, 405, 'text/plain; charset=utf-8', 'method not allowed\n')
+      }
+      return act(req, res, deps, now, action[1] as string, action[2] as DashboardVerb)
+    }
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       res.setHeader('allow', 'GET, HEAD')
       return send(res, req, 405, 'text/plain; charset=utf-8', 'method not allowed\n')
     }
 
-    const path = new URL(req.url ?? '/', 'http://dashboard.invalid').pathname
     if (path === DASHBOARD_PATH) {
       res.writeHead(308, { ...COMMON_HEADERS, location: `${DASHBOARD_PATH}/` })
       res.end()
@@ -344,6 +370,96 @@ export function createDashboardHandler(deps: DashboardDeps): (req: IncomingMessa
     }
     return send(res, req, 404, 'text/plain; charset=utf-8', 'not found\n')
   }
+}
+
+const ACTION_ROUTE = new RegExp(`^${DASHBOARD_PATH}/api/projects/([0-9a-f]{12})/(answer|resume|pause)$`)
+const MAX_BODY_BYTES = 4 * 1024
+const ANSWERS = new Set<GateOption['key']>(['retry', 'review', 'accept', 'stop'])
+
+const FAILURE_STATUS: Readonly<Record<OperatorFailure, number>> = {
+  stale: 409,
+  busy: 503,
+  refused: 422,
+}
+
+async function act(
+  req: IncomingMessage,
+  res: ServerResponse,
+  deps: DashboardDeps,
+  now: () => number,
+  id: string,
+  verb: DashboardVerb,
+): Promise<void> {
+  const fail = (status: number, code: string, message: string) =>
+    json(res, req, status, { ok: false, error: { code, message } })
+
+  // Defence in depth beside DSH's Origin check: a cross-site form cannot send
+  // this content type without a preflight the page never answers.
+  const type = String(req.headers['content-type'] ?? '').split(';')[0]?.trim().toLowerCase()
+  if (type !== 'application/json') return fail(415, 'bad-request', 'send application/json')
+
+  let body: Record<string, unknown>
+  try {
+    body = await readJsonBody(req)
+  } catch (error) {
+    return fail(400, 'bad-request', messageOf(error))
+  }
+  const revision = body.revision
+  if (typeof revision !== 'number' || !Number.isInteger(revision) || revision < 0) {
+    // Required, not optional: a write from the page is always a reply to a
+    // particular state, and one with no revision could land on any state.
+    return fail(400, 'bad-request', 'revision is required: the state you were looking at')
+  }
+  const choice = body.choice
+  if (verb === 'answer' && (typeof choice !== 'string' || !ANSWERS.has(choice as GateOption['key']))) {
+    return fail(400, 'bad-request', 'choice must be one of retry, review, accept, stop')
+  }
+
+  const project = findProject(await listProjects(deps.ownRoot, deps.home), id)
+  if (!project) return fail(404, 'not-found', 'no such project')
+  if (!await workspaceArmed(project.root)) return fail(422, 'refused', 'this project has no .devloop/GOAL.md')
+
+  const { limits } = await effectiveBudget(project.root)
+  const options = { via: 'dashboard' as const, expectedRevision: revision, now }
+  try {
+    let value: Record<string, unknown>
+    if (verb === 'answer') {
+      const outcome = await answerGate(project.root, choice as GateOption['key'], limits, options)
+      value = { revision: outcome.saved.revision, stillBlocked: outcome.stillBlocked, declined: outcome.declined }
+    } else if (verb === 'resume') {
+      const outcome = await resumeLoop(project.root, {}, limits, options)
+      value = { revision: outcome.saved.revision, stillBlocked: outcome.stillBlocked, cleared: outcome.before.reasons }
+    } else {
+      const outcome = await pauseLoop(project.root, limits, options)
+      value = { revision: outcome.saved.revision, stillBlocked: outcome.stillBlocked }
+    }
+    deps.onOperatorAction?.(project, verb)
+    return json(res, req, 200, { ok: true, value })
+  } catch (error) {
+    if (error instanceof OperatorError) return fail(FAILURE_STATUS[error.code], error.code, error.message)
+    return fail(500, 'internal', messageOf(error))
+  }
+}
+
+async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown>> {
+  const chunks: Buffer[] = []
+  let size = 0
+  for await (const chunk of req as AsyncIterable<Buffer | string>) {
+    const buffer = typeof chunk === 'string' ? Buffer.from(chunk) : chunk
+    size += buffer.length
+    if (size > MAX_BODY_BYTES) throw new Error(`body over ${MAX_BODY_BYTES} bytes`)
+    chunks.push(buffer)
+  }
+  const text = Buffer.concat(chunks).toString('utf8').trim()
+  if (text === '') return {}
+  let value: unknown
+  try {
+    value = JSON.parse(text)
+  } catch {
+    throw new Error('body is not valid JSON')
+  }
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error('body must be a JSON object')
+  return value as Record<string, unknown>
 }
 
 function send(res: ServerResponse, req: IncomingMessage, status: number, type: string, body: string): void {

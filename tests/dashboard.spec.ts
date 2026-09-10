@@ -8,7 +8,7 @@ import {
   loadDashboardAssets,
   type DashboardDeps,
 } from '../src/dashboard.ts'
-import { saveState } from '../src/persist.ts'
+import { loadState, saveState } from '../src/persist.ts'
 import { listProjects, projectId, registryPath } from '../src/projects.ts'
 import { baseState, makeTask, mkdtempInRepo, withTasks } from './helpers.ts'
 
@@ -33,6 +33,8 @@ async function call(
   handler: ReturnType<typeof createDashboardHandler>,
   method: string,
   url: string,
+  body?: unknown,
+  contentType = 'application/json',
 ): Promise<Captured> {
   const out: Captured = { status: 0, headers: {}, body: '' }
   const res = {
@@ -43,7 +45,13 @@ async function call(
     },
     end(body?: string) { out.body = body ?? '' },
   }
-  const req = { method, url, headers: { host: '127.0.0.1:3080' } }
+  const payload = body === undefined ? '' : typeof body === 'string' ? body : JSON.stringify(body)
+  const req = {
+    method,
+    url,
+    headers: { host: '127.0.0.1:3080', ...(body === undefined ? {} : { 'content-type': contentType }) },
+    async *[Symbol.asyncIterator]() { if (payload !== '') yield Buffer.from(payload) },
+  }
   await handler(req as unknown as IncomingMessage, res as unknown as ServerResponse)
   return out
 }
@@ -75,13 +83,18 @@ describe('dashboard access', () => {
     expect(res.body).toBe('forbidden\n')
   })
 
-  it('is read-only: anything but GET and HEAD is refused before it is routed', async () => {
+  it('reads with GET and writes with POST, and nothing else reaches a handler', async () => {
     const root = await armedProject('dash-405-')
     const handler = createDashboardHandler(deps({ ownRoot: root, home: root }))
     for (const method of ['POST', 'PUT', 'DELETE', 'PATCH']) {
       const res = await call(handler, method, '/devloop/api/projects')
       expect(res.status).toBe(405)
       expect(res.headers.allow).toBe('GET, HEAD')
+    }
+    for (const method of ['GET', 'PUT', 'DELETE']) {
+      const res = await call(handler, method, `/devloop/api/projects/${projectId(root)}/pause`)
+      expect(res.status).toBe(405)
+      expect(res.headers.allow).toBe('POST')
     }
   })
 
@@ -240,5 +253,77 @@ describe('dashboard assets', () => {
     expect(assets.html).not.toMatch(/<script>(?!<)|\sstyle=|\son[a-z]+=/)
     const pkg = JSON.parse(await readFile(join(import.meta.dirname, '..', 'package.json'), 'utf8')) as { files: string[] }
     expect(pkg.files).toContain('dashboard')
+  })
+})
+
+describe('dashboard actions', () => {
+  function running() {
+    return withTasks(baseState({ lastAction: { type: 'plan' } }), [makeTask({ id: 't1', status: 'ready' })])
+  }
+
+  it('checks DSH login before it reads a single byte of the body', async () => {
+    const root = await armedProject('dash-act-auth-')
+    await saveState(root, running())
+    const handler = createDashboardHandler(deps({ ownRoot: root, home: root, requestRejection: () => 401 }))
+    const res = await call(handler, 'POST', `/devloop/api/projects/${projectId(root)}/pause`, { revision: 1 })
+    expect(res.status).toBe(401)
+    expect((await loadState(root, Date.now())).paused).toBeUndefined()
+  })
+
+  it('refuses a write that is not JSON, has no revision, or answers with a word that is not an answer', async () => {
+    const root = await armedProject('dash-act-bad-')
+    await saveState(root, running())
+    const handler = createDashboardHandler(deps({ ownRoot: root, home: root }))
+    const base = `/devloop/api/projects/${projectId(root)}`
+    // A cross-site form can post text/plain without a preflight; JSON it cannot.
+    expect((await call(handler, 'POST', `${base}/pause`, 'revision=1', 'text/plain')).status).toBe(415)
+    expect((await call(handler, 'POST', `${base}/pause`, {})).status).toBe(400)
+    expect((await call(handler, 'POST', `${base}/pause`, { revision: '1' })).status).toBe(400)
+    expect((await call(handler, 'POST', `${base}/answer`, { revision: 1, choice: 'rm -rf' })).status).toBe(400)
+    expect((await call(handler, 'POST', `${base}/pause`, 'x'.repeat(5000))).status).toBe(400)
+    expect((await loadState(root, Date.now())).paused).toBeUndefined()
+  })
+
+  it('pauses and resumes through the CLI\'s own functions, and tells the loop', async () => {
+    const root = await armedProject('dash-act-ok-')
+    const saved = await saveState(root, running())
+    const told: string[] = []
+    const handler = createDashboardHandler(deps({
+      ownRoot: root,
+      home: root,
+      onOperatorAction: (project, verb) => { told.push(`${project.own ? 'own' : 'other'}:${verb}`) },
+    }))
+    const base = `/devloop/api/projects/${projectId(root)}`
+
+    const paused = await call(handler, 'POST', `${base}/pause`, { revision: saved.revision })
+    expect(paused.status).toBe(200)
+    const pausedValue = (JSON.parse(paused.body) as { value: { revision: number } }).value
+    expect(pausedValue.revision).toBe(saved.revision + 1)
+    expect((await loadState(root, Date.now())).paused?.via).toBe('dashboard')
+
+    const resumed = await call(handler, 'POST', `${base}/resume`, { revision: pausedValue.revision })
+    expect(resumed.status).toBe(200)
+    expect((await loadState(root, Date.now())).killSwitch).toBe(false)
+    expect(told).toEqual(['own:pause', 'own:resume'])
+  })
+
+  it('answers 409 to a decision made against a state that has moved, and changes nothing', async () => {
+    const root = await armedProject('dash-act-stale-')
+    const saved = await saveState(root, running())
+    const handler = createDashboardHandler(deps({ ownRoot: root, home: root }))
+    const res = await call(handler, 'POST', `/devloop/api/projects/${projectId(root)}/pause`, { revision: saved.revision - 1 })
+    expect(res.status).toBe(409)
+    expect((JSON.parse(res.body) as { error: { code: string } }).error.code).toBe('stale')
+    expect((await loadState(root, Date.now())).revision).toBe(saved.revision)
+  })
+
+  it('answers 422 when there is nothing to answer, and 404 for a project nobody registered', async () => {
+    const root = await armedProject('dash-act-422-')
+    const saved = await saveState(root, running())
+    const handler = createDashboardHandler(deps({ ownRoot: root, home: root }))
+    const nothing = await call(handler, 'POST', `/devloop/api/projects/${projectId(root)}/answer`, { revision: saved.revision, choice: 'retry' })
+    expect(nothing.status).toBe(422)
+    const nobody = await call(handler, 'POST', `/devloop/api/projects/${projectId('/etc')}/pause`, { revision: 1 })
+    expect(nobody.status).toBe(404)
   })
 })

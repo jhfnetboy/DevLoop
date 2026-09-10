@@ -55,6 +55,10 @@ export function gateFor(state: LoopState, limits: BudgetLimits, now: number): Ga
     }
   }
 
+  // A pause asks nothing: the operator stopped a healthy loop and the only
+  // reply is to resume it. Posing a question here would invent a decision.
+  if (state.paused && state.supervisor === null) return null
+
   const reason = state.supervisor?.reason ?? diagnosis.wouldHaltAgain ?? 'unknown'
   const taskId = diagnosis.taskId
   const task = taskId === null ? undefined : state.tasks.find(entry => entry.id === taskId)

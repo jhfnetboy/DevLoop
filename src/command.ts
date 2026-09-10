@@ -1,16 +1,17 @@
 import { dirname, extname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { ConfigSchema, resolveConfig, type BudgetLimits } from './config.js'
-import { loadState, readBudgetSnapshot, saveState, withStateLock, workspaceArmed } from './persist.js'
-import { writeProgress } from './progress.js'
-import { diagnoseHalt, resumeState, type HaltDiagnosis, type ResumeOptions } from './resume.js'
-import { applyAnswer, gateFor, type Gate, type GateOption } from './gate.js'
+import { loadState, readBudgetSnapshot, workspaceArmed } from './persist.js'
+import { diagnoseHalt, type HaltDiagnosis, type ResumeOptions } from './resume.js'
+import { gateFor, type Gate, type GateOption } from './gate.js'
+import { answerGate, OperatorError, pauseLoop, resumeLoop } from './operator.js'
 
 const USAGE = `devloop — inspect and unstick a DevLoop workspace
 
   devloop status [<root>]
   devloop answer <retry|review|accept|stop> [<root>]
   devloop resume [<root>] [--task <id>] [--reset-cost]
+  devloop pause [<root>]
 
 <root> defaults to the current directory.
 
@@ -21,9 +22,11 @@ resume  Lift the halt and clear the circuits that are keyed on stale history.
         --task <id>    give that task another attempt, clearing its counters
         --reset-cost   also clear the spend windows (a cap is not a glitch,
                        so this never happens on its own)
+pause   Stop a loop that is running fine. Work in flight is abandoned and
+        still counts as an attempt; resume picks the loop back up.
 
-A resumed workspace is not a running one: the plugin stops its timer when the
-loop halts, so restart the DSH profile afterwards.
+A running DSH profile notices an answer, a resume or a pause on its next tick;
+nothing needs restarting.
 `
 
 export interface CliResult {
@@ -72,7 +75,7 @@ async function main(
     write(USAGE)
     return command === undefined ? 2 : 0
   }
-  if (command !== 'status' && command !== 'resume' && command !== 'answer') {
+  if (command !== 'status' && command !== 'resume' && command !== 'answer' && command !== 'pause') {
     fail(`devloop: unknown command ${command}\n\n${USAGE}`)
     return 2
   }
@@ -147,32 +150,13 @@ async function main(
   if (command === 'answer') {
     let outcome
     try {
-      outcome = await withStateLock(root, async () => {
-        const now = Date.now()
-        const current = await loadState(root, now)
-        const gate = gateFor(current, budget.limits, now)
-        if (gate === null) throw new Error('answer: the loop is not waiting on anything')
-        const next = applyAnswer(current, gate, choice as GateOption['key'], now)
-        const saved = await saveState(root, next, {
-          expectedRevision: current.revision,
-          action: `answer:${choice ?? ''}`,
-        })
-        try {
-          await writeProgress(root, saved, now)
-        } catch {
-          fail('devloop: state saved but PROGRESS.md could not be rewritten\n')
-        }
-        return { gate, saved, declined: choice === 'stop' }
-      })
+      outcome = await answerGate(root, choice as GateOption['key'], budget.limits, { via: 'cli' })
     } catch (error) {
-      fail(`devloop: ${error instanceof Error ? error.message : String(error)}\n`)
+      fail(`devloop: ${operatorMessage(error)}\n`)
       return 1
     }
-    if (!outcome.ok) {
-      fail('devloop: another process holds the state lock; stop the profile and retry\n')
-      return 1
-    }
-    const { gate, saved, declined } = outcome.value
+    if (!outcome.progressWritten) fail('devloop: state saved but PROGRESS.md could not be rewritten\n')
+    const { gate, saved, declined } = outcome
     // `stop` lifts nothing on purpose, so it is not "still blocked" — it is the
     // answer. Exit 0 keeps a successful command distinguishable from a busy
     // lock or a failed save, both of which exit 1.
@@ -181,55 +165,61 @@ async function main(
       return 0
     }
     write(`answered ${choice} for ${gate.reason} at revision ${saved.revision}\n`)
-    const after = diagnoseHalt(saved, budget.limits, Date.now())
-    if (after.wouldHaltAgain !== null) {
-      write(`  still blocked by: ${after.wouldHaltAgain}\n`)
+    if (outcome.stillBlocked !== null) {
+      write(`  still blocked by: ${outcome.stillBlocked}\n`)
       return 1
     }
-    write('restart the DSH profile to start ticking again\n')
+    write(RESUMES_ON_NEXT_TICK)
+    return 0
+  }
+
+  if (command === 'pause') {
+    let outcome
+    try {
+      outcome = await pauseLoop(root, budget.limits, { via: 'cli' })
+    } catch (error) {
+      fail(`devloop: ${operatorMessage(error)}\n`)
+      return 1
+    }
+    if (!outcome.progressWritten) fail('devloop: state saved but PROGRESS.md could not be rewritten\n')
+    write(`paused at revision ${outcome.saved.revision}\n`)
+    write(`  resume with: ${invokedAs} resume ${root}\n`)
     return 0
   }
 
   let outcome
   try {
-    outcome = await withStateLock(root, async () => {
-      const now = Date.now()
-      const current = await loadState(root, now)
-      // resumeState refuses an integrity hold; a synthesised empty state must
-      // never be written over a STATE.json that merely failed to parse.
-      const before = diagnoseHalt(current, budget.limits, now, options.resume)
-      const next = resumeState(current, options.resume, now)
-      const saved = await saveState(root, next, { expectedRevision: current.revision, action: 'resume' })
-      // Derived and best-effort: STATE is already committed, and failing to
-      // rewrite a human-readable snapshot must not report the recovery as failed.
-      try {
-        await writeProgress(root, saved, now)
-      } catch {
-        fail('devloop: state resumed but PROGRESS.md could not be rewritten\n')
-      }
-        return { saved, before }
-    })
+    outcome = await resumeLoop(root, options.resume, budget.limits, { via: 'cli' })
   } catch (error) {
     // A refusal is a result, not a crash: say why and leave STATE alone.
-    fail(`devloop: ${error instanceof Error ? error.message : String(error)}\n`)
+    fail(`devloop: ${operatorMessage(error)}\n`)
     return 1
   }
-  if (!outcome.ok) {
-    fail('devloop: another process holds the state lock; stop the profile and retry\n')
-    return 1
-  }
+  // Derived and best-effort: STATE is already committed, and failing to
+  // rewrite a human-readable snapshot must not report the recovery as failed.
+  if (!outcome.progressWritten) fail('devloop: state resumed but PROGRESS.md could not be rewritten\n')
 
-  const { saved, before } = outcome.value
+  const { saved, before } = outcome
   write(`resumed at revision ${saved.revision} (${budget.source})\n`)
   for (const reason of before.reasons) write(`  cleared: ${reason}\n`)
-  const after = diagnoseHalt(saved, budget.limits, Date.now())
-  if (after.wouldHaltAgain !== null) {
-    write(`  still blocked by: ${after.wouldHaltAgain}\n`)
+  if (outcome.stillBlocked !== null) {
+    write(`  still blocked by: ${outcome.stillBlocked}\n`)
     write('  the loop will stop again on the next tick\n')
     return 1
   }
-  write('restart the DSH profile to start ticking again\n')
+  write(RESUMES_ON_NEXT_TICK)
   return 0
+}
+
+/**
+ * The CLI cannot see whether a profile is running — it is a separate process —
+ * so it says what happens in both cases rather than guessing which one holds.
+ */
+const RESUMES_ON_NEXT_TICK = 'a running DSH profile picks this up on its next tick; start one if none is running\n'
+
+function operatorMessage(error: unknown): string {
+  if (error instanceof OperatorError) return error.message
+  return error instanceof Error ? error.message : String(error)
 }
 
 /**

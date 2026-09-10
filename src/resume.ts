@@ -52,6 +52,7 @@ export function diagnoseHalt(
 
   const integrity = integrityHold(state)
   if (integrity !== null) reasons.push(`state integrity hold: ${integrity}`)
+  if (state.paused && integrity === null) reasons.push(`paused by an operator (${state.paused.via}) at ${state.paused.at}`)
   if (state.killSwitch) reasons.push('killSwitch is set')
   if (state.lastAction.type === 'stop') reasons.push(`last action was stop:${state.lastAction.reason}`)
   if (state.supervisor && integrity === null) {
@@ -123,7 +124,7 @@ export function liftHold(state: LoopState, now: number, what: string): LoopState
   // profile — which a resume requires — clears it anyway.
   const rolled = rollCostWindows(state.usage, now, true)
 
-  const { acknowledged: _acknowledged, ...rest } = state
+  const { acknowledged: _acknowledged, paused: _paused, ...rest } = state
   return {
     ...rest,
     killSwitch: false,

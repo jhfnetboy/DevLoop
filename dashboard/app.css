@@ -83,3 +83,11 @@ details summary { cursor: pointer; color: var(--muted); }
 .empty { padding: 30px; text-align: center; color: var(--muted); border: 1px dashed var(--line); border-radius: var(--radius); }
 
 @media (prefers-reduced-motion: no-preference) { .card, .badge { transition: border-color .15s ease; } }
+.btn { font: inherit; padding: 5px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); cursor: pointer; white-space: nowrap; }
+.btn:hover { border-color: var(--accent); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn:disabled { opacity: .5; cursor: progress; }
+.head .spacer { flex: 1; }
+.actions { display: flex; gap: 8px; margin-top: 12px; }
+.option { grid-template-columns: auto 1fr; }
+.banner { margin-top: 12px; }

@@ -241,7 +241,7 @@ describe('the devloop command', () => {
 
     const resumed = await devloop(root, ['resume', '--task', 'A'])
     expect(resumed.code).toBe(0)
-    expect(resumed.out).toContain('restart the DSH profile')
+    expect(resumed.out).toContain('picks this up on its next tick')
 
     const state = await loadState(root, Date.now())
     expect(state.killSwitch).toBe(false)
@@ -337,28 +337,41 @@ describe('the devloop command', () => {
   })
 
   /**
-   * The documented limitation, measured rather than assumed: the plugin
-   * disposes its timer when the loop halts, so a resumed STATE does not restart
-   * it on its own. Re-arming the running service without a restart is a
-   * separate change.
+   * A halted loop keeps its timer and waits. This used to be the documented
+   * limitation — the service disposed its timer on a halt, so a resumed STATE
+   * needed a profile restart. The old test for it passed for the wrong reason:
+   * its workspace was not a git repository, so the dispatch it counted failed
+   * before reaching the backend with or without a timer. This one watches the
+   * journal instead, which records the loop's own decision before any dispatch.
    */
-  it('does not restart a service that already halted', async () => {
+  it('picks a resume up on its next tick, and writes nothing while it waits', async () => {
+    // No tasks: the first thing a running loop does is decide to plan, and
+    // that decision is journalled before anything is dispatched.
     const root = await armed({
       ...emptyState(NOW),
       killSwitch: true,
       lastAction: { type: 'stop', reason: 'budget' },
-      tasks: [makeTask({ id: 'A', status: 'ready' })],
     })
-    const backend = new RecordingBackend()
-    const service = new DevloopService(new Context(), resolveConfig({ root, enabled: false }), backend)
+    const service = new DevloopService(new Context(), resolveConfig({ root, enabled: false }), new RecordingBackend())
     services.push(service)
+    const journal = async (): Promise<string[]> =>
+      (await readFile(join(root, '.devloop', 'EVENTS.jsonl'), 'utf8'))
+        .split('\n').filter(line => line.trim() !== '')
+        .map(line => (JSON.parse(line) as { action: string }).action)
 
     await service.tick()
-    expect(backend.runs).toHaveLength(0)
-
-    await devloop(root, ['resume'])
+    const waiting = await journal()
     await service.tick()
-    // Still nothing: the service stopped itself on the first tick.
-    expect(backend.runs).toHaveLength(0)
+    await service.tick()
+    // Halted: however many ticks pass, the journal does not move.
+    expect(await journal()).toEqual(waiting)
+
+    const resumed = await devloop(root, ['resume'])
+    expect(resumed.code).toBe(0)
+    await service.tick()
+    const after = await journal()
+    expect(after.slice(0, waiting.length + 1)).toEqual([...waiting, 'resume'])
+    // The same process, no restart: the next tick decided to plan.
+    expect(after.slice(waiting.length + 1)).toContain('tick:plan')
   })
 })

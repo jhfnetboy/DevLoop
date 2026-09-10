@@ -57,6 +57,16 @@ export default class DevloopService extends Service {
   private dispatchAbort: AbortController | null = null
   private pendingCommitHold: string | null = null
   private pendingSignals: { taskId: string | null; tokens?: number; costUsd?: number } | null = null
+  /**
+   * The revision this loop last found halted at, or null while it is running.
+   *
+   * A halted loop keeps its timer. It used to dispose it, which made
+   * `devloop resume` need a profile restart; now each tick first peeks at
+   * STATE without the lock, and while the revision is the one it already saw
+   * halted it returns having written nothing. An answer, a resume or a pause
+   * from any surface moves the revision, and the next tick acts on it.
+   */
+  private haltedRevision: number | null = null
 
   constructor(ctx: Context, rawConfig: Config, backend?: AgentBackend) {
     super(ctx, 'devloop')
@@ -68,6 +78,13 @@ export default class DevloopService extends Service {
       ownRoot: this.config.root,
       home: dshHome(),
       loopRunning: () => this.timer !== null,
+      onOperatorAction: (project, verb) => {
+        // Another process's loop notices on its own next tick; only ours can be
+        // told now. A pause stops paying for work whose result it would discard.
+        if (!project.own) return
+        if (verb === 'pause') this.abortDispatch()
+        else this.poke()
+      },
     })
     if (!this.config.enabled) {
       ctx.logger.info('[dsh-devloop] disabled by config')
@@ -92,6 +109,20 @@ export default class DevloopService extends Service {
     }, this.config.tickIntervalMs)
   }
 
+  /**
+   * Abandon the dispatch in flight, if any. Its result would be refused as
+   * stale anyway once the loop is paused; aborting stops paying for it.
+   */
+  abortDispatch(): void {
+    this.dispatchAbort?.abort()
+  }
+
+  /** Tick now rather than at the next interval, so a surface sees its change take effect. */
+  poke(): void {
+    void this.tick()
+  }
+
+  /** Dispose: only for plugin teardown. A halt no longer comes through here. */
   stop(): void {
     this.disposed = true
     this.dispatchAbort?.abort()
@@ -107,6 +138,13 @@ export default class DevloopService extends Service {
     try {
       if (this.disposed) return
       if (!await workspaceArmed(this.config.root)) return
+      if (this.haltedRevision !== null) {
+        // Read-only and lock-free: STATE is replaced by rename, so a peek sees a
+        // whole snapshot. Still halted at the same revision means nothing changed.
+        const peek = await loadState(this.config.root, now)
+        if (peek.revision === this.haltedRevision && (peek.killSwitch || peek.lastAction.type === 'stop')) return
+        this.haltedRevision = null
+      }
       const outcome = await withStateLock(this.config.root, async (): Promise<{
         result: TickResult
         worktreeRoot: string | null
@@ -146,7 +184,7 @@ export default class DevloopService extends Service {
         }
         if (current.killSwitch || current.lastAction.type === 'stop') {
           await snapshotProgress(this.config.root, current, now, this.ctx.logger)
-          this.stop()
+          this.haltedRevision = current.revision
           return
         }
         let result = runTick(current, this.config.budget, now)
@@ -257,7 +295,7 @@ export default class DevloopService extends Service {
         }
         await snapshotProgress(this.config.root, result.state, now, this.ctx.logger)
         if (result.action.type === 'stop' || result.state.killSwitch) {
-          this.stop()
+          this.haltedRevision = result.state.revision
         }
         return { result, worktreeRoot }
       })
