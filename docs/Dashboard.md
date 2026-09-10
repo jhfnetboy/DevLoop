@@ -120,15 +120,13 @@ only where there is a browser to show it.
 | 0 | Remote access and the findings above | none |
 | 1 | Read-only page: project list; per project the tasks, halt reason, pending gate and its options, budget and cost, last events, PROGRESS | none — reads only |
 | 2 | Actions: answer a gate, resume, and an operator pause; a halted loop waits instead of disposing its timer | the CLI's verbs, plus `devloop pause` |
-| 3 | Projects: register a git repository, write its GOAL.md, start its loop; unregister. A loop per project, a global daily cost cap and a global concurrency cap across all of them | starting a loop |
+| 3 | Projects: register a git repository, write its GOAL.md to start its loop, unregister. A loop per project; a shared daily cost cap and shared dispatch slots across them | registering a repository; starting a loop |
 
 ### Phase 1
 
 Projects come from two places: the process's own `root` (the directory DSH was
-started in), and a registry at `$DSH_HOME/devloop/projects.json`. In phase 1 the
-registry is read-only — edited by hand — and only the process's own root has a
-running loop; other projects' state is shown as found on disk, labelled as not
-running here.
+started in), and a registry at `$DSH_HOME/devloop/projects.json`. Phase 1 read
+both and wrote neither.
 
 ### Phase 2 — as built
 
@@ -162,17 +160,41 @@ running here.
   a backend with or without a timer — and is replaced by one that watches the
   journal.
 
-### Phase 3 — decisions to make before building
+### Phase 3 — as built
 
-- **One loop per project.** `DevloopService` binds one `root`; it becomes a
-  registry of per-project loops, each with its own timer, `busy` flag, lock and
-  state. The per-project code is unchanged in shape; what is new is ownership.
-- **Budgets across projects.** Each project's `STATE.json` carries its own
-  `costUsdDay`, so N projects can spend N daily caps. A global cap sums them.
-- **Concurrency across projects.** One dispatch per project behind `busy` is N
-  concurrent dispatches for N projects. `maxParallelWorkers` becomes the global
-  bound.
-- **Registering a project is choosing where agents run.** The path must be an
-  existing git toplevel (the worktree code already refuses anything else),
-  resolved to its realpath, and is an operator decision recorded with a
-  timestamp.
+- **One loop per project.** The old service body is now `ProjectLoop`, unchanged
+  in shape; `DevloopService` owns the process's own loop plus one per registered
+  project, all sharing one backend and one profile config, differing only in
+  `root`. Every registered project gets a loop at startup, and a loop without a
+  GOAL.md idles — exactly the rule the own root always had — so arming a project
+  *is* starting it. There is no second "running" flag to fall out of step with
+  the files, and a restart resumes everything that was armed.
+- **Budgets across projects.** `LoopShared` sums each loop's `costUsdDay`
+  (rolled to today, so yesterday's spend is not counted) and, once the total
+  reaches `maxCostUsdPerDayAllProjects`, no loop starts new work until UTC
+  midnight. Unset, that cap equals one project's `maxCostUsdPerDay`: adding
+  projects never raises what a day can cost. It is not consulted with a single
+  loop, whose own cap already halts it with a gate naming the cause. It sees
+  only what backends report — dsh headless reports nothing.
+- **Concurrency across projects.** A loop takes one of `maxParallelWorkers`
+  shared slots for any tick that reaches the state lock, and holds it through
+  that tick's dispatch. A refused loop waits rather than halts: a halt would
+  ask its own project a question whose answer is in another project.
+- **Registering is choosing where agents run.** A root must be an existing git
+  toplevel with a real (not symlinked) `.devloop`, is stored by realpath, and
+  the registry is rewritten atomically. A registry the page cannot parse is
+  refused rather than overwritten, and fields it does not know are kept.
+- **Starting writes GOAL.md, once.** Created with `O_EXCL | O_NOFOLLOW`, so it
+  neither replaces an existing goal nor follows a planted symlink. A goal
+  changed under a running loop would leave it working through tasks planned for
+  a different one, so an existing goal is edited by hand.
+- **Removing forgets, and deletes nothing.** A running loop must be paused
+  first, so the decision to abandon its work is in its journal. The own root
+  cannot be removed. `.devloop/`, worktrees and branches stay where they are.
+- **The own root is hidden when it can never be a project** — unarmed and not a
+  repository, which is what launchd gives DSH as its working directory.
+
+Not done, deliberately: editing an existing goal from the page, and picking up a
+registry edited by hand while DSH runs (restart to apply). Task claims and
+leases stay deferred: projects now run in parallel, but each project still runs
+one dispatch at a time, so a lease still has no consumer.

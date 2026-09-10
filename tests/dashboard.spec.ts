@@ -10,7 +10,7 @@ import {
 } from '../src/dashboard.ts'
 import { loadState, saveState } from '../src/persist.ts'
 import { listProjects, projectId, registryPath } from '../src/projects.ts'
-import { baseState, makeTask, mkdtempInRepo, withTasks } from './helpers.ts'
+import { baseState, initGitRepo, makeTask, mkdtempInRepo, withTasks } from './helpers.ts'
 
 interface Captured {
   status: number
@@ -22,7 +22,7 @@ const ASSETS = { html: '<!doctype html><title>page</title>', js: 'void 0', css: 
 
 function deps(overrides: Partial<DashboardDeps> & Pick<DashboardDeps, 'ownRoot' | 'home'>): DashboardDeps {
   return {
-    loopRunning: () => true,
+    presence: (_root, own) => own ? 'running' : 'elsewhere',
     requestRejection: () => undefined,
     assets: ASSETS,
     ...overrides,
@@ -86,8 +86,13 @@ describe('dashboard access', () => {
   it('reads with GET and writes with POST, and nothing else reaches a handler', async () => {
     const root = await armedProject('dash-405-')
     const handler = createDashboardHandler(deps({ ownRoot: root, home: root }))
-    for (const method of ['POST', 'PUT', 'DELETE', 'PATCH']) {
+    for (const method of ['PUT', 'DELETE', 'PATCH']) {
       const res = await call(handler, method, '/devloop/api/projects')
+      expect(res.status).toBe(405)
+      expect(res.headers.allow).toBe('GET, HEAD, POST')
+    }
+    for (const method of ['POST', 'PUT']) {
+      const res = await call(handler, method, `/devloop/api/projects/${projectId(root)}`)
       expect(res.status).toBe(405)
       expect(res.headers.allow).toBe('GET, HEAD')
     }
@@ -185,7 +190,7 @@ describe('dashboard projects', () => {
       lastAction: { type: 'stop', reason: 'blocked' },
     }, { expectedRevision: first.revision, action: 'hold:empty_task' })
 
-    const handler = createDashboardHandler(deps({ ownRoot: root, home: root, loopRunning: () => false }))
+    const handler = createDashboardHandler(deps({ ownRoot: root, home: root, presence: () => 'stopped' }))
     const res = await call(handler, 'GET', `/devloop/api/projects/${projectId(root)}`)
     expect(res.status).toBe(200)
     const detail = (JSON.parse(res.body) as { value: Record<string, unknown> }).value as {
@@ -227,16 +232,25 @@ describe('dashboard projects', () => {
     expect((JSON.parse(progRes.body) as { value: { progress: string | null } }).value.progress).toBeNull()
   })
 
-  it('shows an unarmed project as unarmed and a vanished one as missing', async () => {
-    const bare = await mkdtempInRepo('dash-bare-')
+  it('shows an unarmed repository as unarmed and a vanished one as missing', async () => {
+    const repo = await mkdtempInRepo('dash-bare-')
+    await initGitRepo(repo)
     const home = await mkdtempInRepo('dash-mhome-')
     await mkdir(join(home, 'devloop'))
-    await writeFile(registryPath(home), JSON.stringify({ projects: [{ root: join(bare, 'gone') }] }), 'utf8')
-    const handler = createDashboardHandler(deps({ ownRoot: bare, home }))
+    await writeFile(registryPath(home), JSON.stringify({ projects: [{ root: join(repo, 'gone') }] }), 'utf8')
+    const handler = createDashboardHandler(deps({ ownRoot: repo, home }))
     const res = await call(handler, 'GET', '/devloop/api/projects')
-    const projects = (JSON.parse(res.body) as { value: { projects: Array<{ armed: boolean, error: string | null }> } }).value.projects
-    expect(projects[0]).toMatchObject({ armed: false, error: null })
-    expect(projects[1]).toMatchObject({ armed: false, error: 'directory not found' })
+    const projects = (JSON.parse(res.body) as { value: { projects: Array<{ armed: boolean, own: boolean, error: string | null }> } }).value.projects
+    expect(projects[0]).toMatchObject({ own: true, armed: false, error: null })
+    expect(projects[1]).toMatchObject({ own: false, armed: false, error: 'directory not found' })
+  })
+
+  it('leaves out an own root that could never be a project', async () => {
+    // What launchd gives DSH as its working directory: not armed, not a repository.
+    const plain = await mkdtempInRepo('dash-plain-')
+    const handler = createDashboardHandler(deps({ ownRoot: plain, home: plain }))
+    const res = await call(handler, 'GET', '/devloop/api/projects')
+    expect((JSON.parse(res.body) as { value: { projects: unknown[] } }).value.projects).toEqual([])
   })
 })
 

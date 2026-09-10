@@ -55,6 +55,13 @@ export interface Config {
   readonly routing: RoutingTable
   /** Only consulted when a route names the `forge` backend. */
   readonly forge: ForgeConfig
+  /**
+   * The day's spend summed over every project this process runs, beyond which
+   * no loop starts new work until UTC midnight. 0 means the same figure as
+   * `budget.maxCostUsdPerDay`, so registering more projects never raises what
+   * the operator can be charged in a day. Not consulted with a single project.
+   */
+  readonly maxCostUsdPerDayAllProjects: number
 }
 
 const routeSchema = (tier: ModelTier, backend: string, model: string) =>
@@ -70,6 +77,7 @@ export const ConfigSchema: s<Config> = s.object({
   acceptanceTimeoutMinutes: s.number().step(1).min(1).max(600).default(15),
   enabled: s.boolean().default(true),
   tickIntervalMs: s.number().step(1).min(500).default(2000),
+  maxCostUsdPerDayAllProjects: s.number().min(0).default(0),
   agentBackend: s.union([
     s.const('noop'),
     s.const('routed'),

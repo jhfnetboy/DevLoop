@@ -91,3 +91,9 @@ details summary { cursor: pointer; color: var(--muted); }
 .actions { display: flex; gap: 8px; margin-top: 12px; }
 .option { grid-template-columns: auto 1fr; }
 .banner { margin-top: 12px; }
+.add-row { display: flex; gap: 8px; }
+.path-input, .goal-input { flex: 1; width: 100%; font: 13px/1.5 var(--mono); padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); }
+.path-input:focus, .goal-input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+.goal-input { display: block; margin-top: 8px; resize: vertical; min-height: 140px; }
+.panel.add { margin-bottom: 16px; }
+.panel.start { margin-top: 16px; }

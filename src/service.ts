@@ -22,9 +22,9 @@ import { DEVLOOP_DIR, loadState, saveState, withStateLock, workspaceArmed, write
 import { writeProgress } from './progress.js'
 import { applyRunSignals, refundAction, rollCostWindows } from './budget.js'
 import { runTick, type TickResult } from './tick.js'
-import { mountDashboard } from './dashboard.js'
-import { dshHome } from './projects.js'
-import type { HoldReason, LoopState } from './types.js'
+import { mountDashboard, type LoopPresence } from './dashboard.js'
+import { dshHome, listProjects } from './projects.js'
+import type { BudgetUsage, HoldReason, LoopState } from './types.js'
 import { RUNNER_REAP_MS } from './spawn.js'
 import { applyAgentResult } from './transition.js'
 import { prepareDelegateWorktree, preparePlanWorktree, removePlanWorktree, mergeTaskWorktree, deleteMergedTaskBranch, worktreePath, worktreeTaskToken, readContractBaseSha, commitDirtyTaskWorktree, assertTaskChangesAllowed, taskWorktreeHeadSha } from './worktree.js'
@@ -35,21 +35,23 @@ declare module '@deepseek-ai/cordis' {
   }
 }
 
-/**
- * Host service: a process-local timer drives one deterministic tick against
- * `<root>/.devloop/`. After STATE is written, plan/delegate/review is handed to
- * `AgentBackend` outside the lock. Delegate also creates a git worktree and
- * writes CONTRACT.json. Merge (0.2.4) git-merges the task branch after
- * Review PASS, then deletes the worktree. Set `agentBackend: 'dsh'` to spawn
- * one-shot headless, or `claude` / `codex` for T3 CLIs. Default stays noop.
- */
-export default class DevloopService extends Service {
-  static inject = []
-  static Config = ConfigSchema
-  static readonly provide = 'devloop'
+/** The two logger methods a loop uses, so a project's lines can carry its name. */
+export type LoopLogger = Pick<Context['logger'], 'info' | 'error'>
 
+/**
+ * One project's loop: a process-local timer drives one deterministic tick
+ * against `<root>/.devloop/`. After STATE is written, plan/delegate/review is
+ * handed to `AgentBackend` outside the lock. Delegate also creates a git
+ * worktree and writes CONTRACT.json. Merge git-merges the task branch after
+ * Review PASS, then deletes the worktree.
+ *
+ * This was the whole service while a process ran one project. It is unchanged
+ * in shape; what is new is that `DevloopService` owns several of them and
+ * `LoopShared` stands between them.
+ */
+export class ProjectLoop {
   private readonly config: Config
-  readonly backend: AgentBackend
+  private readonly ctx: { readonly logger: LoopLogger }
   private timer: ReturnType<typeof setInterval> | null = null
   private busy = false
   private sessionCostReset = false
@@ -67,34 +69,25 @@ export default class DevloopService extends Service {
    * from any surface moves the revision, and the next tick acts on it.
    */
   private haltedRevision: number | null = null
+  /** The usage this loop last read, for the day's spend summed across projects. */
+  lastUsage: BudgetUsage | null = null
 
-  constructor(ctx: Context, rawConfig: Config, backend?: AgentBackend) {
-    super(ctx, 'devloop')
-    this.config = resolveConfig(rawConfig)
-    this.backend = backend ?? this.createBackend()
-    // Mounted whether or not the loop is enabled: a disabled loop's state is
-    // still worth reading. Only the web profile has the services it waits on.
-    mountDashboard(ctx, {
-      ownRoot: this.config.root,
-      home: dshHome(),
-      loopRunning: () => this.timer !== null,
-      onOperatorAction: (project, verb) => {
-        // Another process's loop notices on its own next tick; only ours can be
-        // told now. A pause stops paying for work whose result it would discard.
-        if (!project.own) return
-        if (verb === 'pause') this.abortDispatch()
-        else this.poke()
-      },
-    })
-    if (!this.config.enabled) {
-      ctx.logger.info('[dsh-devloop] disabled by config')
-      return
-    }
-    ctx.logger.info(`[dsh-devloop] loaded root=${this.config.root}`)
-    ctx.effect(() => {
-      this.start()
-      return () => this.stop()
-    })
+  constructor(
+    logger: LoopLogger,
+    config: Config,
+    readonly backend: AgentBackend,
+    private readonly shared: LoopShared = new LoopShared(Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY),
+  ) {
+    this.config = config
+    this.ctx = { logger }
+  }
+
+  get root(): string {
+    return this.config.root
+  }
+
+  get running(): boolean {
+    return this.timer !== null
   }
 
   start(): void {
@@ -135,6 +128,7 @@ export default class DevloopService extends Service {
   async tick(now = Date.now()): Promise<void> {
     if (this.disposed || this.busy) return
     this.busy = true
+    let admitted = false
     try {
       if (this.disposed) return
       if (!await workspaceArmed(this.config.root)) return
@@ -142,15 +136,22 @@ export default class DevloopService extends Service {
         // Read-only and lock-free: STATE is replaced by rename, so a peek sees a
         // whole snapshot. Still halted at the same revision means nothing changed.
         const peek = await loadState(this.config.root, now)
+        this.lastUsage = peek.usage
         if (peek.revision === this.haltedRevision && (peek.killSwitch || peek.lastAction.type === 'stop')) return
         this.haltedRevision = null
       }
+      // Across projects: a slot per tick that might dispatch, and no new work
+      // anywhere once the day's combined spend reaches the shared cap. Waiting,
+      // not halting: a halt would need an answer, and the cause is elsewhere.
+      if (!this.shared.admit(now)) return
+      admitted = true
       const outcome = await withStateLock(this.config.root, async (): Promise<{
         result: TickResult
         worktreeRoot: string | null
       } | undefined> => {
         if (this.disposed) return
         let current = await loadState(this.config.root, now)
+        this.lastUsage = current.usage
         this.pendingCommitHold = this.pendingCommitHold ?? await readCommitHoldMarker(this.config.root)
         if (this.pendingCommitHold && !current.killSwitch && !current.supervisor) {
           current = holdTask(current, this.pendingCommitHold, 'parent_commit_failed')
@@ -471,38 +472,239 @@ export default class DevloopService extends Service {
     } catch (error) {
       this.ctx.logger.error('[dsh-devloop] tick failed', error)
     } finally {
+      if (admitted) this.shared.release()
       this.busy = false
     }
   }
+}
+
+/**
+ * Cordis constructs `(ctx, config)` only. Opt-in CLIs: `dsh`, `claude`,
+ * `codex`. The default stays NoopBackend so tests without the third
+ * constructor arg do not spawn. RecordingBackend is tests-only.
+ */
+export function createBackend(ctx: Context, config: Config): AgentBackend {
+  if (config.agentBackend === 'routed') {
+    const routes = [config.plannerRoute, config.reviewerRoute, ...Object.values(config.routing)]
+    // Only register what a route actually names: RoutedBackend.health() probes
+    // every registered adapter, so an unused one would demand its CLI be installed.
+    const usesForge = routes.some(route => route.backend === 'forge')
+    return new RoutedBackend({
+      planner: config.plannerRoute,
+      reviewer: config.reviewerRoute,
+      workers: config.routing,
+    }, {
+      dsh: new DshHeadlessBackend(),
+      claude: new ClaudeCliBackend(),
+      codex: new CodexCliBackend(),
+      ...(usesForge ? { forge: new ForgePrBackend(config.forge) } : {}),
+      subagent: new HarnessSubagentBackend(new CordisHarnessHost(ctx)),
+    })
+  }
+  if (config.agentBackend === 'dsh') return new DshHeadlessBackend()
+  if (config.agentBackend === 'claude') return new ClaudeCliBackend()
+  if (config.agentBackend === 'codex') return new CodexCliBackend()
+  return new NoopBackend()
+}
+
+/**
+ * What the loops of one process share: dispatch slots, and the day's spend.
+ *
+ * Each project's STATE carries its own `costUsdDay`, so N projects could spend
+ * N daily caps, and each runs one tick at a time behind its own `busy`, so N
+ * projects are N concurrent dispatches. This is the one place both are bounded
+ * across projects. A loop that is refused waits — its tick returns having done
+ * nothing — rather than halting, because a halt asks its own project a question
+ * whose answer lies in another project.
+ */
+export class LoopShared {
+  private inFlight = 0
+  private readonly loops = new Set<ProjectLoop>()
+
+  constructor(
+    private readonly maxConcurrent: number,
+    /** Combined across projects; not consulted while only one loop exists. */
+    private readonly maxCostUsdPerDay: number,
+  ) {}
+
+  add(loop: ProjectLoop): void {
+    this.loops.add(loop)
+  }
+
+  remove(loop: ProjectLoop): void {
+    this.loops.delete(loop)
+  }
+
+  /** Today's spend across every loop, each rolled to today the way its own budget would be. */
+  spentToday(now: number): number {
+    let total = 0
+    for (const loop of this.loops) {
+      if (loop.lastUsage) total += rollCostWindows(loop.lastUsage, now).costUsdDay
+    }
+    return total
+  }
 
   /**
-   * Cordis constructs `(ctx, config)` only. Opt-in CLIs: `dsh`, `claude`,
-   * `codex`. The default stays NoopBackend so tests without the third
-   * constructor arg do not spawn. RecordingBackend is tests-only.
+   * The cap that applies now, or null when it does not. With one loop, that
+   * loop's own `maxCostUsdPerDay` already halts it with a gate that names the
+   * cause; a shared cap equal to it would only turn that halt into silence.
    */
-  protected createBackend(): AgentBackend {
-    if (this.config.agentBackend === 'routed') {
-      const routes = [this.config.plannerRoute, this.config.reviewerRoute, ...Object.values(this.config.routing)]
-      // Only register what a route actually names: RoutedBackend.health() probes
-      // every registered adapter, so an unused one would demand its CLI be installed.
-      const usesForge = routes.some(route => route.backend === 'forge')
-      return new RoutedBackend({
-        planner: this.config.plannerRoute,
-        reviewer: this.config.reviewerRoute,
-        workers: this.config.routing,
-      }, {
-        dsh: new DshHeadlessBackend(),
-        claude: new ClaudeCliBackend(),
-        codex: new CodexCliBackend(),
-        ...(usesForge ? { forge: new ForgePrBackend(this.config.forge) } : {}),
-        subagent: new HarnessSubagentBackend(new CordisHarnessHost(this.ctx)),
-      })
-    }
-    if (this.config.agentBackend === 'dsh') return new DshHeadlessBackend()
-    if (this.config.agentBackend === 'claude') return new ClaudeCliBackend()
-    if (this.config.agentBackend === 'codex') return new CodexCliBackend()
-    return new NoopBackend()
+  cap(): number | null {
+    return this.loops.size > 1 ? this.maxCostUsdPerDay : null
   }
+
+  admit(now: number): boolean {
+    if (this.inFlight >= this.maxConcurrent) return false
+    const cap = this.cap()
+    if (cap !== null && this.spentToday(now) >= cap) return false
+    this.inFlight += 1
+    return true
+  }
+
+  release(): void {
+    this.inFlight = Math.max(0, this.inFlight - 1)
+  }
+}
+
+/**
+ * The plugin: every project this process runs, and the page that shows them.
+ *
+ * The process's own `root` always has a loop, as it did when there was only
+ * one. Each project in the operator's registry gets one too. A loop with no
+ * GOAL.md idles, exactly as the own root does, so arming a project *is*
+ * starting it — there is no second "running" flag to fall out of step with the
+ * files.
+ */
+export default class DevloopService extends Service {
+  static inject = []
+  static Config = ConfigSchema
+  static readonly provide = 'devloop'
+
+  private readonly config: Config
+  readonly backend: AgentBackend
+  private readonly shared: LoopShared
+  private readonly own: ProjectLoop
+  /** Registered projects, by realpath. */
+  private readonly others = new Map<string, ProjectLoop>()
+  private started = false
+  private ownRealRoot: string | null = null
+
+  constructor(ctx: Context, rawConfig: Config, backend?: AgentBackend) {
+    super(ctx, 'devloop')
+    this.config = resolveConfig(rawConfig)
+    this.backend = backend ?? createBackend(ctx, this.config)
+    this.shared = new LoopShared(this.config.budget.maxParallelWorkers, sharedDailyCap(this.config))
+    this.own = new ProjectLoop(ctx.logger, this.config, this.backend, this.shared)
+    this.shared.add(this.own)
+    // Mounted whether or not the loop is enabled: a disabled loop's state is
+    // still worth reading. Only the web profile has the services it waits on.
+    mountDashboard(ctx, {
+      ownRoot: this.config.root,
+      home: dshHome(),
+      presence: root => this.presence(root),
+      onOperatorAction: (project, verb) => {
+        const loop = this.loopFor(project.root)
+        if (!loop) return
+        // A pause stops paying for work whose result it would discard.
+        if (verb === 'pause') loop.abortDispatch()
+        else loop.poke()
+      },
+      control: {
+        addProject: root => this.addProject(root),
+        removeProject: root => this.removeProject(root),
+        spend: now => ({ costUsdDay: this.shared.spentToday(now), cap: this.shared.cap() }),
+      },
+    })
+    if (!this.config.enabled) {
+      ctx.logger.info('[dsh-devloop] disabled by config')
+      return
+    }
+    ctx.logger.info(`[dsh-devloop] loaded root=${this.config.root}`)
+    ctx.effect(() => {
+      this.start()
+      return () => this.stop()
+    })
+  }
+
+  start(): void {
+    if (this.started) return
+    this.started = true
+    this.own.start()
+    void this.startRegistered()
+  }
+
+  /** The process's own loop, as before: tests and embedders drive it directly. */
+  async tick(now = Date.now()): Promise<void> {
+    await this.own.tick(now)
+  }
+
+  abortDispatch(): void {
+    this.own.abortDispatch()
+  }
+
+  poke(): void {
+    this.own.poke()
+  }
+
+  stop(): void {
+    this.own.stop()
+    for (const loop of this.others.values()) loop.stop()
+    this.others.clear()
+  }
+
+  private async startRegistered(): Promise<void> {
+    try {
+      const list = await listProjects(this.config.root, dshHome())
+      this.ownRealRoot = list.projects.find(project => project.own)?.root ?? null
+      if (list.registryError) this.ctx.logger.error(`[dsh-devloop] ${list.registryError}`)
+      for (const project of list.projects) if (!project.own) this.addProject(project.root)
+    } catch (error) {
+      this.ctx.logger.error('[dsh-devloop] project registry unreadable; only the own root runs', error)
+    }
+  }
+
+  private addProject(root: string): void {
+    if (!this.started || this.others.has(root) || root === this.ownRealRoot) return
+    const name = root.split(/[\\/]/).filter(Boolean).at(-1) ?? root
+    const loop = new ProjectLoop(prefixed(this.ctx.logger, name), { ...this.config, root }, this.backend, this.shared)
+    this.others.set(root, loop)
+    this.shared.add(loop)
+    loop.start()
+    this.ctx.logger.info(`[dsh-devloop] project loop started root=${root}`)
+  }
+
+  private removeProject(root: string): void {
+    const loop = this.others.get(root)
+    if (!loop) return
+    loop.stop()
+    this.others.delete(root)
+    this.shared.remove(loop)
+  }
+
+  private loopFor(root: string): ProjectLoop | undefined {
+    if (root === this.ownRealRoot || root === this.config.root) return this.own
+    return this.others.get(root)
+  }
+
+  private presence(root: string): LoopPresence {
+    const loop = this.loopFor(root)
+    if (!loop) return 'elsewhere'
+    return loop.running ? 'running' : 'stopped'
+  }
+}
+
+/** Unset (0) means the same figure as one project's daily cap: adding projects does not raise the total. */
+function sharedDailyCap(config: Config): number {
+  return config.maxCostUsdPerDayAllProjects > 0 ? config.maxCostUsdPerDayAllProjects : config.budget.maxCostUsdPerDay
+}
+
+function prefixed(logger: LoopLogger, name: string): LoopLogger {
+  const tag = (message: unknown): unknown =>
+    typeof message === 'string' ? message.replace('[dsh-devloop]', `[dsh-devloop:${name}]`) : message
+  return {
+    info: (message: unknown, ...rest: unknown[]) => logger.info(tag(message) as string, ...rest),
+    error: (message: unknown, ...rest: unknown[]) => logger.error(tag(message) as string, ...rest),
+  } as LoopLogger
 }
 
 function isolatedPlan(agentBackend: Config['agentBackend']): boolean {

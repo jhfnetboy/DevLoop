@@ -1,7 +1,9 @@
+import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { readFile, realpath } from 'node:fs/promises'
+import { constants, lstat, mkdir, open, readFile, realpath, rename, stat, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { basename, isAbsolute, join, resolve } from 'node:path'
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
+import { promisify } from 'node:util'
 
 /**
  * The projects an operator has asked the dashboard to show.
@@ -115,4 +117,168 @@ async function readRegistry(file: string): Promise<{ roots: string[], error: str
     ? null
     : `${file}: entries ${rejected.join(', ')} ignored; each needs an absolute "root"`
   return { roots, error }
+}
+
+// ---- writes -----------------------------------------------------------------
+//
+// Registering a project is choosing a directory where agents will run and
+// commit. So a root must be an existing git toplevel — the worktree code refuses
+// anything else, and refusing it here says so before a loop is started for it —
+// and it is recorded by realpath, so a symlink cannot later be repointed under
+// an entry the operator already approved.
+
+export class ProjectError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'ProjectError'
+  }
+}
+
+const execFileAsync = promisify(execFile)
+
+/** Resolve and check a candidate root. Returns its realpath. */
+export async function validateProjectRoot(root: string): Promise<string> {
+  if (typeof root !== 'string' || !isAbsolute(root)) throw new ProjectError('root must be an absolute path')
+  let real: string
+  try {
+    real = await realpath(root)
+  } catch {
+    throw new ProjectError(`${root} does not exist`)
+  }
+  const meta = await stat(real)
+  if (!meta.isDirectory()) throw new ProjectError(`${real} is not a directory`)
+  let toplevel: string
+  try {
+    const { stdout } = await execFileAsync('git', ['-C', real, 'rev-parse', '--show-toplevel'], { timeout: 5_000 })
+    toplevel = await realpath(stdout.trim())
+  } catch {
+    throw new ProjectError(`${real} is not a git repository`)
+  }
+  if (toplevel !== real) throw new ProjectError(`${real} is inside ${toplevel}; register the repository's top level`)
+  try {
+    const loop = await lstat(join(real, DEVLOOP_DIR_NAME))
+    if (loop.isSymbolicLink() || !loop.isDirectory()) throw new ProjectError(`${real}/.devloop must be a real directory`)
+  } catch (error) {
+    if (error instanceof ProjectError) throw error
+    // Absent is fine: arming creates it.
+  }
+  return real
+}
+
+const DEVLOOP_DIR_NAME = '.devloop'
+const GOAL_FILE_NAME = 'GOAL.md'
+export const MAX_GOAL_BYTES = 64 * 1024
+
+/**
+ * Rewrite the registry with `change` applied to its roots. Refuses a registry it
+ * cannot parse rather than overwriting what the operator wrote by hand; keeps
+ * any fields it does not know about on the entries it leaves alone.
+ */
+async function rewriteRegistry(home: string, change: (entries: RegistryEntry[]) => RegistryEntry[]): Promise<void> {
+  const file = registryPath(home)
+  let entries: RegistryEntry[] = []
+  let text: string | null = null
+  try {
+    text = await readFile(file, 'utf8')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+  }
+  if (text !== null) {
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(text)
+    } catch {
+      throw new ProjectError(`${file} is not valid JSON; fix it by hand before changing projects here`)
+    }
+    const list = typeof parsed === 'object' && parsed !== null ? (parsed as { projects?: unknown }).projects : undefined
+    if (!Array.isArray(list)) throw new ProjectError(`${file} needs a "projects" array; fix it by hand first`)
+    entries = list as RegistryEntry[]
+  }
+  const next = change(entries)
+  await mkdir(dirname(file), { recursive: true, mode: 0o700 })
+  const temp = `${file}.${process.pid}.${Date.now()}.tmp`
+  await writeFile(temp, `${JSON.stringify({ projects: next }, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 })
+  await rename(temp, file)
+}
+
+interface RegistryEntry {
+  readonly root?: unknown
+  readonly [key: string]: unknown
+}
+
+/** Serialise registry writes within this process; the file has no lock of its own. */
+let registryQueue: Promise<unknown> = Promise.resolve()
+function serially<T>(work: () => Promise<T>): Promise<T> {
+  const run = registryQueue.then(work, work)
+  registryQueue = run.catch(() => undefined)
+  return run
+}
+
+export async function registerProject(home: string, ownRoot: string, root: string): Promise<string> {
+  const real = await validateProjectRoot(root)
+  if (real === await canonical(ownRoot)) throw new ProjectError('that is this process\'s own root; it is always listed')
+  return serially(async () => {
+    await rewriteRegistry(home, (entries) => {
+      if (entries.some(entry => typeof entry.root === 'string' && entry.root === real)) {
+        throw new ProjectError(`${real} is already registered`)
+      }
+      return [...entries, { root: real, addedAt: new Date().toISOString() }]
+    })
+    return real
+  })
+}
+
+/** Forget a project. Its files — `.devloop/`, worktrees, branches — are left exactly as they are. */
+export async function unregisterProject(home: string, realRoot: string): Promise<void> {
+  await serially(() => rewriteRegistry(home, entries => entries.filter((entry) => {
+    return typeof entry.root !== 'string' || entry.root !== realRoot
+  })))
+  // Entries may have been written by hand with another spelling of the path;
+  // the filter above only removes the spelling this page wrote.
+  for (const root of (await readRegistry(registryPath(home))).roots) {
+    if (await canonical(root) === realRoot) {
+      throw new ProjectError('the registry still names this project under another spelling; remove it by hand')
+    }
+  }
+}
+
+/**
+ * Arm a project: create `.devloop/GOAL.md`. This is what starts its loop — the
+ * loop idles until the file exists, as it always has.
+ *
+ * Never overwrites. A goal changed under a running loop would leave it working
+ * through tasks planned for a different one, so an existing goal is edited by
+ * hand, deliberately, rather than replaced from a browser.
+ */
+export async function armProject(realRoot: string, goal: string): Promise<void> {
+  await validateProjectRoot(realRoot)
+  const text = goal.trim()
+  if (text === '') throw new ProjectError('the goal is empty')
+  if (Buffer.byteLength(text) > MAX_GOAL_BYTES) throw new ProjectError(`the goal is over ${MAX_GOAL_BYTES} bytes`)
+  const dir = join(realRoot, DEVLOOP_DIR_NAME)
+  try {
+    await mkdir(dir)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+  }
+  const meta = await lstat(dir)
+  if (meta.isSymbolicLink() || !meta.isDirectory()) throw new ProjectError('.devloop must be a real directory')
+  let handle
+  try {
+    handle = await open(
+      join(dir, GOAL_FILE_NAME),
+      constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
+      0o644,
+    )
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
+      throw new ProjectError('this project already has a GOAL.md; edit it by hand to change the goal')
+    }
+    throw error
+  }
+  try {
+    await handle.writeFile(`${text}\n`, 'utf8')
+  } finally {
+    await handle.close()
+  }
 }

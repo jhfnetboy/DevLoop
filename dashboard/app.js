@@ -135,14 +135,66 @@ function projectCard(p) {
 }
 
 function renderHome(value) {
-  const parts = []
+  const parts = [flashNode()]
+  const g = value.global
+  if (g && g.cap !== null && g.costUsdDay >= g.cap) {
+    parts.push(el('div', { class: 'banner bad' },
+      `所有项目今日合计花费 ${usd(g.costUsdDay)}，已达到共享上限 ${usd(g.cap)}：各循环都在等待，UTC 零点后自动继续。`))
+  }
   if (value.registryError) parts.push(el('div', { class: 'banner' }, `项目注册表有问题：${value.registryError}`))
-  if (!value.projects.length) parts.push(el('div', { class: 'empty' }, '还没有项目。'))
+  parts.push(addProjectPanel())
+  if (!value.projects.length) parts.push(el('div', { class: 'empty' }, '还没有项目。在上面填一个 git 仓库的路径来添加。'))
   parts.push(el('div', { class: 'grid' }, value.projects.map(projectCard)))
-  parts.push(el('p', { class: 'note' },
-    '其他项目在 ', el('code', {}, '$DSH_HOME/devloop/projects.json'),
-    ' 里登记：{ "projects": [{ "root": "/绝对路径" }] }。在页面上添加项目是第 3 期的功能。'))
+  if (g) {
+    parts.push(el('p', { class: 'note' }, `今日合计花费 ${usd(g.costUsdDay)}`,
+      g.cap !== null ? ` / 共享上限 ${usd(g.cap)}` : '（只有一个项目时，由它自己的每日上限管）',
+      '。只统计会报告花费的后端。'))
+  }
   return parts
+}
+
+function addProjectPanel() {
+  const input = el('input', { type: 'text', class: 'path-input', placeholder: '/Users/you/Dev/some-repo（git 仓库的顶层目录）', spellcheck: 'false', autocomplete: 'off' })
+  const button = actionButton('添加项目', 'primary', null, async () => {
+    const root = input.value.trim()
+    if (!root) throw new Error('先填路径')
+    const value = await postJson(`${API}/projects`, { root })
+    return { text: `已添加：${value.root}。它还没有目标，点进去写一个就会开始。` }
+  })
+  return el('section', { class: 'panel add' },
+    el('h3', {}, '添加项目'),
+    el('div', { class: 'add-row' }, input, button),
+    el('p', { class: 'note' }, '一个项目就是一个需求：一个 git 仓库，写好目标后它的循环会把目标拆成任务逐个完成。'))
+}
+
+function startPanel(p) {
+  const area = el('textarea', { class: 'goal-input', rows: '8', placeholder: '# 目标\n\n要做成什么、做到什么程度算完成、有哪些限制……' })
+  return el('section', { class: 'panel start' },
+    el('h3', {}, '启动循环'),
+    el('p', {}, '写下这个需求的目标。保存为 .devloop/GOAL.md 后，循环会先规划出一系列任务，再逐个交给模型实现、评审、合并。'),
+    area,
+    el('div', { class: 'actions' },
+      actionButton('写入 GOAL.md 并启动', 'primary',
+        '启动这个项目的循环？之后它会按配置调用模型、花费预算，并在任务分支上提交代码。目标写入后不能从页面修改。',
+        async () => {
+          const goal = area.value.trim()
+          if (!goal) throw new Error('目标是空的')
+          await postJson(`${API}/projects/${p.id}/start`, { goal })
+          return { text: '已写入 GOAL.md，循环已唤醒。' }
+        })),
+    el('p', { class: 'note' }, '已有的目标只能在本机手工修改：正在跑的循环按旧目标规划的任务不会因为目标被替换而自动作废。'))
+}
+
+function removeButton(p) {
+  if (p.own) return null
+  if (p.armed && !p.halted) return null
+  return actionButton('移除项目', '',
+    '把这个项目从列表里移除？它的循环会停下；仓库里的 .devloop、worktree 和分支都原样保留，随时可以重新添加。',
+    async () => {
+      await postJson(`${API}/projects/${p.id}/unregister`, {})
+      location.hash = '#/'
+      return { text: `已移除：${p.name}` }
+    })
 }
 
 function gatePanel(p) {
@@ -253,13 +305,11 @@ function renderProject(p) {
     el('span', { class: 'spacer' }),
     canPause ? actionButton('暂停', '',
       '暂停这个循环？正在跑的那一步会中止，并计为一次尝试；恢复后重做。',
-      () => postJson(`${API}/projects/${p.id}/pause`, { revision: p.revision })) : null)
+      () => postJson(`${API}/projects/${p.id}/pause`, { revision: p.revision })) : null,
+    removeButton(p))
   const sub = el('div', { class: 'path' }, p.root)
   if (p.error) return [back(), head, sub, el('div', { class: 'banner bad' }, p.error)]
-  if (!p.armed) {
-    return [back(), head, sub, el('div', { class: 'empty' },
-      '这个项目还没有 .devloop/GOAL.md，所以不会有循环。写好目标并启动循环是第 3 期的功能。')]
-  }
+  if (!p.armed) return [back(), head, sub, flashNode(), startPanel(p)]
   const main = [gatePanel(p), haltPanel(p), tasksPanel(p), textPanel('目标 GOAL.md', p.goal, true)]
   const side = [budgetPanel(p), eventsPanel(p), textPanel('PROGRESS.md', p.progress, false)]
   return [back(), head, sub, flashNode(),
@@ -290,16 +340,17 @@ function describeResult(value) {
 function actionButton(label, tone, question, run) {
   const button = el('button', { type: 'button', class: `btn ${tone}` }, label)
   button.addEventListener('click', async () => {
-    if (!window.confirm(question)) return
+    if (question && !window.confirm(question)) return
     for (const b of document.querySelectorAll('button.btn')) b.disabled = true
     try {
-      flash = { text: describeResult(await run()), tone: '', at: Date.now() }
+      const value = await run()
+      flash = { text: value && value.text ? value.text : describeResult(value), tone: '', at: Date.now() }
     } catch (error) {
       flash = error.code === 'stale'
         ? { text: '状态已经变了，页面已刷新。请看一眼再决定。', tone: 'bad', at: Date.now() }
         : { text: `没有执行：${error.message}`, tone: 'bad', at: Date.now() }
     }
-    await load()
+    await load(true)
   })
   return button
 }
@@ -320,8 +371,19 @@ function route() {
   return m ? { view: 'project', id: m[1] } : { view: 'home' }
 }
 
-async function load() {
+// A refresh rebuilds the page, which would take a half-typed goal with it.
+function editing() {
+  const active = document.activeElement
+  if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return true
+  return [...document.querySelectorAll('.path-input, .goal-input')].some(field => field.value.trim() !== '')
+}
+
+async function load(force) {
   if (inflight) return
+  if (!force && editing()) {
+    refresh.textContent = '编辑中，暂停自动刷新'
+    return
+  }
   inflight = true
   const r = route()
   try {
@@ -349,6 +411,6 @@ function start() {
   timer = setInterval(() => { if (!document.hidden) void load() }, REFRESH_MS)
 }
 
-window.addEventListener('hashchange', () => { flash = null; window.scrollTo(0, 0); start() })
+window.addEventListener('hashchange', () => { flash = null; window.scrollTo(0, 0); clearInterval(timer); void load(true); timer = setInterval(() => { if (!document.hidden) void load() }, REFRESH_MS) })
 document.addEventListener('visibilitychange', () => { if (!document.hidden) void load() })
 start()

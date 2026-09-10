@@ -10,7 +10,18 @@ import { answerGate, OperatorError, pauseLoop, resumeLoop, type OperatorFailure 
 import { actionKey } from './loop.js'
 import { devloopDir, eventsPath, goalPath, loadState, workspaceArmed } from './persist.js'
 import { PROGRESS_FILE } from './progress.js'
-import { findProject, listProjects, type Project } from './projects.js'
+import {
+  armProject,
+  findProject,
+  listProjects,
+  MAX_GOAL_BYTES,
+  ProjectError,
+  projectId,
+  registerProject,
+  unregisterProject,
+  validateProjectRoot,
+  type Project,
+} from './projects.js'
 import { diagnoseHalt } from './resume.js'
 import type { LoopState, Task } from './types.js'
 
@@ -32,14 +43,26 @@ export const DASHBOARD_PATH = '/devloop'
 /** How this process's own loop is doing, as far as the page can tell. */
 export type LoopPresence = 'running' | 'stopped' | 'elsewhere'
 
+/** How the page reaches the process that runs the loops. */
+export interface ProjectControl {
+  /** A root was just registered: start its loop. */
+  addProject(root: string): void
+  /** A root was just unregistered: stop and forget its loop. */
+  removeProject(root: string): void
+  /** Today's spend across every loop, and the shared cap when one applies. */
+  spend(now: number): { readonly costUsdDay: number, readonly cap: number | null }
+}
+
 /** What the page can do. Each one is a CLI verb of the same name. */
 export type DashboardVerb = 'answer' | 'resume' | 'pause'
 
 export interface DashboardDeps {
   readonly ownRoot: string
   readonly home: string
-  /** Whether this process is ticking a loop for `ownRoot` right now. */
-  readonly loopRunning: () => boolean
+  /** Whether this process is ticking a loop for that project right now. */
+  readonly presence: (root: string, own: boolean) => LoopPresence
+  /** Present where the process can run projects besides its own root. */
+  readonly control?: ProjectControl
   readonly requestRejection: (request: { readonly headers: IncomingHttpHeaders }) => 401 | 403 | undefined
   readonly assets: DashboardAssets
   readonly now?: () => number
@@ -110,22 +133,22 @@ const PROGRESS_MAX_BYTES = 64 * 1024
 const EVENTS_TAIL_BYTES = 512 * 1024
 const EVENTS_SHOWN = 40
 
-export async function summarizeProject(project: Project, deps: Pick<DashboardDeps, 'loopRunning'>, now: number): Promise<ProjectSummary> {
+export async function summarizeProject(project: Project, deps: Pick<DashboardDeps, 'presence'>, now: number): Promise<ProjectSummary> {
   return (await readProject(project, deps, now, false)).summary
 }
 
-export async function describeProject(project: Project, deps: Pick<DashboardDeps, 'loopRunning'>, now: number): Promise<ProjectDetail> {
+export async function describeProject(project: Project, deps: Pick<DashboardDeps, 'presence'>, now: number): Promise<ProjectDetail> {
   const { summary, extra } = await readProject(project, deps, now, true)
   return { ...summary, ...(extra ?? emptyDetail()) }
 }
 
 async function readProject(
   project: Project,
-  deps: Pick<DashboardDeps, 'loopRunning'>,
+  deps: Pick<DashboardDeps, 'presence'>,
   now: number,
   full: boolean,
 ): Promise<{ summary: ProjectSummary, extra: Omit<ProjectDetail, keyof ProjectSummary> | null }> {
-  const loop: LoopPresence = project.own ? (deps.loopRunning() ? 'running' : 'stopped') : 'elsewhere'
+  const loop: LoopPresence = deps.presence(project.root, project.own)
   const base = {
     id: project.id,
     name: project.name,
@@ -324,6 +347,15 @@ const COMMON_HEADERS: Readonly<Record<string, string>> = {
 
 export function createDashboardHandler(deps: DashboardDeps): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
   const now = deps.now ?? Date.now
+  let ownIsRepository: Promise<boolean> | null = null
+  const ownListed = async (summary: ProjectSummary): Promise<boolean> => {
+    if (summary.armed) return true
+    // An unarmed own root that is not a repository — `$HOME`, when launchd
+    // starts DSH there — can never become a project, and is only noise.
+    ownIsRepository ??= validateProjectRoot(summary.root).then(() => true, () => false)
+    return ownIsRepository
+  }
+
   return async (req, res) => {
     const rejection = deps.requestRejection(req)
     if (rejection === 403) return send(res, req, 403, 'text/plain; charset=utf-8', 'forbidden\n')
@@ -336,10 +368,13 @@ export function createDashboardHandler(deps: DashboardDeps): (req: IncomingMessa
         res.setHeader('allow', 'POST')
         return send(res, req, 405, 'text/plain; charset=utf-8', 'method not allowed\n')
       }
-      return act(req, res, deps, now, action[1] as string, action[2] as DashboardVerb)
+      const verb = action[2] as DashboardVerb | ProjectVerb
+      if (verb === 'start' || verb === 'unregister') return manage(req, res, deps, action[1] as string, verb)
+      return act(req, res, deps, now, action[1] as string, verb)
     }
+    if (path === `${DASHBOARD_PATH}/api/projects` && req.method === 'POST') return register(req, res, deps)
     if (req.method !== 'GET' && req.method !== 'HEAD') {
-      res.setHeader('allow', 'GET, HEAD')
+      res.setHeader('allow', path === `${DASHBOARD_PATH}/api/projects` ? 'GET, HEAD, POST' : 'GET, HEAD')
       return send(res, req, 405, 'text/plain; charset=utf-8', 'method not allowed\n')
     }
 
@@ -355,8 +390,11 @@ export function createDashboardHandler(deps: DashboardDeps): (req: IncomingMessa
     try {
       if (path === `${DASHBOARD_PATH}/api/projects`) {
         const list = await listProjects(deps.ownRoot, deps.home)
-        const projects = await Promise.all(list.projects.map(project => summarizeProject(project, deps, now())))
-        return json(res, req, 200, { ok: true, value: { projects, registryError: list.registryError } })
+        const summaries = await Promise.all(list.projects.map(project => summarizeProject(project, deps, now())))
+        const projects: ProjectSummary[] = []
+        for (const summary of summaries) if (!summary.own || await ownListed(summary)) projects.push(summary)
+        const global = deps.control?.spend(now()) ?? null
+        return json(res, req, 200, { ok: true, value: { projects, registryError: list.registryError, global } })
       }
       const prefix = `${DASHBOARD_PATH}/api/projects/`
       if (path.startsWith(prefix)) {
@@ -372,14 +410,38 @@ export function createDashboardHandler(deps: DashboardDeps): (req: IncomingMessa
   }
 }
 
-const ACTION_ROUTE = new RegExp(`^${DASHBOARD_PATH}/api/projects/([0-9a-f]{12})/(answer|resume|pause)$`)
+/** What the page can do to the set of projects, as opposed to one loop's state. */
+export type ProjectVerb = 'start' | 'unregister'
+
+const ACTION_ROUTE = new RegExp(`^${DASHBOARD_PATH}/api/projects/([0-9a-f]{12})/(answer|resume|pause|start|unregister)$`)
 const MAX_BODY_BYTES = 4 * 1024
+/** A goal is the one body that carries prose. */
+const MAX_GOAL_BODY_BYTES = MAX_GOAL_BYTES + 4 * 1024
 const ANSWERS = new Set<GateOption['key']>(['retry', 'review', 'accept', 'stop'])
 
 const FAILURE_STATUS: Readonly<Record<OperatorFailure, number>> = {
   stale: 409,
   busy: 503,
   refused: 422,
+}
+
+type Fail = (status: number, code: string, message: string) => void
+
+/** Parse a write's body, refusing anything a cross-site form could have sent. */
+async function writeBody(req: IncomingMessage, fail: Fail, max = MAX_BODY_BYTES): Promise<Record<string, unknown> | null> {
+  // Defence in depth beside DSH's Origin check: a cross-site form cannot send
+  // this content type without a preflight the page never answers.
+  const type = String(req.headers['content-type'] ?? '').split(';')[0]?.trim().toLowerCase()
+  if (type !== 'application/json') {
+    fail(415, 'bad-request', 'send application/json')
+    return null
+  }
+  try {
+    return await readJsonBody(req, max)
+  } catch (error) {
+    fail(400, 'bad-request', messageOf(error))
+    return null
+  }
 }
 
 async function act(
@@ -390,20 +452,9 @@ async function act(
   id: string,
   verb: DashboardVerb,
 ): Promise<void> {
-  const fail = (status: number, code: string, message: string) =>
-    json(res, req, status, { ok: false, error: { code, message } })
-
-  // Defence in depth beside DSH's Origin check: a cross-site form cannot send
-  // this content type without a preflight the page never answers.
-  const type = String(req.headers['content-type'] ?? '').split(';')[0]?.trim().toLowerCase()
-  if (type !== 'application/json') return fail(415, 'bad-request', 'send application/json')
-
-  let body: Record<string, unknown>
-  try {
-    body = await readJsonBody(req)
-  } catch (error) {
-    return fail(400, 'bad-request', messageOf(error))
-  }
+  const fail: Fail = (status, code, message) => json(res, req, status, { ok: false, error: { code, message } })
+  const body = await writeBody(req, fail)
+  if (body === null) return
   const revision = body.revision
   if (typeof revision !== 'number' || !Number.isInteger(revision) || revision < 0) {
     // Required, not optional: a write from the page is always a reply to a
@@ -441,13 +492,68 @@ async function act(
   }
 }
 
-async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown>> {
+/** Register a repository. Its loop starts at once and idles until it is armed. */
+async function register(req: IncomingMessage, res: ServerResponse, deps: DashboardDeps): Promise<void> {
+  const fail: Fail = (status, code, message) => json(res, req, status, { ok: false, error: { code, message } })
+  if (!deps.control) return fail(501, 'unsupported', 'this process cannot run other projects')
+  const body = await writeBody(req, fail)
+  if (body === null) return
+  if (typeof body.root !== 'string') return fail(400, 'bad-request', 'root must be an absolute path')
+  try {
+    const real = await registerProject(deps.home, deps.ownRoot, body.root)
+    deps.control.addProject(real)
+    return json(res, req, 200, { ok: true, value: { id: projectId(real), root: real } })
+  } catch (error) {
+    if (error instanceof ProjectError) return fail(422, 'refused', error.message)
+    return fail(500, 'internal', messageOf(error))
+  }
+}
+
+async function manage(
+  req: IncomingMessage,
+  res: ServerResponse,
+  deps: DashboardDeps,
+  id: string,
+  verb: ProjectVerb,
+): Promise<void> {
+  const fail: Fail = (status, code, message) => json(res, req, status, { ok: false, error: { code, message } })
+  const body = await writeBody(req, fail, verb === 'start' ? MAX_GOAL_BODY_BYTES : MAX_BODY_BYTES)
+  if (body === null) return
+  const project = findProject(await listProjects(deps.ownRoot, deps.home), id)
+  if (!project) return fail(404, 'not-found', 'no such project')
+  try {
+    if (verb === 'start') {
+      if (typeof body.goal !== 'string') return fail(400, 'bad-request', 'goal must be text')
+      await armProject(project.root, body.goal)
+      // The loop was already ticking, idle for want of a goal; wake it rather
+      // than leave the operator watching a page that has not changed yet.
+      deps.onOperatorAction?.(project, 'resume')
+      return json(res, req, 200, { ok: true, value: { id: project.id } })
+    }
+    if (project.own) return fail(422, 'refused', 'this process\'s own root cannot be removed')
+    if (!deps.control) return fail(501, 'unsupported', 'this process cannot run other projects')
+    const summary = await summarizeProject(project, deps, Date.now())
+    if (summary.armed && !summary.halted) {
+      // Removing a running loop would abandon its dispatch mid-flight with no
+      // record of why. Pausing first puts that decision in its journal.
+      return fail(422, 'refused', 'pause this loop before removing it')
+    }
+    deps.control.removeProject(project.root)
+    await unregisterProject(deps.home, project.root)
+    return json(res, req, 200, { ok: true, value: { id: project.id } })
+  } catch (error) {
+    if (error instanceof ProjectError) return fail(422, 'refused', error.message)
+    return fail(500, 'internal', messageOf(error))
+  }
+}
+
+async function readJsonBody(req: IncomingMessage, max: number): Promise<Record<string, unknown>> {
   const chunks: Buffer[] = []
   let size = 0
   for await (const chunk of req as AsyncIterable<Buffer | string>) {
     const buffer = typeof chunk === 'string' ? Buffer.from(chunk) : chunk
     size += buffer.length
-    if (size > MAX_BODY_BYTES) throw new Error(`body over ${MAX_BODY_BYTES} bytes`)
+    if (size > max) throw new Error(`body over ${max} bytes`)
     chunks.push(buffer)
   }
   const text = Buffer.concat(chunks).toString('utf8').trim()
