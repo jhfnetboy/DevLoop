@@ -119,6 +119,22 @@ describe('arming a project', () => {
   })
 })
 
+describe('an unarmed root', () => {
+  it('is left without a .devloop/, even by a running loop', async () => {
+    // launchd starts DSH in $HOME; the budget snapshot used to be written at
+    // start, so $HOME grew a .devloop/ it had no use for.
+    const root = await outsideAnyRepo('unarmed-root-')
+    const loop = new ProjectLoop({ info: () => {}, error: () => {} } as never, resolveConfig({ root, tickIntervalMs: 60_000 }), new NoopBackend())
+    loop.start()
+    await loop.tick()
+    // The snapshot was fire-and-forget; give it time to land, or this passes
+    // without the fix too (it did, the first time this test was written).
+    await new Promise(resolve => setTimeout(resolve, 300))
+    loop.stop()
+    await expect(readFile(join(root, '.devloop', 'BUDGET.json'), 'utf8')).rejects.toThrow()
+  })
+})
+
 describe('what loops share', () => {
   const loop = (usage: ReturnType<typeof emptyUsage> | null): ProjectLoop => {
     const l = new ProjectLoop({ info: () => {}, error: () => {} } as never, resolveConfig({ root: '/x' }), new NoopBackend())

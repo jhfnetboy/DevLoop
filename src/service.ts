@@ -70,6 +70,7 @@ export class ProjectLoop {
    * from any surface moves the revision, and the next tick acts on it.
    */
   private haltedRevision: number | null = null
+  private budgetSnapshotWritten = false
   /** The usage this loop last read, for the day's spend summed across projects. */
   lastUsage: BudgetUsage | null = null
 
@@ -93,10 +94,6 @@ export class ProjectLoop {
 
   start(): void {
     if (this.timer || this.disposed) return
-    // So `devloop status` answers with this profile's limits, not the defaults.
-    void writeBudgetSnapshot(this.config.root, this.config.budget).catch((error: unknown) => {
-      this.ctx.logger.error('[dsh-devloop] budget snapshot failed', error)
-    })
     void this.tick()
     this.timer = setInterval(() => {
       void this.tick()
@@ -133,6 +130,15 @@ export class ProjectLoop {
     try {
       if (this.disposed) return
       if (!await workspaceArmed(this.config.root)) return
+      if (!this.budgetSnapshotWritten) {
+        // So `devloop status` answers with this profile's limits, not the
+        // defaults. Written on the first armed tick rather than at start: an
+        // unarmed root — `$HOME`, under launchd — must not grow a `.devloop/`.
+        this.budgetSnapshotWritten = true
+        void writeBudgetSnapshot(this.config.root, this.config.budget).catch((error: unknown) => {
+          this.ctx.logger.error('[dsh-devloop] budget snapshot failed', error)
+        })
+      }
       if (this.haltedRevision !== null) {
         // Read-only and lock-free: STATE is replaced by rename, so a peek sees a
         // whole snapshot. Still halted at the same revision means nothing changed.

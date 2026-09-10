@@ -102,6 +102,7 @@ function loopBadges(p) {
   // A halt outranks whatever the process timer is doing: "running" next to
   // "halted" would ask the reader to work out which one to believe.
   if (!p.armed) out.push(badge('未启用（没有 GOAL.md）', ''))
+  else if (p.completed) out.push(badge('已完成', 'ok'))
   else if (p.paused) out.push(badge('已暂停', 'warn'))
   else if (p.halted) out.push(badge('已停机', 'bad'))
   else out.push(badge(loopLabel, loopTone))
@@ -215,6 +216,12 @@ function gatePanel(p) {
 }
 
 function haltPanel(p) {
+  if (p.completed && !p.supervisor) {
+    return el('section', { class: 'panel' },
+      el('h3', {}, '目标已完成'),
+      el('p', {}, '所有任务都已评审通过并合并到主分支。这个循环不会再做别的事。'),
+      el('p', { class: 'note' }, '新需求建议作为新项目添加。确实要在这里重开某个任务，在本机用 devloop resume --task <任务ID>。'))
+  }
   if (!p.halted && !p.supervisor) return null
   return el('section', { class: 'panel' },
     el('h3', {}, p.paused ? '已暂停' : '停机原因'),
