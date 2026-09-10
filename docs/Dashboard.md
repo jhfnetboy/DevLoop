@@ -153,7 +153,7 @@ both and wrote neither.
 - **A halted loop keeps its timer.** `stop()` is disposal only. A halted tick
   peeks at STATE without the lock and returns, writing nothing, while the
   revision is the one it already saw halted; any answer, resume or pause moves
-  the revision and the next tick acts on it. This closes the `V0.5-TODO.md` item
+  the revision and the next tick acts on it. This closes the `V0.6-TODO.md` item
   "re-arm a running service after a resume" for the CLI as much as for the page.
   The test that documented the old limitation passed for the wrong reason — its
   workspace was not a git repository, so the dispatch it counted never reached
