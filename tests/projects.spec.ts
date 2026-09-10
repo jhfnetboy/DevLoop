@@ -194,6 +194,21 @@ describe('the service runs every registered project', () => {
     }
     expect(state.lastAction.type).toBe('plan')
   })
+
+  it('starts nothing from a registry read that finishes after it was stopped', async () => {
+    const dir = await home()
+    process.env.DSH_HOME = dir
+    const other = await repo('svc-late-')
+    await armProject(other, 'plan something')
+    await registerProject(dir, '/unused', other)
+
+    const service = new DevloopService(new Context(), resolveConfig({ root: await mkdtempInRepo('svc-own2-'), tickIntervalMs: 60_000 }))
+    // The registry is read asynchronously after start; stopping before it
+    // lands must not leave a loop behind that nothing will ever stop.
+    service.stop()
+    await new Promise(resolve => setTimeout(resolve, 500))
+    await expect(readFile(join(other, '.devloop', 'STATE.json'), 'utf8')).rejects.toThrow()
+  })
 })
 
 describe('dashboard project routes', () => {

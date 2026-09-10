@@ -1,3 +1,4 @@
+import { realpathSync } from 'node:fs'
 import { constants, lstat, open, rename, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { clearInterval, setInterval } from 'node:timers'
@@ -587,11 +588,14 @@ export default class DevloopService extends Service {
   /** Registered projects, by realpath. */
   private readonly others = new Map<string, ProjectLoop>()
   private started = false
-  private ownRealRoot: string | null = null
+  /** Set by stop(): a registry read still in flight must not start loops after it. */
+  private disposed = false
+  private readonly ownRealRoot: string
 
   constructor(ctx: Context, rawConfig: Config, backend?: AgentBackend) {
     super(ctx, 'devloop')
     this.config = resolveConfig(rawConfig)
+    this.ownRealRoot = realRoot(this.config.root)
     this.backend = backend ?? createBackend(ctx, this.config)
     this.shared = new LoopShared(this.config.budget.maxParallelWorkers, sharedDailyCap(this.config))
     this.own = new ProjectLoop(ctx.logger, this.config, this.backend, this.shared)
@@ -647,15 +651,18 @@ export default class DevloopService extends Service {
   }
 
   stop(): void {
+    this.disposed = true
     this.own.stop()
-    for (const loop of this.others.values()) loop.stop()
+    for (const loop of this.others.values()) {
+      loop.stop()
+      this.shared.remove(loop)
+    }
     this.others.clear()
   }
 
   private async startRegistered(): Promise<void> {
     try {
       const list = await listProjects(this.config.root, dshHome())
-      this.ownRealRoot = list.projects.find(project => project.own)?.root ?? null
       if (list.registryError) this.ctx.logger.error(`[dsh-devloop] ${list.registryError}`)
       for (const project of list.projects) if (!project.own) this.addProject(project.root)
     } catch (error) {
@@ -664,7 +671,7 @@ export default class DevloopService extends Service {
   }
 
   private addProject(root: string): void {
-    if (!this.started || this.others.has(root) || root === this.ownRealRoot) return
+    if (!this.started || this.disposed || this.others.has(root) || root === this.ownRealRoot) return
     const name = root.split(/[\\/]/).filter(Boolean).at(-1) ?? root
     const loop = new ProjectLoop(prefixed(this.ctx.logger, name), { ...this.config, root }, this.backend, this.shared)
     this.others.set(root, loop)
@@ -690,6 +697,14 @@ export default class DevloopService extends Service {
     const loop = this.loopFor(root)
     if (!loop) return 'elsewhere'
     return loop.running ? 'running' : 'stopped'
+  }
+}
+
+function realRoot(root: string): string {
+  try {
+    return realpathSync(root)
+  } catch {
+    return root
   }
 }
 
