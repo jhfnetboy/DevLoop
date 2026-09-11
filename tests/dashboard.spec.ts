@@ -180,7 +180,7 @@ describe('dashboard projects', () => {
   it('shows tasks, the pending question, and event envelopes without their state snapshots', async () => {
     const root = await armedProject('dash-detail-')
     const state = withTasks(baseState(), [
-      makeTask({ id: 't1', status: 'done', title: 'first' }),
+      makeTask({ id: 't1', status: 'done', title: 'first', planner: 'codex/gpt-6-astra', implementer: 'dsh/deepseek-v4-flash', reviewer: 'claude/opus' }),
       makeTask({ id: 't2', status: 'review_pending', title: 'second' }),
     ])
     const first = await saveState(root, state, { action: 'plan' })
@@ -196,7 +196,7 @@ describe('dashboard projects', () => {
     expect(res.status).toBe(200)
     const detail = (JSON.parse(res.body) as { value: Record<string, unknown> }).value as {
       loop: string, armed: boolean, halted: boolean, question: string | null,
-      tasks: Array<{ id: string, status: string }>, taskCounts: Record<string, number>,
+      tasks: Array<{ id: string, status: string, planner?: string, implementer?: string, reviewer?: string }>, taskCounts: Record<string, number>,
       gate: { options: Array<{ key: string }> } | null, goal: string,
       events: Array<Record<string, unknown>>,
     }
@@ -205,6 +205,9 @@ describe('dashboard projects', () => {
     expect(detail.halted).toBe(true)
     expect(detail.goal).toBe('# Ship the thing\n')
     expect(detail.tasks.map(t => t.id)).toEqual(['t1', 't2'])
+    // All three roles reach the page, so it can show who planned, built and reviewed each task.
+    expect(detail.tasks[0]).toMatchObject({ planner: 'codex/gpt-6-astra', implementer: 'dsh/deepseek-v4-flash', reviewer: 'claude/opus' })
+    expect(detail.tasks[1]?.planner).toBeUndefined()
     expect(detail.taskCounts).toEqual({ done: 1, review_pending: 1 })
     expect(detail.question).toBeTruthy()
     expect(detail.gate?.options.map(o => o.key)).toContain('stop')

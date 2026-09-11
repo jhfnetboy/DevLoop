@@ -350,6 +350,13 @@ function haltPanel(p) {
   )
 }
 
+// Who did what, as the route identities STATE records: the three-way split made visible.
+function rolesLine(t) {
+  const roles = [['规划', t.planner], ['实现', t.implementer], ['评审', t.reviewer]].filter(([, who]) => who)
+  if (!roles.length) return null
+  return el('div', { class: 'roles' }, roles.flatMap(([role, who], i) => [i ? ' · ' : '', `${role} `, el('span', { class: 'mono' }, who)]))
+}
+
 function tasksPanel(p) {
   if (!p.tasks.length) {
     return el('section', { class: 'panel' }, el('h3', {}, '任务'),
@@ -361,7 +368,8 @@ function tasksPanel(p) {
       el('td', { class: 'mono' }, t.id),
       el('td', { class: 'title-cell' }, t.title,
         t.allowedPaths && t.allowedPaths.length ? el('div', { class: 'path' }, t.allowedPaths.join('  ')) : null,
-        t.acceptance && t.acceptance.length ? el('ul', { class: 'accept' }, t.acceptance.map(a => el('li', {}, a))) : null),
+        t.acceptance && t.acceptance.length ? el('ul', { class: 'accept' }, t.acceptance.map(a => el('li', {}, a))) : null,
+        rolesLine(t)),
       el('td', {}, badge(label, tone)),
       el('td', {}, t.tier),
       el('td', { class: 'num' }, t.attempts),
@@ -640,13 +648,31 @@ function route() {
   return m ? { view: 'project', id: m[1] } : { view: 'home' }
 }
 
+const SELECTION_HOLD_MS = 60000
+let selectionHeldAt = null
+
+function selectingInDocument() {
+  const selection = window.getSelection()
+  if (!selection || selection.isCollapsed || !selection.anchorNode) return false
+  const node = selection.anchorNode.nodeType === Node.ELEMENT_NODE ? selection.anchorNode : selection.anchorNode.parentElement
+  // In the live page (a selection in a replaced view is detached) and in a rendered document.
+  return Boolean(node && app.contains(node) && node.closest('.md'))
+}
+
 // A refresh rebuilds the page, which would take a half-typed goal with it.
 function editing() {
   // Only the home page has a picker; an open one must not freeze another view.
   if (picker.open && route().view === 'home') return true
-  // A rebuild would drop text the reader is selecting in a document.
-  const selection = window.getSelection()
-  if (selection && !selection.isCollapsed && app.contains(selection.anchorNode)) return true
+  // A rebuild would drop text the reader is selecting in a document, so hold
+  // for that — but only inside a document, and not for long. A selection
+  // anywhere else (a task id double-clicked to copy) must not freeze the
+  // gate and budget, and neither may one left behind when the reader walks away.
+  if (selectingInDocument()) {
+    selectionHeldAt ??= Date.now()
+    if (Date.now() - selectionHeldAt < SELECTION_HOLD_MS) return true
+  } else {
+    selectionHeldAt = null
+  }
   const active = document.activeElement
   if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return true
   return [...document.querySelectorAll('.path-input, .goal-input')].some(field => field.value.trim() !== '')
