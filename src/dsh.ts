@@ -8,10 +8,27 @@ import { readPlainOutput } from './reading.js'
 
 export type { HeadlessRun, HeadlessRunner }
 
+/**
+ * What an existing repository already says about itself, named rather than
+ * inlined: every backend's planner can read files, and a digest taken here would
+ * go stale the moment the documents changed. The planning directory is the one
+ * the pilot skill writes; this reads its output, and never needs the skill.
+ */
+export const PLAN_CONTEXT = [
+  'Before planning, read whichever of these exist and plan within them:',
+  'AGENTS.md and CLAUDE.md (how this repository is built, tested and reviewed);',
+  '.pilot.yml (docs_dir names the planning directory, default docs/agent);',
+  'roadmap.md, tasks.md, progress.md, architecture.md and spec.md in that directory (the plan already agreed).',
+  'Where tasks.md already defines a task, reuse its id and its acceptance commands rather than inventing new ones,',
+  'and do not plan work those documents mark DONE or out of scope.',
+  'If GOAL.md and those documents disagree, GOAL.md wins.',
+].join(' ')
+
 export function headlessPrompt(input: AgentRunInput): string {
   if (input.action.type === 'plan') {
     return [
       'Read .devloop/GOAL.md and produce a bounded task list. Do not edit business source files.',
+      PLAN_CONTEXT,
       resultInstructions('plan'),
     ].join('\n')
   }

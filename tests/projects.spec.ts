@@ -1,4 +1,6 @@
+import { execFile } from 'node:child_process'
 import { mkdir, mkdtemp, readFile, realpath, symlink, writeFile } from 'node:fs/promises'
+import { promisify } from 'node:util'
 import { tmpdir } from 'node:os'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { join } from 'node:path'
@@ -23,6 +25,8 @@ import {
 import DevloopService, { LoopShared, ProjectLoop } from '../src/service.ts'
 import { NoopBackend } from '../src/backend.ts'
 import { initGitRepo, makeTask, mkdtempInRepo } from './helpers.ts'
+
+const execFileAsync = promisify(execFile)
 
 async function repo(prefix: string): Promise<string> {
   const root = await mkdtempInRepo(prefix)
@@ -326,6 +330,13 @@ describe('dashboard project routes', () => {
     const refused = await post(handler, '/devloop/api/projects', { root: own })
     expect(refused.status).toBe(422)
 
+    // On its trunk the start is refused before anything is written or paid for.
+    const onMain = await post(handler, `/devloop/api/projects/${id}/start`, { goal: 'Add /healthz' })
+    expect(onMain.status).toBe(422)
+    expect(onMain.json.error?.message).toMatch(/switch -c devloop/)
+    await expect(readFile(join(root, '.devloop', 'GOAL.md'), 'utf8')).rejects.toThrow()
+
+    await execFileAsync('git', ['-C', root, 'switch', '-q', '-c', 'devloop/healthz'])
     const started = await post(handler, `/devloop/api/projects/${id}/start`, { goal: 'Add /healthz' })
     expect(started.status).toBe(200)
     expect(await readFile(join(root, '.devloop', 'GOAL.md'), 'utf8')).toBe('Add /healthz\n')

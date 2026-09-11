@@ -190,6 +190,21 @@ both and wrote neither.
   toplevel with a real (not symlinked) `.devloop`, is stored by realpath, and
   the registry is rewritten atomically. A registry the page cannot parse is
   refused rather than overwritten, and fields it does not know are kept.
+- **Starting is refused where the first merge would fail or land on the
+  trunk.** Before GOAL.md is written, the server checks (`readiness.ts`) that
+  the checkout is on a branch, that the branch is not the trunk (`base_branch`
+  in `.pilot.yml`, else `origin/HEAD`, and always `main`/`master`), and that no
+  tracked file has uncommitted changes. DevLoop merges each task into the
+  checked-out branch, locally, without pushing, and refuses to merge over
+  tracked changes. Without these checks both problems surfaced only after plan,
+  delegate and review had been paid for. The page shows the same list and
+  disables the button, but the server check is the one that holds — **at start
+  only**. The merge itself does not yet re-check the branch, so switching the
+  checkout back to the trunk while the loop runs, or arming a project by writing
+  GOAL.md by hand, is not guarded; a merge-time guard is the next change. There
+  is no override for the trunk rule. Missing
+  `.pilot.yml` or planning documents are advice, not refusals. None of this
+  loads the pilot skill: it reads the files pilot leaves behind.
 - **Starting writes GOAL.md, once.** Created with `O_EXCL | O_NOFOLLOW`, so it
   neither replaces an existing goal nor follows a planted symlink. A goal
   changed under a running loop would leave it working through tasks planned for

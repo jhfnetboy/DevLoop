@@ -23,6 +23,7 @@ import {
   validateProjectRoot,
   type Project,
 } from './projects.js'
+import { inspectReadiness, readinessRefusal, type Readiness } from './readiness.js'
 import { diagnoseHalt } from './resume.js'
 import type { LoopState, Task } from './types.js'
 
@@ -120,6 +121,8 @@ export interface ProjectDetail extends ProjectSummary {
   readonly budget: { readonly source: string, readonly limits: BudgetLimits } | null
   readonly lastProgressAt: string | null
   readonly events: readonly EventView[]
+  /** For a project not yet started: whether starting it would be refused, and why. */
+  readonly readiness: Readiness | null
 }
 
 export type TaskView = Pick<Task,
@@ -144,7 +147,9 @@ export async function summarizeProject(project: Project, deps: Pick<DashboardDep
 
 export async function describeProject(project: Project, deps: Pick<DashboardDeps, 'presence'>, now: number): Promise<ProjectDetail> {
   const { summary, extra } = await readProject(project, deps, now, true)
-  return { ...summary, ...(extra ?? emptyDetail()) }
+  const detail = { ...summary, ...(extra ?? emptyDetail()) }
+  if (summary.armed || summary.error !== null) return detail
+  return { ...detail, readiness: await inspectReadiness(project.root).catch(() => null) }
 }
 
 async function readProject(
@@ -223,6 +228,7 @@ async function readProject(
         budget,
         lastProgressAt: new Date(state.usage.lastProgressAt).toISOString(),
         events: await readEventTail(eventsPath(project.root)),
+        readiness: null,
       },
     }
   } catch (error) {
@@ -243,6 +249,7 @@ function emptyDetail(): Omit<ProjectDetail, keyof ProjectSummary> {
     budget: null,
     lastProgressAt: null,
     events: [],
+    readiness: null,
   }
 }
 
@@ -549,6 +556,12 @@ async function manage(
   try {
     if (verb === 'start') {
       if (typeof body.goal !== 'string') return fail(400, 'bad-request', 'goal must be text')
+      // Checked here, not only on the page: each of these would otherwise be
+      // found at the first merge, after plan, delegate and review were paid for.
+      const readiness = await inspectReadiness(project.root).catch(() => null)
+      if (readiness === null) return fail(422, 'not-ready', '读不到这个仓库的 git 状态，没有启动。')
+      const refusal = readinessRefusal(readiness)
+      if (refusal !== null) return fail(422, 'not-ready', refusal)
       await armProject(project.root, body.goal)
       // The loop was already ticking, idle for want of a goal; wake it rather
       // than leave the operator watching a page that has not changed yet.

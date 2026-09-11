@@ -111,3 +111,13 @@ details summary { cursor: pointer; color: var(--muted); }
 .pick-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .actions { align-items: center; flex-wrap: wrap; }
 .selected-path { flex: 1; min-width: 0; }
+.readiness { margin: 10px 0 4px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
+.readiness-head { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+ul.checks { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+ul.checks li { display: grid; grid-template-columns: 16px 1fr; gap: 8px; font-size: 13px; }
+ul.checks .mark { font-weight: 700; text-align: center; }
+ul.checks li.ok .mark { color: var(--ok); }
+ul.checks li.warn .mark { color: var(--warn); }
+ul.checks li.bad .mark { color: var(--bad); }
+ul.checks li.bad .msg { color: var(--bad); }
+ul.checks .msg { overflow-wrap: anywhere; }
