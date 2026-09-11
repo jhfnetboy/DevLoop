@@ -1,8 +1,36 @@
-# Release 0.5.4
+# Release 0.5.5
 
-Bounded autonomous engineering loop: structured model results, deterministic state transitions, host-enforced write scope, SHA-bound independent review, durable recovery, and role/tier routing. Tag `v0.5.4` and the GitHub Release are created **after** this commit is on `main`; steps: [Deploy.md](./Deploy.md).
+Bounded autonomous engineering loop: structured model results, deterministic state transitions, host-enforced write scope, SHA-bound independent review, durable recovery, and role/tier routing. Tag `v0.5.5` and the GitHub Release are created **after** this commit is on `main`; steps: [Deploy.md](./Deploy.md).
 
-Package version: **0.5.4**. This document is the release note, not a second semver.
+Package version: **0.5.5**. This document is the release note, not a second semver.
+
+## New in 0.5.5
+
+The loop can be watched and understood from the page, and the trunk rule now
+holds for the whole run, not only at start.
+
+- **Every merge refuses the trunk.** 0.5.4 checked the branch when a loop
+  started. Now the merge asks the same question each time, so a checkout
+  switched back to `main`/`master`/the configured base mid-loop, or a project
+  armed by writing GOAL.md by hand, halts with a new `merge_onto_trunk` hold
+  (and a detached HEAD with `merge_detached_head`, which used to retry silently).
+  The reviewed task stays `merge_ready`; the page says to move the checkout back
+  and resume, and it merges on the next tick without being redone or paid for
+  again.
+- **A root that is not its own git toplevel is refused.** A plain directory
+  inside another repository used to pass the start check with the outer
+  repository's branch.
+- **The planning documents are on the page.** The project page has a 文档 panel,
+  before and after a start. It previews pilot's roadmap, tasks, progress,
+  acceptance, architecture, spec and research from `docs_dir`, and DevLoop's own
+  GOAL, PLAN, REVIEW and PROGRESS, rendered as markdown built from text nodes.
+  Each task in the table now lists its acceptance criteria.
+- **A guide on the home page.** It covers the path from a repository to a merged
+  PR, step by step. It is open by default, and folding it away is remembered.
+- **The header shows the installed version**, stamped from the package when the
+  page loads, so it follows each release.
+
+New hold reasons `merge_onto_trunk` and `merge_detached_head`; no config change.
 
 ## New in 0.5.4
 
@@ -202,4 +230,4 @@ Host-side checks (`dsh plugin add`, `--dump-config`) are listed in [UserCaseTest
 - Token/cost melt the circuit only when the backend fills `AgentRunResult`; otherwise the loop uses wall-clock `lastProgressAt`. Session cost resets after the first successful STATE persist of this process; daily cost resets at UTC midnight.
 - The automated E2E uses a scripted provider, and the release candidate also completed a real-provider plan → implement → exact-SHA review → merge run without operator state edits.
 - The operator UI is the dashboard; it sees only the spend backends report, and cannot edit an existing goal.
-- npm registry: `@jhfnetboy/dsh-devloop@0.5.4` is published. GitHub and the Release tarball remain supported. See [Install.md](./Install.md).
+- npm registry: `@jhfnetboy/dsh-devloop@0.5.5` is published. GitHub and the Release tarball remain supported. See [Install.md](./Install.md).
