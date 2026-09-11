@@ -255,23 +255,46 @@ function addProjectPanel() {
     note)
 }
 
+// Blocking checks refuse a start (the server refuses it too); the rest advise.
+function readinessPanel(r) {
+  if (!r) return el('p', { class: 'note' }, '读不到这个仓库的状态，启动时服务端会再检查一次。')
+  return el('div', { class: 'readiness' },
+    el('div', { class: 'readiness-head' },
+      r.ready ? badge('可以启动', 'ok') : badge('先处理红色项', 'bad'),
+      el('span', { class: 'muted' }, ` 主干 ${r.base}`)),
+    el('ul', { class: 'checks' }, r.checks.map(c => el('li', { class: c.ok ? 'ok' : c.blocking ? 'bad' : 'warn' },
+      el('span', { class: 'mark' }, c.ok ? '✓' : c.blocking ? '✕' : '!'),
+      el('span', { class: 'msg' }, c.message)))))
+}
+
 function startPanel(p) {
-  const area = el('textarea', { class: 'goal-input', rows: '8', placeholder: '# 目标\n\n要做成什么、做到什么程度算完成、有哪些限制……' })
+  const area = el('textarea', { class: 'goal-input', rows: '8', placeholder: '# 目标\n\n对应哪个 Feature / Task（如 docs/agent/tasks.md 里的 T1.2.x）、做到什么程度算完成（验收命令）、范围、不做什么……' })
+  area.value = goalDrafts.get(p.id) || ''
+  area.addEventListener('input', () => goalDrafts.set(p.id, area.value))
+  const ready = !p.readiness || p.readiness.ready
+  const start = actionButton('写入 GOAL.md 并启动', 'primary',
+    '启动这个项目的循环？之后它会按配置调用模型、花费预算，并在当前分支上合并任务。目标写入后不能从页面修改。',
+    async () => {
+      const goal = area.value.trim()
+      if (!goal) throw new Error('目标是空的')
+      await postJson(`${API}/projects/${p.id}/start`, { goal })
+      goalDrafts.delete(p.id)
+      return { text: '已写入 GOAL.md，循环已唤醒。' }
+    })
+  start.disabled = !ready
+  const recheck = el('button', { type: 'button', class: 'btn' }, '重新检查')
+  recheck.addEventListener('click', () => void load(true))
   return el('section', { class: 'panel start' },
     el('h3', {}, '启动循环'),
     el('p', {}, '写下这个需求的目标。保存为 .devloop/GOAL.md 后，循环会先规划出一系列任务，再逐个交给模型实现、评审、合并。'),
+    readinessPanel(p.readiness),
     area,
-    el('div', { class: 'actions' },
-      actionButton('写入 GOAL.md 并启动', 'primary',
-        '启动这个项目的循环？之后它会按配置调用模型、花费预算，并在任务分支上提交代码。目标写入后不能从页面修改。',
-        async () => {
-          const goal = area.value.trim()
-          if (!goal) throw new Error('目标是空的')
-          await postJson(`${API}/projects/${p.id}/start`, { goal })
-          return { text: '已写入 GOAL.md，循环已唤醒。' }
-        })),
-    el('p', { class: 'note' }, '已有的目标只能在本机手工修改：正在跑的循环按旧目标规划的任务不会因为目标被替换而自动作废。'))
+    el('div', { class: 'actions' }, start, recheck),
+    el('p', { class: 'note' }, '建议先在 Claude Code 里用 pilot status 清理、pilot plan 写好 docs/agent/，规划器会读它们。已有的目标只能在本机手工修改：正在跑的循环按旧目标规划的任务不会因为目标被替换而自动作废。'))
 }
+
+// A half-typed goal survives the rebuild that a failed start or a re-check causes.
+const goalDrafts = new Map()
 
 function removeButton(p) {
   if (p.own) return null
