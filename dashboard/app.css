@@ -21,6 +21,7 @@ code, pre, .mono { font-family: var(--mono); font-size: 12.5px; }
 .top { position: sticky; top: 0; z-index: 1; display: flex; align-items: baseline; gap: 10px; padding: 14px 24px; background: var(--bg); border-bottom: 1px solid var(--line); }
 .brand { font-weight: 700; font-size: 17px; color: var(--ink); letter-spacing: .2px; }
 .sub { color: var(--muted); }
+.version { font: 11.5px var(--mono); color: var(--muted); padding: 1px 7px; border: 1px solid var(--line); border-radius: 999px; }
 .spacer { flex: 1; }
 .refresh { color: var(--muted); font-size: 12px; }
 .refresh.stale { color: var(--bad); }
@@ -111,6 +112,28 @@ details summary { cursor: pointer; color: var(--muted); }
 .pick-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .actions { align-items: center; flex-wrap: wrap; }
 .selected-path { flex: 1; min-width: 0; }
+.guide { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; margin-bottom: 16px; }
+.guide summary { font-weight: 600; color: var(--ink); }
+.guide-steps { margin: 10px 0 0; padding-left: 22px; display: grid; gap: 8px; }
+.guide-steps li b { display: block; }
+.guide-steps li span { color: var(--muted); font-size: 13px; }
+.doc-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.doc-tab { font: inherit; font-size: 12.5px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); cursor: pointer; }
+.doc-tab.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.md { margin-top: 10px; line-height: 1.6; overflow-wrap: anywhere; }
+.md .md-h { margin: 16px 0 6px; font-size: 15px; }
+.md h3.md-h { font-size: 17px; text-transform: none; letter-spacing: 0; color: var(--ink); }
+.md .md-p { margin: 6px 0; }
+.md .md-list { margin: 6px 0; padding-left: 22px; }
+.md .md-task { list-style: none; margin-left: -18px; }
+.md .md-task.done { color: var(--muted); }
+.md .md-box { font-family: var(--mono); }
+.md .md-code { margin: 8px 0; padding: 10px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; white-space: pre-wrap; overflow-x: auto; font-size: 12px; }
+.md code { background: var(--bg); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
+.md .md-quote { margin: 8px 0; padding: 4px 12px; border-left: 3px solid var(--line); color: var(--muted); }
+.md .md-table { margin: 8px 0; font-size: 13px; }
+.md hr { border: 0; border-top: 1px solid var(--line); margin: 14px 0; }
+ul.accept { margin: 4px 0 0; padding-left: 16px; color: var(--muted); font-size: 12px; }
 .readiness { margin: 10px 0 4px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
 .readiness-head { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
 ul.checks { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }

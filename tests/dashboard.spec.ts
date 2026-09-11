@@ -1,4 +1,5 @@
-import { mkdir, readFile, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, symlink, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -265,8 +266,72 @@ describe('dashboard assets', () => {
     expect(assets.js).not.toMatch(/innerHTML|outerHTML|insertAdjacentHTML|document\.write/)
     // And nothing inline that the CSP would have to allow.
     expect(assets.html).not.toMatch(/<script>(?!<)|\sstyle=|\son[a-z]+=/)
-    const pkg = JSON.parse(await readFile(join(import.meta.dirname, '..', 'package.json'), 'utf8')) as { files: string[] }
+    const pkg = JSON.parse(await readFile(join(import.meta.dirname, '..', 'package.json'), 'utf8')) as { files: string[], version: string }
     expect(pkg.files).toContain('dashboard')
+    // The header names the installed release, stamped from package.json.
+    expect(assets.html).toContain(`v${pkg.version}`)
+    expect(assets.html).not.toContain('%DEVLOOP_VERSION%')
+  })
+
+  it('stamps an unreadable version as v? rather than leaving the placeholder', async () => {
+    const dir = await mkdtempInRepo('dash-assets-')
+    const page = join(dir, 'dashboard')
+    await mkdir(page)
+    await writeFile(join(page, 'index.html'), '<span>%DEVLOOP_VERSION%</span>', 'utf8')
+    await writeFile(join(page, 'app.js'), '', 'utf8')
+    await writeFile(join(page, 'app.css'), '', 'utf8')
+    await writeFile(join(dir, 'package.json'), '{"version":"<b>1</b>"}', 'utf8')
+    expect((await loadDashboardAssets(page)).html).toBe('<span>v?</span>')
+  })
+})
+
+describe('dashboard documents', () => {
+  async function detail(root: string, home: string) {
+    const handler = createDashboardHandler(deps({ ownRoot: root, home }))
+    const res = await call(handler, 'GET', `/devloop/api/projects/${projectId(await realpath(root))}`)
+    return JSON.parse(res.body) as { value: { documents: { path: string, name: string, text: string, truncated: boolean }[], docsDir: string | null } }
+  }
+
+  it('shows the planning documents before the loop starts, known names only', async () => {
+    const root = await mkdtempInRepo('dash-docs-')
+    await initGitRepo(root)
+    await mkdir(join(root, 'docs', 'agent'), { recursive: true })
+    await writeFile(join(root, 'docs', 'agent', 'tasks.md'), '| id | task |\n|---|---|\n| T1.1.1 | add |\n', 'utf8')
+    await writeFile(join(root, 'docs', 'agent', 'acceptance.md'), '# Acceptance\n', 'utf8')
+    await writeFile(join(root, 'docs', 'agent', 'secrets.md'), 'not a planning document\n', 'utf8')
+    const { value } = await detail(root, root)
+    expect(value.docsDir).toBe('docs/agent')
+    expect(value.documents.map(d => d.name)).toEqual(['tasks.md', 'acceptance.md'])
+    expect(value.documents[0]?.text).toContain('T1.1.1')
+  })
+
+  it('reads docs_dir from .pilot.yml, and refuses one that leaves the repository', async () => {
+    const root = await mkdtempInRepo('dash-docs-pilot-')
+    await initGitRepo(root)
+    await mkdir(join(root, 'plans'))
+    await writeFile(join(root, 'plans', 'roadmap.md'), '# M1\n', 'utf8')
+    await writeFile(join(root, '.pilot.yml'), 'docs_dir: plans\n', 'utf8')
+    expect((await detail(root, root)).value.documents.map(d => d.path)).toEqual(['plans/roadmap.md'])
+
+    const outside = await mkdtemp(join(tmpdir(), 'dash-docs-outside-'))
+    await writeFile(join(outside, 'tasks.md'), 'outside\n', 'utf8')
+    await symlink(outside, join(root, 'linked'))
+    await writeFile(join(root, '.pilot.yml'), 'docs_dir: linked\n', 'utf8')
+    expect((await detail(root, root)).value.documents).toEqual([])
+  })
+
+  it('never follows a symlinked document, and says when one was cut short', async () => {
+    const root = await mkdtempInRepo('dash-docs-link-')
+    await initGitRepo(root)
+    await mkdir(join(root, 'docs', 'agent'), { recursive: true })
+    const outside = await mkdtemp(join(tmpdir(), 'dash-docs-target-'))
+    await writeFile(join(outside, 'secret.md'), 'secret\n', 'utf8')
+    await symlink(join(outside, 'secret.md'), join(root, 'docs', 'agent', 'tasks.md'))
+    await writeFile(join(root, 'docs', 'agent', 'spec.md'), 'x'.repeat(70 * 1024), 'utf8')
+    const { value } = await detail(root, root)
+    expect(value.documents.map(d => d.name)).toEqual(['spec.md'])
+    expect(value.documents[0]).toMatchObject({ truncated: true })
+    expect(value.documents[0]?.text.length).toBe(64 * 1024)
   })
 })
 

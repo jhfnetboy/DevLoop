@@ -198,13 +198,26 @@ both and wrote neither.
   checked-out branch, locally, without pushing, and refuses to merge over
   tracked changes. Without these checks both problems surfaced only after plan,
   delegate and review had been paid for. The page shows the same list and
-  disables the button, but the server check is the one that holds — **at start
-  only**. The merge itself does not yet re-check the branch, so switching the
-  checkout back to the trunk while the loop runs, or arming a project by writing
-  GOAL.md by hand, is not guarded; a merge-time guard is the next change. There
-  is no override for the trunk rule. Missing
+  disables the button, but the server check is the one that holds. **Every
+  merge asks again** (since 0.5.5): the loop passes the same trunk set
+  (`trunkBranches`) to `mergeTaskWorktree`, so a checkout switched back to a
+  trunk mid-loop, or a project armed by writing GOAL.md by hand, halts with a
+  `merge_onto_trunk` (or `merge_detached_head`) hold instead of merging. The task
+  stays `merge_ready`; moving the checkout back and resuming merges it on the
+  next tick, without paying for it again. There is no override for the trunk
+  rule. A root that is not its own git toplevel — deleted, moved, or a plain
+  directory inside another repository — is refused. Missing
   `.pilot.yml` or planning documents are advice, not refusals. None of this
   loads the pilot skill: it reads the files pilot leaves behind.
+- **Planning documents are shown, and nothing else in the repository.** The
+  project page previews pilot's planning directory (`docs_dir` from
+  `.pilot.yml`, default `docs/agent/`), by a fixed list of names — roadmap,
+  tasks, progress, acceptance, architecture, spec, research — plus DevLoop's own
+  GOAL, PLAN, REVIEW and PROGRESS notes. Only regular files, never through a
+  symlink at the last hop, at most 64 KiB each, and only when the directory's
+  realpath is inside the repository. The text is model-written, so the page
+  renders its markdown by building text nodes; raw HTML in a document stays
+  text.
 - **Starting writes GOAL.md, once.** Created with `O_EXCL | O_NOFOLLOW`, so it
   neither replaces an existing goal nor follows a planted symlink. A goal
   changed under a running loop would leave it working through tasks planned for
