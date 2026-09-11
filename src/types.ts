@@ -34,6 +34,8 @@ export interface Task {
   readonly baseSha?: string
   /** Host-created implementation commit that the independent review must bind to. */
   readonly implementationSha?: string
+  /** Provider/model identity that planned this task; the plan has no task of its own to carry it. */
+  readonly planner?: string
   /** Provider/model identity that produced the implementation. */
   readonly implementer?: string
   /** Provider/model identity that produced the accepted review. */

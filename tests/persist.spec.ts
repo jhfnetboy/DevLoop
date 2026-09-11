@@ -157,6 +157,22 @@ describe('persist and tick', () => {
     expect(loaded.supervisor?.reason).toBe('invalid_state')
   })
 
+  it('keeps a task\'s planner across a save, and treats an empty one as invalid like implementer', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'devloop-'))
+    await mkdir(join(root, '.devloop'))
+    await saveState(root, { ...emptyState(0), tasks: [{ ...sampleTask(), planner: 'codex/gpt-6-astra' }] })
+    expect((await loadState(root, 1)).tasks[0]?.planner).toBe('codex/gpt-6-astra')
+
+    // A fresh directory: with a journal present, load would recover the good snapshot instead.
+    const bad = await mkdtemp(join(tmpdir(), 'devloop-'))
+    await mkdir(join(bad, '.devloop'))
+    await writeFile(join(bad, '.devloop', 'STATE.json'), JSON.stringify({
+      ...emptyState(0),
+      tasks: [{ ...sampleTask(), planner: '' }],
+    }), 'utf8')
+    expect((await loadState(bad, 1)).supervisor?.reason).toBe('invalid_state')
+  })
+
   it('halts when persisted attempts are negative', async () => {
     const root = await mkdtemp(join(tmpdir(), 'devloop-'))
     await mkdir(join(root, '.devloop'))

@@ -14,7 +14,9 @@ describe('agent result transitions', () => {
         allowedPaths: ['src/**'], acceptance: ['tests pass'],
       }],
     }, { agent: 'codex/planner' })
-    expect(next.tasks[0]).toMatchObject({ id: 'T-1', status: 'ready', attempts: 0 })
+    // The planner is recorded on every task it created, beside implementer and
+    // reviewer, so all three roles of a routed run can be read back from STATE.
+    expect(next.tasks[0]).toMatchObject({ id: 'T-1', status: 'ready', attempts: 0, planner: 'codex/planner' })
   })
 
   it('moves a completed implementation to SHA-bound review', () => {
