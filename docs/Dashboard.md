@@ -109,7 +109,10 @@ only where there is a browser to show it.
   used to read an arbitrary directory. The one exception is the add-project
   picker, which lists **directory names only**, one level at a time, under a
   single browse root (`$DEVLOOP_BROWSE_ROOT`, else `~/Dev`); dot-segments are
-  refused and anything that resolves outside that root is left out.
+  refused and anything that resolves outside that root is left out. The browse
+  root limits what the picker shows, **not what can be registered**: an
+  authenticated `POST /devloop/api/projects` still accepts any absolute path
+  that is a git toplevel, as it did before the picker existed.
 - **Model-written text is rendered as text.** Task titles, gate evidence and
   event records come from model output; the page sets `textContent`, never
   `innerHTML`, and ships a CSP with no inline script.
