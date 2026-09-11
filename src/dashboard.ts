@@ -558,7 +558,9 @@ async function manage(
       if (typeof body.goal !== 'string') return fail(400, 'bad-request', 'goal must be text')
       // Checked here, not only on the page: each of these would otherwise be
       // found at the first merge, after plan, delegate and review were paid for.
-      const refusal = readinessRefusal(await inspectReadiness(project.root))
+      const readiness = await inspectReadiness(project.root).catch(() => null)
+      if (readiness === null) return fail(422, 'not-ready', '读不到这个仓库的 git 状态，没有启动。')
+      const refusal = readinessRefusal(readiness)
       if (refusal !== null) return fail(422, 'not-ready', refusal)
       await armProject(project.root, body.goal)
       // The loop was already ticking, idle for want of a goal; wake it rather

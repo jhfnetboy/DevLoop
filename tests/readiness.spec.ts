@@ -77,6 +77,24 @@ describe('readiness to start a loop', () => {
     expect(check(r, 'plan')?.message).toContain('roadmap.md')
   })
 
+  it('still refuses main and master when .pilot.yml names another trunk', async () => {
+    for (const trunk of ['main', 'master']) {
+      const root = await repoOn(trunk === 'main' ? null : 'master', `ready-fallback-${trunk}-`)
+      await writeFile(join(root, '.pilot.yml'), 'base_branch: develop\n', 'utf8')
+      const r = await inspectReadiness(root)
+      expect(r.base).toBe('develop')
+      expect(r.branch).toBe(trunk)
+      expect(check(r, 'trunk')).toMatchObject({ ok: false, blocking: true })
+    }
+  })
+
+  it('refuses, rather than throws, for a root that is no longer a repository', async () => {
+    const r = await inspectReadiness(await mkdtemp(join(tmpdir(), 'ready-gone-')))
+    expect(r.ready).toBe(false)
+    expect(r.checks).toEqual([expect.objectContaining({ id: 'repo', ok: false, blocking: true })])
+    expect(readinessRefusal(r)).toMatch(/git 状态/)
+  })
+
   it('says so when planning is declared external, instead of reporting it missing', async () => {
     const root = await repoOn('work', 'ready-external-')
     await writeFile(join(root, '.pilot.yml'), 'base_branch: main\nplanning_source: external\n', 'utf8')

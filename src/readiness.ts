@@ -18,7 +18,7 @@ import { promisify } from 'node:util'
  * whether they are there; the planner reads them itself.
  */
 export interface ReadinessCheck {
-  readonly id: 'branch' | 'trunk' | 'clean' | 'pilot' | 'plan'
+  readonly id: 'repo' | 'branch' | 'trunk' | 'clean' | 'pilot' | 'plan'
   readonly ok: boolean
   /** A failing blocking check refuses a start. The others are advice. */
   readonly blocking: boolean
@@ -43,6 +43,17 @@ const PILOT_FILE = '.pilot.yml'
 const PILOT_MAX_BYTES = 64 * 1024
 
 export async function inspectReadiness(root: string): Promise<Readiness> {
+  // Registration insists on a repository, so this is one deleted or moved since.
+  // A readiness nobody could read must refuse, not wave the start through.
+  if (!await isWorkTree(root)) {
+    return {
+      branch: null,
+      base: 'main',
+      docsDir: DEFAULT_DOCS_DIR,
+      checks: [{ id: 'repo', ok: false, blocking: true, message: '读不到这个目录的 git 状态（仓库被删除或移走了？），不能启动。' }],
+      ready: false,
+    }
+  }
   const pilot = await readPilotConfig(root)
   const branch = await currentBranch(root)
   const base = pilot?.baseBranch ?? await remoteDefaultBranch(root) ?? 'main'
@@ -63,7 +74,9 @@ export async function inspectReadiness(root: string): Promise<Readiness> {
           blocking: true,
           message: `仓库停在 ${branch} 上，DevLoop 会把每个任务直接在本地合并进它。先切到一个工作分支，做完再用 PR 合回 ${base}：git -C ${shellQuote(root)} switch -c devloop/<目标名>`,
         }
-      : { id: 'trunk', ok: true, blocking: true, message: `任务会合并到 ${branch}，不会动 ${base}` })
+      // Checked at start only: the merge itself has no trunk guard yet, so a
+      // checkout switched back to a trunk mid-loop would still take the merges.
+      : { id: 'trunk', ok: true, blocking: true, message: `（启动时）任务会合并到 ${branch}。循环运行中别把检出切回 ${[...new Set([base, ...TRUNKS])].join(' / ')}：合并时不会再检查分支。` })
   }
 
   checks.push(tracked === 0
@@ -167,6 +180,14 @@ async function readPlain(path: string, max: number): Promise<string | null> {
     }
   } catch {
     return null
+  }
+}
+
+async function isWorkTree(root: string): Promise<boolean> {
+  try {
+    return (await git(root, ['rev-parse', '--is-inside-work-tree'])).trim() === 'true'
+  } catch {
+    return false
   }
 }
 

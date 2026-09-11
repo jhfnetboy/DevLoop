@@ -198,7 +198,11 @@ both and wrote neither.
   checked-out branch, locally, without pushing, and refuses to merge over
   tracked changes. Without these checks both problems surfaced only after plan,
   delegate and review had been paid for. The page shows the same list and
-  disables the button, but the server check is the one that holds. Missing
+  disables the button, but the server check is the one that holds — **at start
+  only**. The merge itself does not yet re-check the branch, so switching the
+  checkout back to the trunk while the loop runs, or arming a project by writing
+  GOAL.md by hand, is not guarded; a merge-time guard is the next change. There
+  is no override for the trunk rule. Missing
   `.pilot.yml` or planning documents are advice, not refusals. None of this
   loads the pilot skill: it reads the files pilot leaves behind.
 - **Starting writes GOAL.md, once.** Created with `O_EXCL | O_NOFOLLOW`, so it

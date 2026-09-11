@@ -257,7 +257,7 @@ function addProjectPanel() {
 
 // Blocking checks refuse a start (the server refuses it too); the rest advise.
 function readinessPanel(r) {
-  if (!r) return el('p', { class: 'note' }, '读不到这个仓库的状态，启动时服务端会再检查一次。')
+  if (!r) return el('div', { class: 'banner bad' }, '读不到这个仓库的状态，暂时不能启动。处理后点「重新检查」。')
   return el('div', { class: 'readiness' },
     el('div', { class: 'readiness-head' },
       r.ready ? badge('可以启动', 'ok') : badge('先处理红色项', 'bad'),
@@ -271,7 +271,8 @@ function startPanel(p) {
   const area = el('textarea', { class: 'goal-input', rows: '8', placeholder: '# 目标\n\n对应哪个 Feature / Task（如 docs/agent/tasks.md 里的 T1.2.x）、做到什么程度算完成（验收命令）、范围、不做什么……' })
   area.value = goalDrafts.get(p.id) || ''
   area.addEventListener('input', () => goalDrafts.set(p.id, area.value))
-  const ready = !p.readiness || p.readiness.ready
+  // Unknown is not ready: a readiness the server could not read is refused there too.
+  const ready = Boolean(p.readiness && p.readiness.ready)
   const start = actionButton('写入 GOAL.md 并启动', 'primary',
     '启动这个项目的循环？之后它会按配置调用模型、花费预算，并在当前分支上合并任务。目标写入后不能从页面修改。',
     async () => {

@@ -36,6 +36,13 @@ from that branch.
 A patch: no config and no state field change. An already-started project is
 unaffected; the check applies only to starting one from the page.
 
+**Behaviour change:** the page no longer starts a loop on `main`, `master` or
+the configured trunk, and there is no switch to allow it. A repository whose
+work really belongs on the trunk switches to a branch and brings it in by PR.
+The check runs at start only: the merge does not re-check the branch yet, so
+switching back to the trunk mid-loop, or arming by writing GOAL.md by hand, is
+not guarded. A merge-time guard is the next change.
+
 ## New in 0.5.3
 
 Fixes from PR-daemon's post-merge review of 0.5.2
