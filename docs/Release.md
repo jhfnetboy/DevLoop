@@ -1,8 +1,26 @@
-# Release 0.5.2
+# Release 0.5.3
 
-Bounded autonomous engineering loop: structured model results, deterministic state transitions, host-enforced write scope, SHA-bound independent review, durable recovery, and role/tier routing. Tag `v0.5.2` and the GitHub Release are created **after** this commit is on `main`; steps: [Deploy.md](./Deploy.md).
+Bounded autonomous engineering loop: structured model results, deterministic state transitions, host-enforced write scope, SHA-bound independent review, durable recovery, and role/tier routing. Tag `v0.5.3` and the GitHub Release are created **after** this commit is on `main`; steps: [Deploy.md](./Deploy.md).
 
-Package version: **0.5.2**. This document is the release note, not a second semver.
+Package version: **0.5.3**. This document is the release note, not a second semver.
+
+## New in 0.5.3
+
+Fixes from PR-daemon's post-merge review of 0.5.2
+([#34](https://github.com/jhfnetboy/DevLoop/pull/34), review 5175723651).
+0.5.2 was tagged and released on GitHub but never published to npm; use 0.5.3.
+
+- **An open picker no longer freezes a project page.** Opening 浏览仓库… and
+  then clicking a project card left the picker marked open, and the refresh
+  treats an open picker as editing, so the project page — gates, budget, loop
+  state — stopped updating until the page was reloaded. Navigating now closes
+  the picker, and it only holds the refresh on the home page.
+- **A late listing cannot land under the wrong breadcrumbs.** Two quick clicks
+  could answer out of order; only the most recent request's answer is shown.
+- The browse route's guards — 401/403, 405, 501 without a browse root or
+  project control, 422 for a missing directory or root — are now tested.
+- Dashboard.md says plainly that the browse root limits the picker, not
+  registration.
 
 ## New in 0.5.2
 
@@ -145,4 +163,4 @@ Host-side checks (`dsh plugin add`, `--dump-config`) are listed in [UserCaseTest
 - Token/cost melt the circuit only when the backend fills `AgentRunResult`; otherwise the loop uses wall-clock `lastProgressAt`. Session cost resets after the first successful STATE persist of this process; daily cost resets at UTC midnight.
 - The automated E2E uses a scripted provider, and the release candidate also completed a real-provider plan → implement → exact-SHA review → merge run without operator state edits.
 - The operator UI is the dashboard; it sees only the spend backends report, and cannot edit an existing goal.
-- npm registry: `@jhfnetboy/dsh-devloop@0.5.2` is published. GitHub and the Release tarball remain supported. See [Install.md](./Install.md).
+- npm registry: `@jhfnetboy/dsh-devloop@0.5.3` is published. GitHub and the Release tarball remain supported. See [Install.md](./Install.md).
