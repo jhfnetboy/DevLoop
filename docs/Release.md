@@ -1,8 +1,29 @@
-# Release 0.5.5
+# Release 0.5.6
 
-Bounded autonomous engineering loop: structured model results, deterministic state transitions, host-enforced write scope, SHA-bound independent review, durable recovery, and role/tier routing. Tag `v0.5.5` and the GitHub Release are created **after** this commit is on `main`; steps: [Deploy.md](./Deploy.md).
+Bounded autonomous engineering loop: structured model results, deterministic state transitions, host-enforced write scope, SHA-bound independent review, durable recovery, and role/tier routing. Tag `v0.5.6` and the GitHub Release are created **after** this commit is on `main`; steps: [Deploy.md](./Deploy.md).
 
-Package version: **0.5.5**. This document is the release note, not a second semver.
+Package version: **0.5.6**. This document is the release note, not a second semver.
+
+## New in 0.5.6
+
+The last loose ends before 0.6, and the first release made the new way: split
+into PRs inside the per-PR budget (≤200 lines, ≤5 files, ≤2 counted top-level
+directories), each passing PR-daemon's mechanical pre-PR rules and a local
+review before PR-daemon reviewed it.
+
+- **Each task records who planned it** ([#38](https://github.com/jhfnetboy/DevLoop/pull/38)).
+  STATE named the implementer and reviewer but not the planner, so after the
+  switch to three-way routing only Codex's own logs showed who planned. Every
+  task a plan creates now carries `planner` (the route identity), validated on
+  load like the other two; STATE files without it load unchanged.
+- **The page shows all three roles, and a selection no longer freezes it**
+  ([#40](https://github.com/jhfnetboy/DevLoop/pull/40)). Each task row reads
+  `规划 … · 实现 … · 评审 …`. The refresh used to pause for any text selection
+  until the reader clicked elsewhere, so a task id selected to copy froze the
+  gate and budget; it now pauses only for a selection inside a document, and
+  for at most 60 seconds.
+
+A patch: a new optional task field, no config change.
 
 ## New in 0.5.5
 
@@ -239,4 +260,4 @@ Host-side checks (`dsh plugin add`, `--dump-config`) are listed in [UserCaseTest
 - Token/cost melt the circuit only when the backend fills `AgentRunResult`; otherwise the loop uses wall-clock `lastProgressAt`. Session cost resets after the first successful STATE persist of this process; daily cost resets at UTC midnight.
 - The automated E2E uses a scripted provider, and the release candidate also completed a real-provider plan → implement → exact-SHA review → merge run without operator state edits.
 - The operator UI is the dashboard; it sees only the spend backends report, and cannot edit an existing goal.
-- npm registry: `@jhfnetboy/dsh-devloop@0.5.5` is published. GitHub and the Release tarball remain supported. See [Install.md](./Install.md).
+- npm registry: `@jhfnetboy/dsh-devloop@0.5.6` is published. GitHub and the Release tarball remain supported. See [Install.md](./Install.md).
