@@ -516,6 +516,7 @@ function isTaskShape(value: unknown): boolean {
     && (task.lastReviewVerdict === undefined || REVIEW_VERDICTS.has(task.lastReviewVerdict as ReviewVerdict))
     && (task.baseSha === undefined || (typeof task.baseSha === 'string' && /^[0-9a-f]{40}$/i.test(task.baseSha)))
     && (task.implementationSha === undefined || (typeof task.implementationSha === 'string' && /^[0-9a-f]{40}$/i.test(task.implementationSha)))
+    && (task.planner === undefined || (typeof task.planner === 'string' && task.planner.length > 0))
     && (task.implementer === undefined || (typeof task.implementer === 'string' && task.implementer.length > 0))
     && (task.reviewer === undefined || (typeof task.reviewer === 'string' && task.reviewer.length > 0))
 }

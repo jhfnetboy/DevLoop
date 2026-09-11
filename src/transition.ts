@@ -18,12 +18,12 @@ export function applyAgentResult(
   if (actionKey(state.lastAction) !== actionKey(action)) {
     throw new Error('stale_agent_result: action no longer current')
   }
-  if (action.type === 'plan') return applyPlan(state, result)
+  if (action.type === 'plan') return applyPlan(state, result, options)
   if (action.type === 'delegate') return applyImplementation(state, action.taskId, result, options)
   return applyReview(state, action.taskId, result, options)
 }
 
-function applyPlan(state: LoopState, result: DevloopResult): LoopState {
+function applyPlan(state: LoopState, result: DevloopResult, options: ApplyAgentResultOptions): LoopState {
   if (result.kind !== 'plan') throw new Error('result_kind_mismatch: expected plan')
   if (state.tasks.length > 0) throw new Error('stale_agent_result: tasks already exist')
   const tasks: Task[] = result.tasks.map(task => ({
@@ -31,6 +31,7 @@ function applyPlan(state: LoopState, result: DevloopResult): LoopState {
     status: 'ready',
     attempts: 0,
     reviewCycles: 0,
+    planner: options.agent,
   }))
   return { ...state, tasks }
 }
