@@ -156,23 +156,29 @@ function renderHome(value) {
 
 // The picker's state lives here rather than in the DOM, because a refresh
 // rebuilds the page; while it is open the refresh holds off (see `editing`).
-const picker = { open: false, path: [], listing: null, loading: false, error: null, selected: null }
+const picker = { open: false, path: [], listing: null, loading: false, error: null, selected: null, seq: 0 }
 
 async function browseTo(path) {
+  // Two quick clicks can answer out of order; only the last one may land, or
+  // the crumbs would name one directory while the list shows another.
+  const seq = ++picker.seq
   Object.assign(picker, { open: true, path, loading: true, error: null, selected: null })
   redrawPicker()
+  let listing = null
+  let error = null
   try {
-    picker.listing = await getJson(`${API}/browse?path=${encodeURIComponent(path.join('/'))}`)
-  } catch (error) {
-    picker.listing = null
-    picker.error = error.message
+    listing = await getJson(`${API}/browse?path=${encodeURIComponent(path.join('/'))}`)
+  } catch (failure) {
+    error = failure.message
   }
-  picker.loading = false
+  if (seq !== picker.seq) return
+  Object.assign(picker, { listing, error, loading: false })
   redrawPicker()
 }
 
 function closePicker() {
-  Object.assign(picker, { open: false, path: [], listing: null, loading: false, error: null, selected: null })
+  // Bumping seq also drops a listing still in flight.
+  Object.assign(picker, { open: false, path: [], listing: null, loading: false, error: null, selected: null, seq: picker.seq + 1 })
 }
 
 function redrawPicker() {
@@ -461,7 +467,8 @@ function route() {
 
 // A refresh rebuilds the page, which would take a half-typed goal with it.
 function editing() {
-  if (picker.open) return true
+  // Only the home page has a picker; an open one must not freeze another view.
+  if (picker.open && route().view === 'home') return true
   const active = document.activeElement
   if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return true
   return [...document.querySelectorAll('.path-input, .goal-input')].some(field => field.value.trim() !== '')
@@ -500,6 +507,6 @@ function start() {
   timer = setInterval(() => { if (!document.hidden) void load() }, REFRESH_MS)
 }
 
-window.addEventListener('hashchange', () => { flash = null; window.scrollTo(0, 0); clearInterval(timer); void load(true); timer = setInterval(() => { if (!document.hidden) void load() }, REFRESH_MS) })
+window.addEventListener('hashchange', () => { flash = null; closePicker(); window.scrollTo(0, 0); clearInterval(timer); void load(true); timer = setInterval(() => { if (!document.hidden) void load() }, REFRESH_MS) })
 document.addEventListener('visibilitychange', () => { if (!document.hidden) void load() })
 start()

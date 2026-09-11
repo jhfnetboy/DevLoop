@@ -387,6 +387,32 @@ describe('dashboard project routes', () => {
     expect((await get('/devloop/api/browse?path=..')).status).toBe(422)
   })
 
+  it('guards the browse route like every other: login, method, and a process that can add', async () => {
+    const top = await realpath(await outsideAnyRepo('browse-guard-'))
+    await mkdir(join(top, 'org'))
+    const own = await repo('browse-guard-own-')
+    const base = { ownRoot: own, home: await home(), presence: () => 'running' as const, assets: { html: '', js: '', css: '' } }
+    const status = async (overrides: Partial<DashboardDeps>, method = 'GET', url = '/devloop/api/browse?path=org') => {
+      const out = { status: 0, body: '' }
+      const handler = createDashboardHandler({ ...base, requestRejection: () => undefined, control: control(), browseRoot: top, ...overrides })
+      const req = { method, url, headers: {}, async *[Symbol.asyncIterator]() {} }
+      const res = { setHeader() {}, writeHead(code: number) { out.status = code }, end(text?: string) { out.body = text ?? '' } }
+      await handler(req as unknown as IncomingMessage, res as unknown as ServerResponse)
+      return out
+    }
+
+    expect((await status({})).status).toBe(200)
+    const unauthenticated = await status({ requestRejection: () => 401 })
+    expect(unauthenticated.status).toBe(401)
+    expect(unauthenticated.body).not.toContain(top)
+    expect((await status({ requestRejection: () => 403 })).status).toBe(403)
+    expect((await status({}, 'POST')).status).toBe(405)
+    expect((await status({ control: undefined })).status).toBe(501)
+    expect((await status({ browseRoot: undefined })).status).toBe(501)
+    expect((await status({}, 'GET', '/devloop/api/browse?path=missing')).status).toBe(422)
+    expect((await status({ browseRoot: join(top, 'gone') })).status).toBe(422)
+  })
+
   it('reports the combined spend with the list', async () => {
     const own = await repo('route-spend-')
     const handler = handlerFor(own, await home(), control())
