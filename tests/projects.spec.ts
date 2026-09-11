@@ -11,6 +11,8 @@ import { pauseLoop } from '../src/operator.ts'
 import { emptyState, loadState, saveState } from '../src/persist.ts'
 import {
   armProject,
+  browseDirectory,
+  browseRoot,
   listProjects,
   projectId,
   registerProject,
@@ -227,6 +229,44 @@ describe('the service runs every registered project', () => {
   })
 })
 
+describe('browsing for a repository', () => {
+  it('lists directories only, hides dot-directories, and marks git repositories', async () => {
+    const top = await realpath(await outsideAnyRepo('browse-'))
+    await mkdir(join(top, 'org', 'repo'), { recursive: true })
+    await initGitRepo(join(top, 'org', 'repo'))
+    await mkdir(join(top, 'org', 'notes'))
+    await mkdir(join(top, '.cache'))
+    await writeFile(join(top, 'file.txt'), 'x', 'utf8')
+
+    const root = await browseDirectory(top, [])
+    expect(root.entries.map(e => e.name)).toEqual(['org'])
+    const org = await browseDirectory(top, ['org'])
+    expect(org.entries).toEqual([
+      { name: 'notes', root: join(top, 'org', 'notes'), repo: false },
+      { name: 'repo', root: join(top, 'org', 'repo'), repo: true },
+    ])
+  })
+
+  it('never lists outside the browse root, by segment or by symlink', async () => {
+    const top = await realpath(await outsideAnyRepo('browse-escape-'))
+    const elsewhere = await outsideAnyRepo('browse-elsewhere-')
+    await mkdir(join(top, 'org'))
+    await symlink(elsewhere, join(top, 'org', 'out'))
+    await symlink(elsewhere, join(top, 'away'))
+
+    expect((await browseDirectory(top, ['org'])).entries).toEqual([])
+    await expect(browseDirectory(top, ['away'])).rejects.toThrow(/no such directory/)
+    await expect(browseDirectory(top, ['..'])).rejects.toThrow(/bad path/)
+    await expect(browseDirectory(top, ['org/..'])).rejects.toThrow(/bad path/)
+    await expect(browseDirectory(join(top, 'missing'), [])).rejects.toThrow(/DEVLOOP_BROWSE_ROOT/)
+  })
+
+  it('defaults to ~/Dev and honours DEVLOOP_BROWSE_ROOT', () => {
+    expect(browseRoot({})).toMatch(/\/Dev$/)
+    expect(browseRoot({ DEVLOOP_BROWSE_ROOT: '/srv/code' })).toBe('/srv/code')
+  })
+})
+
 describe('dashboard project routes', () => {
   function control(): ProjectControl & { added: string[], removed: string[] } {
     const added: string[] = []
@@ -309,6 +349,42 @@ describe('dashboard project routes', () => {
     const handler = handlerFor(own, await home(), control())
     const res = await post(handler, `/devloop/api/projects/${projectId(own)}/unregister`, {})
     expect(res.status).toBe(422)
+  })
+
+  it('lists one level below the browse root, marking repositories and ones already added', async () => {
+    const top = await realpath(await outsideAnyRepo('browse-route-'))
+    await mkdir(join(top, 'org', 'app'), { recursive: true })
+    await initGitRepo(join(top, 'org', 'app'))
+    await mkdir(join(top, 'org', 'lib'), { recursive: true })
+    await initGitRepo(join(top, 'org', 'lib'))
+    const own = await repo('browse-own-')
+    const dir = await home()
+    const ctl = control()
+    const handler = createDashboardHandler({
+      ownRoot: own,
+      home: dir,
+      presence: () => 'running',
+      requestRejection: () => undefined,
+      assets: { html: '', js: '', css: '' },
+      control: ctl,
+      browseRoot: top,
+    })
+    await registerProject(dir, own, join(top, 'org', 'lib'))
+    const get = async (url: string) => {
+      const out = { status: 0, body: '' }
+      const req = { method: 'GET', url, headers: {} }
+      const res = { setHeader() {}, writeHead(status: number) { out.status = status }, end(text?: string) { out.body = text ?? '' } }
+      await handler(req as unknown as IncomingMessage, res as unknown as ServerResponse)
+      return { status: out.status, json: JSON.parse(out.body) as { value?: { entries: { name: string, repo: boolean, registered: boolean }[] } } }
+    }
+
+    const level = await get('/devloop/api/browse?path=org')
+    expect(level.status).toBe(200)
+    expect(level.json.value?.entries.map(e => [e.name, e.repo, e.registered])).toEqual([
+      ['app', true, false],
+      ['lib', true, true],
+    ])
+    expect((await get('/devloop/api/browse?path=..')).status).toBe(422)
   })
 
   it('reports the combined spend with the list', async () => {

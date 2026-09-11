@@ -24,7 +24,7 @@ import { writeProgress } from './progress.js'
 import { applyRunSignals, refundAction, rollCostWindows } from './budget.js'
 import { runTick, type TickResult } from './tick.js'
 import { mountDashboard, type LoopPresence } from './dashboard.js'
-import { dshHome, listProjects } from './projects.js'
+import { browseRoot, dshHome, listProjects } from './projects.js'
 import type { BudgetUsage, HoldReason, LoopState } from './types.js'
 import { RUNNER_REAP_MS } from './spawn.js'
 import { applyAgentResult } from './transition.js'
@@ -611,6 +611,7 @@ export default class DevloopService extends Service {
     mountDashboard(ctx, {
       ownRoot: this.config.root,
       home: dshHome(),
+      browseRoot: browseRoot(),
       presence: root => this.presence(root),
       onOperatorAction: (project, verb) => {
         const loop = this.loopFor(project.root)
