@@ -133,7 +133,7 @@ export interface ProjectDetail extends ProjectSummary {
 
 export type TaskView = Pick<Task,
   'id' | 'title' | 'tier' | 'status' | 'risk' | 'attempts' | 'reviewCycles'
-  | 'allowedPaths' | 'acceptance' | 'lastReviewVerdict' | 'implementer' | 'reviewer'>
+  | 'allowedPaths' | 'acceptance' | 'lastReviewVerdict' | 'planner' | 'implementer' | 'reviewer'>
 
 export interface EventView {
   readonly revision: number | null
@@ -283,6 +283,7 @@ function taskView(task: Task): TaskView {
     allowedPaths: task.allowedPaths,
     acceptance: task.acceptance,
     ...(task.lastReviewVerdict === undefined ? {} : { lastReviewVerdict: task.lastReviewVerdict }),
+    ...(task.planner === undefined ? {} : { planner: task.planner }),
     ...(task.implementer === undefined ? {} : { implementer: task.implementer }),
     ...(task.reviewer === undefined ? {} : { reviewer: task.reviewer }),
   }

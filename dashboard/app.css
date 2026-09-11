@@ -133,6 +133,7 @@ details summary { cursor: pointer; color: var(--muted); }
 .md .md-quote { margin: 8px 0; padding: 4px 12px; border-left: 3px solid var(--line); color: var(--muted); }
 .md .md-table { margin: 8px 0; font-size: 13px; }
 .md hr { border: 0; border-top: 1px solid var(--line); margin: 14px 0; }
+.roles { margin-top: 4px; color: var(--muted); font-size: 12px; }
 ul.accept { margin: 4px 0 0; padding-left: 16px; color: var(--muted); font-size: 12px; }
 .readiness { margin: 10px 0 4px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
 .readiness-head { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
