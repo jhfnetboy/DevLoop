@@ -193,7 +193,9 @@ export async function mergeTaskWorktree(
     throw new Error('merge_detached_head: refusing to merge onto a detached HEAD')
   }
   const headBranch = headRef.startsWith('refs/heads/') ? headRef.slice('refs/heads/'.length) : headRef
-  if (options.trunks?.has(headBranch)) {
+  // Case-folded: on a case-insensitive filesystem (macOS by default) `git switch
+  // Main` succeeds on a loose `main` ref, and commits then advance main itself.
+  if (options.trunks && [...options.trunks].some(trunk => trunk.toLowerCase() === headBranch.toLowerCase())) {
     throw new Error(`merge_onto_trunk: the workspace is on ${headBranch}; refusing to merge a task into a trunk`)
   }
 

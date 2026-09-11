@@ -95,6 +95,15 @@ describe('readiness to start a loop', () => {
     expect(readinessRefusal(r)).toMatch(/顶层/)
   })
 
+  it('refuses the trunk under another case, and compares .pilot.yml bases case-folded', async (context) => {
+    const root = await repoOn('work', 'ready-case-')
+    const switched = await git(root, 'switch', '-q', 'Main').then(() => true, () => false)
+    if (!switched) context.skip() // a case-sensitive filesystem: Main is not main
+    const r = await inspectReadiness(root)
+    expect(r.branch).toBe('Main')
+    expect(check(r, 'trunk')).toMatchObject({ ok: false, blocking: true })
+  })
+
   it('refuses a plain directory inside another repository, instead of borrowing its branch', async () => {
     const outer = await repoOn('work', 'ready-nested-')
     const inner = join(outer, 'sub')

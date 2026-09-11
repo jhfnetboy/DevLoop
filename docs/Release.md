@@ -32,6 +32,15 @@ holds for the whole run, not only at start.
 
 New hold reasons `merge_onto_trunk` and `merge_detached_head`; no config change.
 
+Branch names are compared **case-folded**: on a case-insensitive filesystem
+(macOS by default) `git switch Main` succeeds on a loose `main` ref, and an
+exact comparison let merges advance main through it. PR-daemon's review
+reproduced this on the Mac mini; it is fixed and tested here.
+
+Still not guarded: a trunk named something other than `main`/`master` (say
+`develop`) in a repository with no `.pilot.yml` and no `origin/HEAD` is not
+known to be a trunk. Write `base_branch: develop` in `.pilot.yml`.
+
 ## New in 0.5.4
 
 Starting a loop on an existing repository, rather than a fresh one.

@@ -644,6 +644,9 @@ function route() {
 function editing() {
   // Only the home page has a picker; an open one must not freeze another view.
   if (picker.open && route().view === 'home') return true
+  // A rebuild would drop text the reader is selecting in a document.
+  const selection = window.getSelection()
+  if (selection && !selection.isCollapsed && app.contains(selection.anchorNode)) return true
   const active = document.activeElement
   if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return true
   return [...document.querySelectorAll('.path-input, .goal-input')].some(field => field.value.trim() !== '')

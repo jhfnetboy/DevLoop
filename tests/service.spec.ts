@@ -297,7 +297,8 @@ describe('DevloopService', () => {
     await execFileAsync('git', ['-C', root, 'switch', '-q', 'main'])
     const mainBefore = (await execFileAsync('git', ['-C', root, 'rev-parse', 'main'])).stdout.trim()
 
-    const service = new DevloopService(new Context(), resolveConfig({ root, tickIntervalMs: 60_000, enabled: false }), new RecordingBackend())
+    const backend = new RecordingBackend()
+    const service = new DevloopService(new Context(), resolveConfig({ root, tickIntervalMs: 60_000, enabled: false }), backend)
     services.push(service)
     await service.tick()
     const held = await loadState(root, Date.now())
@@ -313,6 +314,45 @@ describe('DevloopService', () => {
     await service.tick()
     expect((await loadState(root, Date.now())).tasks[0]?.status).toBe('done')
     await expect(readFile(join(root, 'src.txt'), 'utf8')).resolves.toBe('landed\n')
+    expect((await execFileAsync('git', ['-C', root, 'rev-parse', 'main'])).stdout.trim()).toBe(mainBefore)
+    // Merged without being redone: no model was called at any point.
+    expect(backend.runs).toHaveLength(0)
+  })
+
+  it('holds on a trunk spelled in another case, where the filesystem makes them one ref', async (context) => {
+    const root = await mkdtempInRepo('devloop-svc-trunk-case-')
+    await mkdir(join(root, '.devloop'))
+    await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
+    await initWorkRepo(root)
+    const { execFile } = await import('node:child_process')
+    const { promisify } = await import('node:util')
+    const execFileAsync = promisify(execFile)
+    // Only meaningful where `Main` resolves to the loose `main` ref (macOS by default).
+    if ((await execFileAsync('git', ['-C', root, 'switch', '-q', 'Main']).then(() => true, () => false)) === false) context.skip()
+    await execFileAsync('git', ['-C', root, 'switch', '-q', 'work'])
+    const limits = resolveConfig({}).budget
+    const dest = await prepareDelegateWorktree(root, contractForTask(
+      't1', 'Add persist', 'T1', ['src/**'], ['tests pass'], limits.taskTimeoutMinutes, limits.maxTaskAttempts,
+    ))
+    await writeFile(join(dest, 'src.txt'), 'landed\n', 'utf8')
+    await execFileAsync('git', ['-C', dest, 'add', 'src.txt'])
+    await execFileAsync('git', ['-C', dest, 'commit', '-m', 'worker'])
+    await saveState(root, {
+      ...emptyState(Date.now()),
+      tasks: [makeTask({
+        id: 't1',
+        status: 'merge_ready',
+        lastReviewVerdict: 'PASS',
+        baseSha: (await readContractBaseSha(dest)) ?? undefined,
+        implementationSha: await taskWorktreeHeadSha(dest),
+      })],
+    })
+    await execFileAsync('git', ['-C', root, 'switch', '-q', 'Main'])
+    const mainBefore = (await execFileAsync('git', ['-C', root, 'rev-parse', 'main'])).stdout.trim()
+    const service = new DevloopService(new Context(), resolveConfig({ root, tickIntervalMs: 60_000, enabled: false }), new RecordingBackend())
+    services.push(service)
+    await service.tick()
+    expect((await loadState(root, Date.now())).supervisor).toEqual({ taskId: 't1', reason: 'merge_onto_trunk' })
     expect((await execFileAsync('git', ['-C', root, 'rev-parse', 'main'])).stdout.trim()).toBe(mainBefore)
   })
 

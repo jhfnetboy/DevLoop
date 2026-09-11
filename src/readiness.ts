@@ -70,7 +70,7 @@ export async function inspectReadiness(root: string): Promise<Readiness> {
 
   if (branch !== null) {
     const trunks = trunkSet(base)
-    checks.push(trunks.has(branch)
+    checks.push(trunks.has(branch.toLowerCase())
       ? {
           id: 'trunk',
           ok: false,
@@ -111,8 +111,12 @@ export async function trunkBranches(root: string): Promise<ReadonlySet<string>> 
   return trunkSet(await baseBranch(root, await readPilotConfig(root)))
 }
 
+/**
+ * Lower-cased: on a case-insensitive filesystem `Main` and `main` are one loose
+ * ref, so a comparison by exact name would let `git switch Main` through.
+ */
 function trunkSet(base: string): ReadonlySet<string> {
-  return new Set([base, ...TRUNKS])
+  return new Set([base, ...TRUNKS].map(name => name.toLowerCase()))
 }
 
 async function baseBranch(root: string, pilot: PilotConfig | null): Promise<string> {
