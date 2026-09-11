@@ -65,6 +65,8 @@ export type HoldReason =
   | 'blocked_task'
   | 'merge_wedged'
   | 'unknown_base'
+  | 'merge_onto_trunk'
+  | 'merge_detached_head'
   | 'missing_agent_result'
   | 'invalid_agent_result'
   | 'result_transition_failed'

@@ -45,18 +45,21 @@ const PILOT_MAX_BYTES = 64 * 1024
 export async function inspectReadiness(root: string): Promise<Readiness> {
   // Registration insists on a repository, so this is one deleted or moved since.
   // A readiness nobody could read must refuse, not wave the start through.
-  if (!await isWorkTree(root)) {
+  // `--is-inside-work-tree` alone also answers true for a plain directory
+  // inside some other repository, whose branch would then be reported as this
+  // one's; only a root that is its own toplevel is a project.
+  if (!await isToplevel(root)) {
     return {
       branch: null,
       base: 'main',
       docsDir: DEFAULT_DOCS_DIR,
-      checks: [{ id: 'repo', ok: false, blocking: true, message: '读不到这个目录的 git 状态（仓库被删除或移走了？），不能启动。' }],
+      checks: [{ id: 'repo', ok: false, blocking: true, message: '这个目录不是一个 git 仓库的顶层（仓库被删除、移走，或它只是别的仓库里的子目录），不能启动。' }],
       ready: false,
     }
   }
   const pilot = await readPilotConfig(root)
   const branch = await currentBranch(root)
-  const base = pilot?.baseBranch ?? await remoteDefaultBranch(root) ?? 'main'
+  const base = await baseBranch(root, pilot)
   const docsDir = pilot?.docsDir ?? DEFAULT_DOCS_DIR
   const tracked = await trackedChanges(root)
   const checks: ReadinessCheck[] = []
@@ -66,17 +69,17 @@ export async function inspectReadiness(root: string): Promise<Readiness> {
     : { id: 'branch', ok: true, blocking: true, message: `当前分支 ${branch}` })
 
   if (branch !== null) {
-    const onTrunk = branch === base || TRUNKS.has(branch)
-    checks.push(onTrunk
+    const trunks = trunkSet(base)
+    checks.push(trunks.has(branch)
       ? {
           id: 'trunk',
           ok: false,
           blocking: true,
           message: `仓库停在 ${branch} 上，DevLoop 会把每个任务直接在本地合并进它。先切到一个工作分支，做完再用 PR 合回 ${base}：git -C ${shellQuote(root)} switch -c devloop/<目标名>`,
         }
-      // Checked at start only: the merge itself has no trunk guard yet, so a
-      // checkout switched back to a trunk mid-loop would still take the merges.
-      : { id: 'trunk', ok: true, blocking: true, message: `（启动时）任务会合并到 ${branch}。循环运行中别把检出切回 ${[...new Set([base, ...TRUNKS])].join(' / ')}：合并时不会再检查分支。` })
+      // The merge checks the same set again (`trunkBranches`), so a checkout
+      // switched back mid-loop halts the loop instead of taking the merge.
+      : { id: 'trunk', ok: true, blocking: true, message: `任务会合并到 ${branch}。运行中如果检出被切回 ${[...trunks].join(' / ')}，合并前会停下来问你。` })
   }
 
   checks.push(tracked === 0
@@ -97,6 +100,23 @@ export async function inspectReadiness(root: string): Promise<Readiness> {
   }
 
   return { branch, base, docsDir, checks, ready: checks.every(check => check.ok || !check.blocking) }
+}
+
+/**
+ * The branches DevLoop never merges into: the configured base (`.pilot.yml`,
+ * else `origin/HEAD`, else main) and, always, main and master. The start check
+ * and the merge both ask this, so the rule cannot drift between them.
+ */
+export async function trunkBranches(root: string): Promise<ReadonlySet<string>> {
+  return trunkSet(await baseBranch(root, await readPilotConfig(root)))
+}
+
+function trunkSet(base: string): ReadonlySet<string> {
+  return new Set([base, ...TRUNKS])
+}
+
+async function baseBranch(root: string, pilot: PilotConfig | null): Promise<string> {
+  return pilot?.baseBranch ?? await remoteDefaultBranch(root) ?? 'main'
 }
 
 /** The failing blocking checks, as one sentence for a refusal. */
@@ -141,18 +161,61 @@ async function readPilotConfig(root: string): Promise<PilotConfig | null> {
   return text === null ? null : parsePilotConfig(text)
 }
 
-const PLANNING_FILES = ['roadmap.md', 'tasks.md', 'progress.md', 'architecture.md', 'spec.md', 'acceptance.md', 'research.md']
+const PLANNING_FILES = ['roadmap.md', 'tasks.md', 'progress.md', 'acceptance.md', 'architecture.md', 'spec.md', 'research.md']
+const DOCUMENT_MAX_BYTES = 64 * 1024
+
+export interface PlanningDocument {
+  /** Path relative to the repository root, for display. */
+  readonly path: string
+  readonly name: string
+  readonly text: string
+  /** Longer than was read; the page says so rather than showing a silent cut. */
+  readonly truncated: boolean
+}
+
+/**
+ * pilot's planning documents, for the page to show. Only the known file names,
+ * only regular files, never through a symlink at the last hop, and only inside
+ * the repository: this is how a registered project's plan is read, not a way to
+ * read an arbitrary file.
+ */
+export async function readPlanningDocuments(root: string): Promise<{ readonly docsDir: string, readonly documents: readonly PlanningDocument[] }> {
+  const pilot = await readPilotConfig(root)
+  const docsDir = pilot?.docsDir ?? DEFAULT_DOCS_DIR
+  const dir = await containedDir(root, docsDir)
+  if (dir === null) return { docsDir, documents: [] }
+  const documents: PlanningDocument[] = []
+  for (const name of PLANNING_FILES) {
+    const path = join(dir, name)
+    let size: number
+    try {
+      const meta = await lstat(path)
+      if (!meta.isFile() || meta.size === 0) continue
+      size = meta.size
+    } catch {
+      continue
+    }
+    const text = await readPlain(path, DOCUMENT_MAX_BYTES)
+    if (text !== null) documents.push({ path: `${docsDir}/${name}`, name, text, truncated: size > DOCUMENT_MAX_BYTES })
+  }
+  return { docsDir, documents }
+}
+
+/** The realpath of `relative` under `root`, or null when it is missing or resolves outside. */
+async function containedDir(root: string, relative: string): Promise<string | null> {
+  try {
+    const top = await realpath(root)
+    const dir = await realpath(join(root, relative))
+    return dir === top || dir.startsWith(top + sep) ? dir : null
+  } catch {
+    return null
+  }
+}
 
 async function planningFiles(root: string, docsDir: string): Promise<string[]> {
   // A symlinked docs_dir must not turn this into a probe of paths outside the repository.
-  let dir: string
-  try {
-    const top = await realpath(root)
-    dir = await realpath(join(root, docsDir))
-    if (dir !== top && !dir.startsWith(top + sep)) return []
-  } catch {
-    return []
-  }
+  const dir = await containedDir(root, docsDir)
+  if (dir === null) return []
   const found: string[] = []
   for (const name of PLANNING_FILES) {
     try {
@@ -183,9 +246,10 @@ async function readPlain(path: string, max: number): Promise<string | null> {
   }
 }
 
-async function isWorkTree(root: string): Promise<boolean> {
+async function isToplevel(root: string): Promise<boolean> {
   try {
-    return (await git(root, ['rev-parse', '--is-inside-work-tree'])).trim() === 'true'
+    const top = (await git(root, ['rev-parse', '--show-toplevel'])).trim()
+    return top !== '' && await realpath(top) === await realpath(root)
   } catch {
     return false
   }

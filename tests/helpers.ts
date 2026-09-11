@@ -26,6 +26,16 @@ export async function initGitRepo(root: string): Promise<void> {
   await execFileAsync('git', ['-C', root, 'commit', '-m', 'init'])
 }
 
+/**
+ * A repository on a work branch, as a loop is meant to run: the loop refuses
+ * to merge into main (see `trunkBranches`), so a test that reaches a merge
+ * starts where an operator would.
+ */
+export async function initWorkRepo(root: string, branch = 'work'): Promise<void> {
+  await initGitRepo(root)
+  await execFileAsync('git', ['-C', root, 'switch', '-q', '-c', branch])
+}
+
 export function makeTask(partial: Partial<Task> & Pick<Task, 'id' | 'status'>): Task {
   return {
     title: partial.id,

@@ -406,8 +406,27 @@ describe('mergeTaskWorktree', () => {
     await execFileAsync('git', ['-C', dest, 'add', 'src.txt'])
     await execFileAsync('git', ['-C', dest, 'commit', '-m', 'worker'])
     await execFileAsync('git', ['-C', root, 'checkout', '--detach'])
-    await expect(mergeTaskWorktree(root, 'd1', await readContractBaseSha(dest))).rejects.toThrow(/detached HEAD/)
+    await expect(mergeTaskWorktree(root, 'd1', await readContractBaseSha(dest))).rejects.toThrow(/^merge_detached_head: .*detached HEAD/)
     expect(await pathExists(dest)).toBe(true)
+  })
+
+  it('refuses to merge onto a branch the caller names as a trunk, and leaves it untouched', async () => {
+    const root = await gitWorkspace()
+    const dest = await prepareDelegateWorktree(root, contractFor('t1'))
+    await writeFile(join(dest, 'src.txt'), 'from-worker\n', 'utf8')
+    await execFileAsync('git', ['-C', dest, 'add', 'src.txt'])
+    await execFileAsync('git', ['-C', dest, 'commit', '-m', 'worker'])
+    const head = (await execFileAsync('git', ['-C', root, 'branch', '--show-current'])).stdout.trim()
+    const before = (await execFileAsync('git', ['-C', root, 'rev-parse', 'HEAD'])).stdout.trim()
+    const base = await readContractBaseSha(dest)
+    const reviewed = await taskWorktreeHeadSha(dest)
+    await expect(mergeTaskWorktree(root, 't1', base, reviewed, { trunks: new Set([head]) }))
+      .rejects.toThrow(/^merge_onto_trunk: /)
+    expect((await execFileAsync('git', ['-C', root, 'rev-parse', 'HEAD'])).stdout.trim()).toBe(before)
+    expect(await pathExists(dest)).toBe(true)
+    // Without a trunk set the primitive behaves as it always has.
+    await mergeTaskWorktree(root, 't1', base, reviewed, { trunks: new Set(['some-other-branch']) })
+    expect(await pathExists(dest)).toBe(false)
   })
 
   it('refuses merge when the worktree is not on the task branch', async () => {

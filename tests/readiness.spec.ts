@@ -92,7 +92,17 @@ describe('readiness to start a loop', () => {
     const r = await inspectReadiness(await mkdtemp(join(tmpdir(), 'ready-gone-')))
     expect(r.ready).toBe(false)
     expect(r.checks).toEqual([expect.objectContaining({ id: 'repo', ok: false, blocking: true })])
-    expect(readinessRefusal(r)).toMatch(/git 状态/)
+    expect(readinessRefusal(r)).toMatch(/顶层/)
+  })
+
+  it('refuses a plain directory inside another repository, instead of borrowing its branch', async () => {
+    const outer = await repoOn('work', 'ready-nested-')
+    const inner = join(outer, 'sub')
+    await mkdir(inner)
+    const r = await inspectReadiness(inner)
+    expect(r.ready).toBe(false)
+    expect(r.branch).toBeNull()
+    expect(r.checks.map(c => c.id)).toEqual(['repo'])
   })
 
   it('says so when planning is declared external, instead of reporting it missing', async () => {

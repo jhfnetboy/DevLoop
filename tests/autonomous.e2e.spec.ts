@@ -6,7 +6,7 @@ import type { AgentBackend, AgentRunInput, AgentRunResult } from '../src/backend
 import { resolveConfig } from '../src/config.ts'
 import { loadState, saveState } from '../src/persist.ts'
 import DevloopService from '../src/service.ts'
-import { initGitRepo, mkdtempInRepo } from './helpers.ts'
+import { initWorkRepo, mkdtempInRepo } from './helpers.ts'
 
 class ScriptedFactoryBackend implements AgentBackend {
   readonly actions: string[] = []
@@ -69,7 +69,7 @@ class ScriptedFactoryBackend implements AgentBackend {
 describe('autonomous 0.3 composition', () => {
   it('runs plan → implement → review → merge → goal complete without operator state edits', async () => {
     const root = await mkdtempInRepo('devloop-auto-e2e-')
-    await initGitRepo(root)
+    await initWorkRepo(root)
     await mkdir(join(root, '.devloop'))
     await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n\nAdd generated module.\n', 'utf8')
     const backend = new ScriptedFactoryBackend()

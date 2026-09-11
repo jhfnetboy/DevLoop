@@ -25,6 +25,7 @@ import { applyRunSignals, refundAction, rollCostWindows } from './budget.js'
 import { runTick, type TickResult } from './tick.js'
 import { mountDashboard, type LoopPresence } from './dashboard.js'
 import { browseRoot, dshHome, listProjects } from './projects.js'
+import { trunkBranches } from './readiness.js'
 import type { BudgetUsage, HoldReason, LoopState } from './types.js'
 import { RUNNER_REAP_MS } from './spawn.js'
 import { applyAgentResult } from './transition.js'
@@ -232,6 +233,9 @@ export class ProjectLoop {
               mergeTaskId,
               result.state.tasks.find(task => task.id === mergeTaskId)?.baseSha ?? null,
               result.state.tasks.find(task => task.id === mergeTaskId)?.implementationSha ?? null,
+              // The same trunks the page refuses to start on, asked again here:
+              // the checkout can be switched back after the start was checked.
+              { trunks: await trunkBranches(this.config.root) },
             )
             result = {
               ...result,
@@ -1047,9 +1051,11 @@ function finitePositive(value: number | undefined): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0
 }
 
-function mergeHoldReason(error: unknown): 'empty_task' | 'merge_wedged' | 'unknown_base' | 'unknown_review_sha' | 'stale_review_sha' | null {
+function mergeHoldReason(error: unknown): 'empty_task' | 'merge_wedged' | 'unknown_base' | 'unknown_review_sha' | 'stale_review_sha' | 'merge_onto_trunk' | 'merge_detached_head' | null {
   const message = error instanceof Error ? error.message : ''
   if (message.startsWith('empty_task')) return 'empty_task'
+  if (message.startsWith('merge_onto_trunk')) return 'merge_onto_trunk'
+  if (message.startsWith('merge_detached_head')) return 'merge_detached_head'
   if (message.startsWith('merge_wedged')) return 'merge_wedged'
   if (message.startsWith('unknown_base')) return 'unknown_base'
   if (message.startsWith('unknown_review_sha')) return 'unknown_review_sha'
