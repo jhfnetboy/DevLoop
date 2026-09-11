@@ -144,7 +144,7 @@ function renderHome(value) {
   }
   if (value.registryError) parts.push(el('div', { class: 'banner' }, `项目注册表有问题：${value.registryError}`))
   parts.push(addProjectPanel())
-  if (!value.projects.length) parts.push(el('div', { class: 'empty' }, '还没有项目。在上面填一个 git 仓库的路径来添加。'))
+  if (!value.projects.length) parts.push(el('div', { class: 'empty' }, '还没有项目。点上面的「浏览仓库…」选一个 git 仓库来添加。'))
   parts.push(el('div', { class: 'grid' }, value.projects.map(projectCard)))
   if (g) {
     parts.push(el('p', { class: 'note' }, `今日合计花费 ${usd(g.costUsdDay)}`,
@@ -154,18 +154,99 @@ function renderHome(value) {
   return parts
 }
 
-function addProjectPanel() {
-  const input = el('input', { type: 'text', class: 'path-input', placeholder: '/Users/you/Dev/some-repo（git 仓库的顶层目录）', spellcheck: 'false', autocomplete: 'off' })
-  const button = actionButton('添加项目', 'primary', null, async () => {
-    const root = input.value.trim()
-    if (!root) throw new Error('先填路径')
+// The picker's state lives here rather than in the DOM, because a refresh
+// rebuilds the page; while it is open the refresh holds off (see `editing`).
+const picker = { open: false, path: [], listing: null, loading: false, error: null, selected: null }
+
+async function browseTo(path) {
+  Object.assign(picker, { open: true, path, loading: true, error: null, selected: null })
+  redrawPicker()
+  try {
+    picker.listing = await getJson(`${API}/browse?path=${encodeURIComponent(path.join('/'))}`)
+  } catch (error) {
+    picker.listing = null
+    picker.error = error.message
+  }
+  picker.loading = false
+  redrawPicker()
+}
+
+function closePicker() {
+  Object.assign(picker, { open: false, path: [], listing: null, loading: false, error: null, selected: null })
+}
+
+function redrawPicker() {
+  const panel = document.getElementById('add-panel')
+  if (panel) panel.replaceWith(addProjectPanel())
+}
+
+function addProject(root) {
+  return async () => {
+    if (!root) throw new Error('先选一个仓库')
     const value = await postJson(`${API}/projects`, { root })
+    closePicker()
     return { text: `已添加：${value.root}。它还没有目标，点进去写一个就会开始。` }
+  }
+}
+
+function addProjectPanel() {
+  const note = el('p', { class: 'note' }, '一个项目就是一个需求：一个 git 仓库，写好目标后它的循环会把目标拆成任务逐个完成。')
+  if (!picker.open) {
+    const open = el('button', { type: 'button', class: 'btn primary' }, '浏览仓库…')
+    open.addEventListener('click', () => void browseTo([]))
+    return el('section', { class: 'panel add', id: 'add-panel' },
+      el('h3', {}, '添加项目'), el('div', { class: 'actions' }, open), note)
+  }
+
+  const listing = picker.listing
+  const top = listing ? listing.root.split('/').filter(Boolean).pop() || '/' : '…'
+  const crumbs = [top, ...picker.path].map((name, depth) => {
+    if (depth === picker.path.length) return el('b', {}, name)
+    const link = el('button', { type: 'button', class: 'crumb' }, name)
+    link.addEventListener('click', () => void browseTo(picker.path.slice(0, depth)))
+    return link
   })
-  return el('section', { class: 'panel add' },
+
+  let body
+  if (picker.loading) body = el('p', { class: 'muted' }, '读取中…')
+  else if (picker.error) body = el('div', { class: 'banner bad' }, picker.error)
+  else if (!listing.entries.length) body = el('p', { class: 'muted' }, '这里没有子目录。')
+  else {
+    body = el('div', { class: 'picker-list' }, listing.entries.map((entry) => {
+      const selected = picker.selected === entry.root
+      const row = el('button', {
+        type: 'button',
+        class: `pick-row ${entry.repo ? 'repo' : 'folder'} ${selected ? 'selected' : ''}`,
+        disabled: entry.registered,
+        title: entry.root,
+      },
+      el('span', { class: 'pick-icon' }, entry.repo ? '⎇' : '▸'),
+      el('span', { class: 'pick-name' }, entry.name),
+      entry.registered ? badge('已添加', 'ok', true) : entry.repo ? badge('git 仓库', 'accent', true) : el('span', { class: 'muted' }, '打开 ›'))
+      row.addEventListener('click', () => {
+        if (!entry.repo) return void browseTo([...picker.path, entry.name])
+        picker.selected = selected ? null : entry.root
+        redrawPicker()
+      })
+      return row
+    }))
+  }
+
+  const add = actionButton('添加', 'primary', null, addProject(picker.selected))
+  add.disabled = !picker.selected
+  const cancel = el('button', { type: 'button', class: 'btn' }, '取消')
+  cancel.addEventListener('click', () => { closePicker(); void load(true) })
+
+  return el('section', { class: 'panel add', id: 'add-panel' },
     el('h3', {}, '添加项目'),
-    el('div', { class: 'add-row' }, input, button),
-    el('p', { class: 'note' }, '一个项目就是一个需求：一个 git 仓库，写好目标后它的循环会把目标拆成任务逐个完成。'))
+    el('div', { class: 'crumbs' }, crumbs.flatMap((c, i) => i ? [el('span', { class: 'muted' }, ' / '), c] : [c])),
+    listing ? el('div', { class: 'path' }, [listing.root, ...picker.path].join('/')) : null,
+    body,
+    listing && listing.truncated ? el('p', { class: 'note' }, '目录太多，只列出了前 500 个。') : null,
+    el('div', { class: 'actions' },
+      add, cancel,
+      el('span', { class: 'path selected-path' }, picker.selected || '点一个 git 仓库选中它')),
+    note)
 }
 
 function startPanel(p) {
@@ -380,6 +461,7 @@ function route() {
 
 // A refresh rebuilds the page, which would take a half-typed goal with it.
 function editing() {
+  if (picker.open) return true
   const active = document.activeElement
   if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return true
   return [...document.querySelectorAll('.path-input, .goal-input')].some(field => field.value.trim() !== '')

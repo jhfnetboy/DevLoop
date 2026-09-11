@@ -1,8 +1,8 @@
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { constants, lstat, mkdir, open, readFile, realpath, rename, stat, writeFile } from 'node:fs/promises'
+import { constants, lstat, mkdir, open, readdir, readFile, realpath, rename, stat, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
+import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
 
 /**
@@ -239,6 +239,91 @@ export async function unregisterProject(home: string, realRoot: string): Promise
     if (await canonical(root) === realRoot) {
       throw new ProjectError('the registry still names this project under another spelling; remove it by hand')
     }
+  }
+}
+
+// ---- browsing ---------------------------------------------------------------
+//
+// So the page can offer "pick a repository" instead of "type a path". It lists
+// directories only, one level at a time, and only under one root the operator
+// chose for this machine — `$DEVLOOP_BROWSE_ROOT`, else `~/Dev`. A request names
+// a place by path segments relative to that root, and whatever they resolve to,
+// symlinks included, must still be inside it.
+
+export function browseRoot(env: NodeJS.ProcessEnv = process.env): string {
+  const configured = env.DEVLOOP_BROWSE_ROOT
+  return configured !== undefined && configured !== '' ? configured : join(homedir(), 'Dev')
+}
+
+export interface BrowseEntry {
+  readonly name: string
+  /** Realpath of the directory; what the page registers when it is a repository. */
+  readonly root: string
+  /** Has a `.git`: a candidate project rather than a folder to open. */
+  readonly repo: boolean
+}
+
+export interface BrowseListing {
+  readonly root: string
+  /** Segments below `root`; empty at the top. */
+  readonly path: readonly string[]
+  readonly entries: readonly BrowseEntry[]
+  /** More directories than were listed. */
+  readonly truncated: boolean
+}
+
+const BROWSE_MAX_ENTRIES = 500
+const BROWSE_MAX_DEPTH = 8
+
+export async function browseDirectory(top: string, path: readonly string[]): Promise<BrowseListing> {
+  if (path.length > BROWSE_MAX_DEPTH) throw new ProjectError('too deep')
+  for (const segment of path) {
+    if (segment === '' || segment.startsWith('.') || /[/\\\0]/.test(segment)) throw new ProjectError('bad path segment')
+  }
+  let base: string
+  try {
+    base = await realpath(top)
+  } catch {
+    throw new ProjectError(`${top} does not exist; set DEVLOOP_BROWSE_ROOT`)
+  }
+  const inside = (real: string): boolean => real === base || real.startsWith(base + sep)
+  let dir: string
+  try {
+    dir = await realpath(join(base, ...path))
+  } catch {
+    throw new ProjectError('no such directory')
+  }
+  if (!inside(dir) || !(await stat(dir)).isDirectory()) throw new ProjectError('no such directory')
+
+  const entries: BrowseEntry[] = []
+  let truncated = false
+  const names = (await readdir(dir, { withFileTypes: true }))
+    .filter(entry => !entry.name.startsWith('.') && (entry.isDirectory() || entry.isSymbolicLink()))
+    .map(entry => entry.name)
+    .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+  for (const name of names) {
+    if (entries.length >= BROWSE_MAX_ENTRIES) {
+      truncated = true
+      break
+    }
+    let real: string
+    try {
+      real = await realpath(join(dir, name))
+      if (!inside(real) || !(await stat(real)).isDirectory()) continue
+    } catch {
+      continue
+    }
+    entries.push({ name, root: real, repo: await exists(join(real, '.git')) })
+  }
+  return { root: base, path: [...path], entries, truncated }
+}
+
+async function exists(path: string): Promise<boolean> {
+  try {
+    await lstat(path)
+    return true
+  } catch {
+    return false
   }
 }
 

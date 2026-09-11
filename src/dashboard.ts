@@ -12,6 +12,7 @@ import { devloopDir, eventsPath, goalPath, loadState, workspaceArmed } from './p
 import { PROGRESS_FILE } from './progress.js'
 import {
   armProject,
+  browseDirectory,
   findProject,
   listProjects,
   MAX_GOAL_BYTES,
@@ -63,6 +64,8 @@ export interface DashboardDeps {
   readonly presence: (root: string, own: boolean) => LoopPresence
   /** Present where the process can run projects besides its own root. */
   readonly control?: ProjectControl
+  /** The one directory the add-project picker may list below; absent, it lists nothing. */
+  readonly browseRoot?: string
   readonly requestRejection: (request: { readonly headers: IncomingHttpHeaders }) => 401 | 403 | undefined
   readonly assets: DashboardAssets
   readonly now?: () => number
@@ -365,7 +368,8 @@ export function createDashboardHandler(deps: DashboardDeps): (req: IncomingMessa
     if (rejection === 403) return send(res, req, 403, 'text/plain; charset=utf-8', 'forbidden\n')
     if (rejection === 401) return send(res, req, 401, 'text/html; charset=utf-8', LOGIN_HINT)
 
-    const path = new URL(req.url ?? '/', 'http://dashboard.invalid').pathname
+    const url = new URL(req.url ?? '/', 'http://dashboard.invalid')
+    const path = url.pathname
     const action = ACTION_ROUTE.exec(path)
     if (action) {
       if (req.method !== 'POST') {
@@ -400,6 +404,7 @@ export function createDashboardHandler(deps: DashboardDeps): (req: IncomingMessa
         const global = deps.control?.spend(now()) ?? null
         return json(res, req, 200, { ok: true, value: { projects, registryError: list.registryError, global } })
       }
+      if (path === `${DASHBOARD_PATH}/api/browse`) return browse(req, res, deps, url.searchParams.get('path') ?? '')
       const prefix = `${DASHBOARD_PATH}/api/projects/`
       if (path.startsWith(prefix)) {
         const id = path.slice(prefix.length)
@@ -492,6 +497,22 @@ async function act(
     return json(res, req, 200, { ok: true, value })
   } catch (error) {
     if (error instanceof OperatorError) return fail(FAILURE_STATUS[error.code], error.code, error.message)
+    return fail(500, 'internal', messageOf(error))
+  }
+}
+
+/** One level of the picker: directories under `browseRoot`, repositories marked. */
+async function browse(req: IncomingMessage, res: ServerResponse, deps: DashboardDeps, relative: string): Promise<void> {
+  const fail: Fail = (status, code, message) => json(res, req, status, { ok: false, error: { code, message } })
+  if (!deps.control || deps.browseRoot === undefined) return fail(501, 'unsupported', 'this process cannot add projects')
+  const segments = relative.split('/').filter(segment => segment !== '')
+  try {
+    const listing = await browseDirectory(deps.browseRoot, segments)
+    const listed = new Set((await listProjects(deps.ownRoot, deps.home)).projects.map(project => project.root))
+    const entries = listing.entries.map(entry => ({ ...entry, registered: listed.has(entry.root) }))
+    return json(res, req, 200, { ok: true, value: { ...listing, entries } })
+  } catch (error) {
+    if (error instanceof ProjectError) return fail(422, 'refused', error.message)
     return fail(500, 'internal', messageOf(error))
   }
 }

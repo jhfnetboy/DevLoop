@@ -1,8 +1,25 @@
-# Release 0.5.1
+# Release 0.5.2
 
-Bounded autonomous engineering loop: structured model results, deterministic state transitions, host-enforced write scope, SHA-bound independent review, durable recovery, and role/tier routing. Tag `v0.5.1` and the GitHub Release are created **after** this commit is on `main`; steps: [Deploy.md](./Deploy.md).
+Bounded autonomous engineering loop: structured model results, deterministic state transitions, host-enforced write scope, SHA-bound independent review, durable recovery, and role/tier routing. Tag `v0.5.2` and the GitHub Release are created **after** this commit is on `main`; steps: [Deploy.md](./Deploy.md).
 
-Package version: **0.5.1**. This document is the release note, not a second semver.
+Package version: **0.5.2**. This document is the release note, not a second semver.
+
+## New in 0.5.2
+
+- **Add a project by picking it, not by typing its path.** 「添加项目」 now opens
+  a browser over `~/Dev` (or `$DEVLOOP_BROWSE_ROOT`): open an organisation,
+  click a repository to select it, then 添加. Repositories are marked, ones
+  already added are shown and cannot be picked twice, and the page's refresh
+  holds off while the picker is open so it is not closed under you.
+- The picker is served by a new read-only route, `GET /devloop/api/browse`.
+  It lists directory names only, one level at a time, and never outside its
+  root: dot-segments are refused and a symlink that resolves outside is left
+  out. Registering still goes through the same check as before — the choice
+  must be a git toplevel.
+
+A patch: no config, no state field. The free-text path box is gone; a
+repository outside the browse root is added by setting `DEVLOOP_BROWSE_ROOT`
+or by editing `$DSH_HOME/devloop/projects.json`.
 
 ## New in 0.5.1
 
@@ -128,4 +145,4 @@ Host-side checks (`dsh plugin add`, `--dump-config`) are listed in [UserCaseTest
 - Token/cost melt the circuit only when the backend fills `AgentRunResult`; otherwise the loop uses wall-clock `lastProgressAt`. Session cost resets after the first successful STATE persist of this process; daily cost resets at UTC midnight.
 - The automated E2E uses a scripted provider, and the release candidate also completed a real-provider plan → implement → exact-SHA review → merge run without operator state edits.
 - The operator UI is the dashboard; it sees only the spend backends report, and cannot edit an existing goal.
-- npm registry: `@jhfnetboy/dsh-devloop@0.5.1` is published. GitHub and the Release tarball remain supported. See [Install.md](./Install.md).
+- npm registry: `@jhfnetboy/dsh-devloop@0.5.2` is published. GitHub and the Release tarball remain supported. See [Install.md](./Install.md).

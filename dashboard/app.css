@@ -97,3 +97,17 @@ details summary { cursor: pointer; color: var(--muted); }
 .goal-input { display: block; margin-top: 8px; resize: vertical; min-height: 140px; }
 .panel.add { margin-bottom: 16px; }
 .panel.start { margin-top: 16px; }
+.crumbs { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px; font-size: 15px; }
+.crumb { font: inherit; padding: 0; border: 0; background: none; color: var(--accent); cursor: pointer; }
+.crumb:hover { text-decoration: underline; }
+.picker-list { display: grid; margin-top: 10px; border: 1px solid var(--line); border-radius: 8px; max-height: 420px; overflow-y: auto; }
+.pick-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 12px; font: inherit; text-align: left; color: var(--ink); background: none; border: 0; border-top: 1px solid var(--line); cursor: pointer; }
+.pick-row:first-child { border-top: 0; }
+.pick-row:hover:not(:disabled) { background: var(--bg); }
+.pick-row.selected { background: var(--accent-bg); box-shadow: inset 3px 0 0 var(--accent); }
+.pick-row:disabled { cursor: default; opacity: .6; }
+.pick-icon { width: 14px; color: var(--muted); text-align: center; }
+.pick-row.repo .pick-icon { color: var(--accent); }
+.pick-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.actions { align-items: center; flex-wrap: wrap; }
+.selected-path { flex: 1; min-width: 0; }

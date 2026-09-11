@@ -106,7 +106,10 @@ only where there is a browser to show it.
   from doing by hand.
 - **Only registered projects are readable.** Requests name a project by an
   opaque id derived from its realpath, never by a path, so the page cannot be
-  used to read an arbitrary directory.
+  used to read an arbitrary directory. The one exception is the add-project
+  picker, which lists **directory names only**, one level at a time, under a
+  single browse root (`$DEVLOOP_BROWSE_ROOT`, else `~/Dev`); dot-segments are
+  refused and anything that resolves outside that root is left out.
 - **Model-written text is rendered as text.** Task titles, gate evidence and
   event records come from model output; the page sets `textContent`, never
   `innerHTML`, and ships a CSP with no inline script.
