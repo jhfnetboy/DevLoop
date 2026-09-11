@@ -11,11 +11,13 @@ import { ClaudeCliBackend } from '../src/cli.ts'
 import type { HeadlessRun } from '../src/dsh.ts'
 import { resolveConfig } from '../src/config.ts'
 import { emptyUsage } from '../src/budget.ts'
+import { gateFor } from '../src/gate.ts'
+import { resumeLoop } from '../src/operator.ts'
 import { emptyState, loadState, saveState, statePath, withStateLock, workspaceArmed } from '../src/persist.ts'
 import { contractForTask } from '../src/router.ts'
 import DevloopService from '../src/service.ts'
 import { planWorktreePath, prepareDelegateWorktree, readContractBaseSha, taskWorktreeHeadSha, worktreePath } from '../src/worktree.ts'
-import { initGitRepo, makeTask, mkdtempInRepo } from './helpers.ts'
+import { initWorkRepo, makeTask, mkdtempInRepo } from './helpers.ts'
 
 async function waitForAction(root: string, type: string, timeoutMs = 10_000): Promise<void> {
   const start = Date.now()
@@ -116,7 +118,7 @@ describe('DevloopService', () => {
     const root = await mkdtempInRepo('devloop-svc-')
     await mkdir(join(root, '.devloop'))
     await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
-    await initGitRepo(root)
+    await initWorkRepo(root)
     await saveState(root, {
       ...emptyState(Date.now()),
       tasks: [makeTask({
@@ -158,7 +160,7 @@ describe('DevloopService', () => {
     const first = await loadState(root, Date.now())
     expect(first.lastAction).toEqual({ type: 'idle' })
     expect(backend.runs).toHaveLength(0)
-    await initGitRepo(root)
+    await initWorkRepo(root)
     await service.tick()
     const second = await loadState(root, Date.now())
     expect(second.lastAction).toEqual({ type: 'delegate', taskId: 'd1' })
@@ -207,7 +209,7 @@ describe('DevloopService', () => {
     const root = await mkdtempInRepo('devloop-svc-merge-fail-')
     await mkdir(join(root, '.devloop'))
     await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
-    await initGitRepo(root)
+    await initWorkRepo(root)
     await saveState(root, {
       ...emptyState(Date.now()),
       tasks: [makeTask({ id: 'm1', status: 'merge_ready', lastReviewVerdict: 'PASS' })],
@@ -266,11 +268,99 @@ describe('DevloopService', () => {
     await expect(execFileAsync('git', ['-C', root, 'rev-parse', '--verify', 'refs/heads/devloop/m1'])).rejects.toThrow()
   }, 30_000)
 
+  it('holds instead of merging when the checkout was switched back to the trunk, and merges once it is moved back', async () => {
+    const root = await mkdtempInRepo('devloop-svc-trunk-')
+    await mkdir(join(root, '.devloop'))
+    await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
+    await initWorkRepo(root)
+    const limits = resolveConfig({}).budget
+    const dest = await prepareDelegateWorktree(root, contractForTask(
+      't1', 'Add persist', 'T1', ['src/**'], ['tests pass'], limits.taskTimeoutMinutes, limits.maxTaskAttempts,
+    ))
+    await writeFile(join(dest, 'src.txt'), 'landed\n', 'utf8')
+    const { execFile } = await import('node:child_process')
+    const { promisify } = await import('node:util')
+    const execFileAsync = promisify(execFile)
+    await execFileAsync('git', ['-C', dest, 'add', 'src.txt'])
+    await execFileAsync('git', ['-C', dest, 'commit', '-m', 'worker'])
+    await saveState(root, {
+      ...emptyState(Date.now()),
+      tasks: [makeTask({
+        id: 't1',
+        status: 'merge_ready',
+        lastReviewVerdict: 'PASS',
+        baseSha: (await readContractBaseSha(dest)) ?? undefined,
+        implementationSha: await taskWorktreeHeadSha(dest),
+      })],
+    })
+    // Started on a work branch, then someone switched the checkout back.
+    await execFileAsync('git', ['-C', root, 'switch', '-q', 'main'])
+    const mainBefore = (await execFileAsync('git', ['-C', root, 'rev-parse', 'main'])).stdout.trim()
+
+    const backend = new RecordingBackend()
+    const service = new DevloopService(new Context(), resolveConfig({ root, tickIntervalMs: 60_000, enabled: false }), backend)
+    services.push(service)
+    await service.tick()
+    const held = await loadState(root, Date.now())
+    expect(held.supervisor).toEqual({ taskId: 't1', reason: 'merge_onto_trunk' })
+    expect(held.tasks[0]?.status).toBe('merge_ready')
+    expect((await execFileAsync('git', ['-C', root, 'rev-parse', 'main'])).stdout.trim()).toBe(mainBefore)
+    await expect(readFile(join(root, 'src.txt'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(gateFor(held, limits, Date.now())?.question).toMatch(/trunk/)
+
+    // The answer the gate gives: move the checkout back, then resume.
+    await execFileAsync('git', ['-C', root, 'switch', '-q', 'work'])
+    await resumeLoop(root, {}, limits, { via: 'dashboard', expectedRevision: held.revision, now: Date.now })
+    await service.tick()
+    expect((await loadState(root, Date.now())).tasks[0]?.status).toBe('done')
+    await expect(readFile(join(root, 'src.txt'), 'utf8')).resolves.toBe('landed\n')
+    expect((await execFileAsync('git', ['-C', root, 'rev-parse', 'main'])).stdout.trim()).toBe(mainBefore)
+    // Merged without being redone: no model was called at any point.
+    expect(backend.runs).toHaveLength(0)
+  })
+
+  it('holds on a trunk spelled in another case, where the filesystem makes them one ref', async (context) => {
+    const root = await mkdtempInRepo('devloop-svc-trunk-case-')
+    await mkdir(join(root, '.devloop'))
+    await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
+    await initWorkRepo(root)
+    const { execFile } = await import('node:child_process')
+    const { promisify } = await import('node:util')
+    const execFileAsync = promisify(execFile)
+    // Only meaningful where `Main` resolves to the loose `main` ref (macOS by default).
+    if ((await execFileAsync('git', ['-C', root, 'switch', '-q', 'Main']).then(() => true, () => false)) === false) context.skip()
+    await execFileAsync('git', ['-C', root, 'switch', '-q', 'work'])
+    const limits = resolveConfig({}).budget
+    const dest = await prepareDelegateWorktree(root, contractForTask(
+      't1', 'Add persist', 'T1', ['src/**'], ['tests pass'], limits.taskTimeoutMinutes, limits.maxTaskAttempts,
+    ))
+    await writeFile(join(dest, 'src.txt'), 'landed\n', 'utf8')
+    await execFileAsync('git', ['-C', dest, 'add', 'src.txt'])
+    await execFileAsync('git', ['-C', dest, 'commit', '-m', 'worker'])
+    await saveState(root, {
+      ...emptyState(Date.now()),
+      tasks: [makeTask({
+        id: 't1',
+        status: 'merge_ready',
+        lastReviewVerdict: 'PASS',
+        baseSha: (await readContractBaseSha(dest)) ?? undefined,
+        implementationSha: await taskWorktreeHeadSha(dest),
+      })],
+    })
+    await execFileAsync('git', ['-C', root, 'switch', '-q', 'Main'])
+    const mainBefore = (await execFileAsync('git', ['-C', root, 'rev-parse', 'main'])).stdout.trim()
+    const service = new DevloopService(new Context(), resolveConfig({ root, tickIntervalMs: 60_000, enabled: false }), new RecordingBackend())
+    services.push(service)
+    await service.tick()
+    expect((await loadState(root, Date.now())).supervisor).toEqual({ taskId: 't1', reason: 'merge_onto_trunk' })
+    expect((await execFileAsync('git', ['-C', root, 'rev-parse', 'main'])).stdout.trim()).toBe(mainBefore)
+  })
+
   it('git-merges PASS work, deletes the worktree, and does not call AgentBackend', async () => {
     const root = await mkdtempInRepo('devloop-svc-merge-')
     await mkdir(join(root, '.devloop'))
     await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
-    await initGitRepo(root)
+    await initWorkRepo(root)
     const limits = resolveConfig({}).budget
     const dest = await prepareDelegateWorktree(root, contractForTask(
       'm1',
@@ -318,7 +408,7 @@ describe('DevloopService', () => {
     const root = await mkdtempInRepo('devloop-svc-empty-')
     await mkdir(join(root, '.devloop'))
     await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
-    await initGitRepo(root)
+    await initWorkRepo(root)
     const limits = resolveConfig({}).budget
     const dest = await prepareDelegateWorktree(root, contractForTask(
       'm1',
@@ -362,7 +452,7 @@ describe('DevloopService', () => {
     const root = await mkdtempInRepo('devloop-svc-empty-gone-')
     await mkdir(join(root, '.devloop'))
     await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
-    await initGitRepo(root)
+    await initWorkRepo(root)
     const limits = resolveConfig({}).budget
     const dest = await prepareDelegateWorktree(root, contractForTask(
       'm1',
@@ -401,7 +491,7 @@ describe('DevloopService', () => {
     const root = await mkdtempInRepo('devloop-svc-empty-nocontract-')
     await mkdir(join(root, '.devloop'))
     await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
-    await initGitRepo(root)
+    await initWorkRepo(root)
     const limits = resolveConfig({}).budget
     const dest = await prepareDelegateWorktree(root, contractForTask(
       'm1',
@@ -467,7 +557,7 @@ describe('DevloopService', () => {
     const root = await mkdtempInRepo('devloop-svc-late-failure-')
     await mkdir(join(root, '.devloop'))
     await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
-    await initGitRepo(root)
+    await initWorkRepo(root)
     await saveState(root, {
       ...emptyState(Date.now()),
       tasks: [makeTask({ id: 'd1', status: 'ready', title: 'Late failure' })],
@@ -579,7 +669,7 @@ describe('DevloopService', () => {
     const root = await mkdtempInRepo('devloop-svc-plan-')
     await mkdir(join(root, '.devloop'))
     await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
-    await initGitRepo(root)
+    await initWorkRepo(root)
     const calls: HeadlessRun[] = []
     const backend = new ClaudeCliBackend(async request => {
       calls.push(request)
@@ -652,7 +742,7 @@ describe('DevloopService', () => {
     const root = await mkdtempInRepo('devloop-svc-cost-')
     await mkdir(join(root, '.devloop'))
     await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
-    await initGitRepo(root)
+    await initWorkRepo(root)
     await saveState(root, {
       ...emptyState(Date.now()),
       tasks: [makeTask({ id: 'd1', status: 'ready', title: 'Add persist' })],
@@ -687,7 +777,7 @@ describe('DevloopService', () => {
     const root = await mkdtempInRepo('devloop-svc-session-')
     await mkdir(join(root, '.devloop'))
     await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
-    await initGitRepo(root)
+    await initWorkRepo(root)
     const now = Date.now()
     await saveState(root, {
       ...emptyState(now),
@@ -723,7 +813,7 @@ describe('DevloopService', () => {
     const root = await mkdtempInRepo('devloop-svc-cost-defer-')
     await mkdir(join(root, '.devloop'))
     await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
-    await initGitRepo(root)
+    await initWorkRepo(root)
     await saveState(root, {
       ...emptyState(Date.now()),
       tasks: [makeTask({ id: 'd1', status: 'ready', title: 'Add persist' })],
@@ -796,7 +886,7 @@ describe('DevloopService', () => {
     const root = await mkdtempInRepo('devloop-svc-unread-')
     await mkdir(join(root, '.devloop'))
     await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
-    await initGitRepo(root)
+    await initWorkRepo(root)
     const now = Date.now()
     const unreadState = {
       ...emptyState(now),
@@ -842,7 +932,7 @@ describe('DevloopService', () => {
     const root = await mkdtempInRepo('devloop-svc-fold-kill-')
     await mkdir(join(root, '.devloop'))
     await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
-    await initGitRepo(root)
+    await initWorkRepo(root)
     await saveState(root, {
       ...emptyState(Date.now()),
       tasks: [makeTask({ id: 'd1', status: 'ready', title: 'Add persist' })],
@@ -873,7 +963,7 @@ describe('DevloopService', () => {
     const root = await mkdtempInRepo('devloop-svc-cap-')
     await mkdir(join(root, '.devloop'))
     await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
-    await initGitRepo(root)
+    await initWorkRepo(root)
     await saveState(root, {
       ...emptyState(Date.now()),
       tasks: [makeTask({ id: 'd1', status: 'ready', title: 'Add persist' })],
@@ -904,7 +994,7 @@ describe('DevloopService', () => {
     const root = await mkdtempInRepo('devloop-svc-cost-io-')
     await mkdir(join(root, '.devloop'))
     await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
-    await initGitRepo(root)
+    await initWorkRepo(root)
     await saveState(root, {
       ...emptyState(Date.now()),
       tasks: [makeTask({ id: 'd1', status: 'ready', title: 'Add persist' })],
@@ -937,7 +1027,7 @@ describe('DevloopService', () => {
     const root = await mkdtempInRepo('devloop-svc-commit-hold-')
     await mkdir(join(root, '.devloop'))
     await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
-    await initGitRepo(root)
+    await initWorkRepo(root)
     await saveState(root, {
       ...emptyState(Date.now()),
       tasks: [makeTask({ id: 'd1', status: 'ready', title: 'Add persist', allowedPaths: ['src.txt'] })],
@@ -978,7 +1068,7 @@ describe('DevloopService', () => {
     const root = await mkdtempInRepo('devloop-svc-commit-hold-defer-')
     await mkdir(join(root, '.devloop'))
     await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
-    await initGitRepo(root)
+    await initWorkRepo(root)
     await saveState(root, {
       ...emptyState(Date.now()),
       tasks: [makeTask({ id: 'd1', status: 'ready', title: 'Add persist', allowedPaths: ['src.txt'] })],
@@ -1063,7 +1153,7 @@ describe('the default backend leaves the source alone', () => {
     const root = await mkdtempInRepo('devloop-noop-')
     await mkdir(join(root, '.devloop'))
     await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
-    await initGitRepo(root)
+    await initWorkRepo(root)
     await writeFile(join(root, 'source.ts'), 'export const untouched = 1\n', 'utf8')
     await saveState(root, { ...emptyState(Date.now()), tasks })
     return root
@@ -1122,7 +1212,7 @@ describe('acceptance gates the review, not just the log', () => {
     const root = await mkdtempInRepo('devloop-accept-svc-')
     await mkdir(join(root, '.devloop'))
     await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
-    await initGitRepo(root)
+    await initWorkRepo(root)
     await saveState(root, {
       ...emptyState(Date.now()),
       tasks: [makeTask({ id: 'd1', status: 'ready', allowedPaths: ['src/**'] })],

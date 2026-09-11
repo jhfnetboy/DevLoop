@@ -143,6 +143,7 @@ function renderHome(value) {
       `所有项目今日合计花费 ${usd(g.costUsdDay)}，已达到共享上限 ${usd(g.cap)}：各循环都在等待，UTC 零点后自动继续。`))
   }
   if (value.registryError) parts.push(el('div', { class: 'banner' }, `项目注册表有问题：${value.registryError}`))
+  parts.push(guidePanel())
   parts.push(addProjectPanel())
   if (!value.projects.length) parts.push(el('div', { class: 'empty' }, '还没有项目。点上面的「浏览仓库…」选一个 git 仓库来添加。'))
   parts.push(el('div', { class: 'grid' }, value.projects.map(projectCard)))
@@ -359,7 +360,8 @@ function tasksPanel(p) {
     return el('tr', {},
       el('td', { class: 'mono' }, t.id),
       el('td', { class: 'title-cell' }, t.title,
-        t.allowedPaths && t.allowedPaths.length ? el('div', { class: 'path' }, t.allowedPaths.join('  ')) : null),
+        t.allowedPaths && t.allowedPaths.length ? el('div', { class: 'path' }, t.allowedPaths.join('  ')) : null,
+        t.acceptance && t.acceptance.length ? el('ul', { class: 'accept' }, t.acceptance.map(a => el('li', {}, a))) : null),
       el('td', {}, badge(label, tone)),
       el('td', {}, t.tier),
       el('td', { class: 'num' }, t.attempts),
@@ -407,11 +409,160 @@ function eventsPanel(p) {
       : el('p', { class: 'muted' }, '—'))
 }
 
-function textPanel(title, text, open) {
-  if (!text) return null
-  const details = el('details', {}, el('summary', {}, title), el('pre', { class: 'box' }, text))
-  if (open) details.open = true
-  return el('section', { class: 'panel' }, details)
+// ---- markdown ---------------------------------------------------------------
+//
+// Planning documents are model-written, so this builds DOM nodes with `el`
+// (text nodes only) and never parses markup: raw HTML in a document stays text.
+// It covers what these documents use — headings, lists and checkboxes, tables,
+// code, quotes — and shows anything else as plain text.
+
+const MD_BLOCK = /^\s*(```|#{1,6}\s|[-*+]\s|\d+[.)]\s|>|\|)/
+
+function mdInline(text) {
+  const nodes = []
+  const pattern = /(`[^`]+`)|(\*\*[^*]+\*\*)|(\[[^\]]+\]\((https?:\/\/[^\s)]+)\))/g
+  let last = 0
+  for (const m of text.matchAll(pattern)) {
+    if (m.index > last) nodes.push(text.slice(last, m.index))
+    if (m[1]) nodes.push(el('code', {}, m[1].slice(1, -1)))
+    else if (m[2]) nodes.push(el('b', {}, m[2].slice(2, -2)))
+    else nodes.push(el('a', { href: m[4], target: '_blank', rel: 'noopener noreferrer' }, m[3].slice(1, m[3].indexOf(']'))))
+    last = m.index + m[0].length
+  }
+  if (last < text.length) nodes.push(text.slice(last))
+  return nodes
+}
+
+function mdTableRow(line) {
+  return line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(cell => cell.trim())
+}
+
+function renderMarkdown(source) {
+  const lines = source.replace(/\r\n?/g, '\n').split('\n')
+  const out = []
+  let i = 0
+  while (i < lines.length) {
+    const line = lines[i]
+    if (/^\s*$/.test(line)) { i++; continue }
+    if (/^\s*```/.test(line)) {
+      const code = []
+      i++
+      while (i < lines.length && !/^\s*```/.test(lines[i])) code.push(lines[i++])
+      i++
+      out.push(el('pre', { class: 'md-code' }, code.join('\n')))
+      continue
+    }
+    const heading = /^(#{1,6})\s+(.*)$/.exec(line)
+    if (heading) {
+      out.push(el(`h${Math.min(heading[1].length + 2, 6)}`, { class: 'md-h' }, mdInline(heading[2])))
+      i++
+      continue
+    }
+    if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) { out.push(el('hr', {})); i++; continue }
+    if (/^\s*\|/.test(line) && i + 1 < lines.length && /^\s*\|?\s*:?-{2,}/.test(lines[i + 1])) {
+      const head = mdTableRow(line)
+      i += 2
+      const rows = []
+      while (i < lines.length && /^\s*\|/.test(lines[i])) rows.push(mdTableRow(lines[i++]))
+      out.push(el('div', { class: 'table-wrap' }, el('table', { class: 'md-table' },
+        el('thead', {}, el('tr', {}, head.map(h => el('th', {}, mdInline(h))))),
+        el('tbody', {}, rows.map(r => el('tr', {}, r.map(c => el('td', {}, mdInline(c)))))))))
+      continue
+    }
+    const listItem = /^\s*([-*+]|\d+[.)])\s+(.*)$/
+    if (listItem.test(line)) {
+      const ordered = /^\s*\d/.test(line)
+      const items = []
+      while (i < lines.length && listItem.test(lines[i])) {
+        const body = listItem.exec(lines[i])[2]
+        const box = /^\[([ xX])\]\s+(.*)$/.exec(body)
+        items.push(box
+          ? el('li', { class: `md-task ${box[1] === ' ' ? '' : 'done'}` }, el('span', { class: 'md-box' }, box[1] === ' ' ? '☐' : '☑'), ' ', mdInline(box[2]))
+          : el('li', {}, mdInline(body)))
+        i++
+      }
+      out.push(el(ordered ? 'ol' : 'ul', { class: 'md-list' }, items))
+      continue
+    }
+    if (/^\s*>/.test(line)) {
+      const quote = []
+      while (i < lines.length && /^\s*>/.test(lines[i])) quote.push(lines[i++].replace(/^\s*>\s?/, ''))
+      out.push(el('blockquote', { class: 'md-quote' }, mdInline(quote.join(' '))))
+      continue
+    }
+    const para = [line.trim()]
+    i++
+    while (i < lines.length && !/^\s*$/.test(lines[i]) && !MD_BLOCK.test(lines[i])) para.push(lines[i++].trim())
+    out.push(el('p', { class: 'md-p' }, mdInline(para.join(' '))))
+  }
+  return el('div', { class: 'md' }, out)
+}
+
+// Which document each project page has open, kept across the refresh rebuild.
+const openDoc = new Map()
+
+function docsPanel(p) {
+  const docs = []
+  if (p.goal) docs.push({ key: 'goal', label: '目标', path: '.devloop/GOAL.md', text: p.goal })
+  for (const d of p.documents || []) docs.push({ key: d.path, label: DOC_LABEL[d.name] || d.name, path: d.path, text: d.text, truncated: d.truncated })
+  if (p.planNote) docs.push({ key: 'plan', label: '规划记录', path: '.devloop/PLAN.md', text: p.planNote })
+  if (p.reviewNote) docs.push({ key: 'review', label: '评审记录', path: '.devloop/REVIEW.md', text: p.reviewNote })
+  if (p.progress) docs.push({ key: 'progress', label: '循环进度', path: '.devloop/PROGRESS.md', text: p.progress })
+  if (!docs.length) {
+    return el('section', { class: 'panel' }, el('h3', {}, '文档'),
+      el('p', { class: 'muted' }, `还没有可看的文档。${p.docsDir || 'docs/agent'}/ 里的 roadmap、tasks、acceptance 等规划文档，以及循环写下的 PLAN / REVIEW / PROGRESS 都会显示在这里。`))
+  }
+  const current = docs.find(d => d.key === openDoc.get(p.id)) || docs[0]
+  const tabs = docs.map((d) => {
+    const tab = el('button', { type: 'button', class: `doc-tab ${d === current ? 'active' : ''}`, title: d.path }, d.label)
+    tab.addEventListener('click', () => { openDoc.set(p.id, d.key); void load(true) })
+    return tab
+  })
+  return el('section', { class: 'panel docs' },
+    el('h3', {}, '文档'),
+    el('div', { class: 'doc-tabs' }, tabs),
+    el('div', { class: 'path' }, current.path, current.truncated ? '（只显示了前 64 KB）' : ''),
+    renderMarkdown(current.text))
+}
+
+const DOC_LABEL = {
+  'roadmap.md': '路线图', 'tasks.md': '任务清单', 'progress.md': '仓库进展', 'acceptance.md': '验收',
+  'architecture.md': '架构', 'spec.md': '规格', 'research.md': '调研',
+}
+
+// ---- guide ------------------------------------------------------------------
+
+const GUIDE_KEY = 'devloop.guide.open'
+
+// Open until the reader folds it away; that choice is remembered per browser.
+function guideOpen() {
+  try {
+    return localStorage.getItem(GUIDE_KEY) !== '0'
+  } catch {
+    return true
+  }
+}
+
+const GUIDE_STEPS = [
+  ['准备仓库', '在 Claude Code 里对这个仓库跑 pilot status（清理已合并的分支、确认工作区干净）和 pilot plan（写出 docs/agent/ 下的路线图、任务清单、验收标准）。规划器会读这些文档。'],
+  ['切到工作分支', 'git switch -c devloop/<目标名>。DevLoop 把每个任务在本地合并进当前分支，从不合进 main / master；启动和每次合并前都会检查。'],
+  ['添加项目', '点下面的「浏览仓库…」，选中仓库，点「添加」。'],
+  ['写目标并启动', '进入项目页，先看「启动检查」全绿，再看「文档」里的规划，然后写目标：对应哪个 Feature / Task、验收命令、范围、不做什么。点「写入 GOAL.md 并启动」。'],
+  ['看着它跑', '任务表显示每个任务的状态和验收标准；「文档」里能看到规划、评审记录和进度。需要你拍板时，项目会标「等你回答」，页面上直接回答。'],
+  ['收尾', '目标完成后，从 devloop/<目标名> 分支开一个 PR，交给 PR-daemon 评审，通过后再合并进主干。'],
+]
+
+function guidePanel() {
+  const details = el('details', { class: 'guide' },
+    el('summary', {}, '使用说明：从一个仓库到交付'),
+    el('p', { class: 'note' }, '推荐分工：Codex 做规划，DeepSeek 写代码，Claude 做评审和验收（在 web profile 的 plannerRoute / routing / reviewerRoute 里配置）。每个任务在独立的 worktree 里完成，评审通过才合并。'),
+    el('ol', { class: 'guide-steps' }, GUIDE_STEPS.map(([title, body]) => el('li', {}, el('b', {}, title), el('span', {}, body)))),
+    el('p', { class: 'note' }, '随时可以在项目页暂停；已停下的项目可以恢复，或从列表里移除（仓库里的文件原样保留）。'))
+  details.open = guideOpen()
+  details.addEventListener('toggle', () => {
+    try { localStorage.setItem(GUIDE_KEY, details.open ? '1' : '0') } catch { /* storage blocked */ }
+  })
+  return details
 }
 
 function renderProject(p) {
@@ -427,9 +578,9 @@ function renderProject(p) {
     removeButton(p))
   const sub = el('div', { class: 'path' }, p.root)
   if (p.error) return [back(), head, sub, el('div', { class: 'banner bad' }, p.error)]
-  if (!p.armed) return [back(), head, sub, flashNode(), startPanel(p)]
-  const main = [gatePanel(p), haltPanel(p), tasksPanel(p), textPanel('目标 GOAL.md', p.goal, true)]
-  const side = [budgetPanel(p), eventsPanel(p), textPanel('PROGRESS.md', p.progress, false)]
+  if (!p.armed) return [back(), head, sub, flashNode(), startPanel(p), docsPanel(p)]
+  const main = [gatePanel(p), haltPanel(p), tasksPanel(p), docsPanel(p)]
+  const side = [budgetPanel(p), eventsPanel(p)]
   return [back(), head, sub, flashNode(),
     el('div', { class: 'kv' },
       el('span', {}, '最近动作 ', el('b', {}, p.lastAction || '—')),
@@ -493,6 +644,9 @@ function route() {
 function editing() {
   // Only the home page has a picker; an open one must not freeze another view.
   if (picker.open && route().view === 'home') return true
+  // A rebuild would drop text the reader is selecting in a document.
+  const selection = window.getSelection()
+  if (selection && !selection.isCollapsed && app.contains(selection.anchorNode)) return true
   const active = document.activeElement
   if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return true
   return [...document.querySelectorAll('.path-input, .goal-input')].some(field => field.value.trim() !== '')

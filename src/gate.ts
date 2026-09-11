@@ -150,6 +150,21 @@ const KNOWN_GATES: Record<KnownReasonBase, (ctx: GateContext) => Gate> = {
   merge_wedged: mergeGate,
   unknown_base: mergeGate,
 
+  // The task itself is fine and still merge_ready; only where it would land is
+  // wrong. Redoing it would pay for the same change again, so the answer is to
+  // move the checkout and resume, which merges on the next tick.
+  merge_onto_trunk: ({ reason, taskId }) =>
+    gate(reason, taskId, 'The checkout is on a trunk branch, so the reviewed task was not merged. Move it back to the work branch, then resume?', [
+      `${label(taskId)} passed review and is waiting to merge`,
+      'DevLoop merges into the checked-out branch locally, and never into main, master or the configured base',
+    ], [STOP], 'Switch the checkout back to the branch the loop was started on (e.g. git switch <work-branch>), then resume (恢复循环 on the page, or devloop resume); the task merges on the next tick.'),
+
+  merge_detached_head: ({ reason, taskId }) =>
+    gate(reason, taskId, 'The checkout has no branch, so the reviewed task was not merged. Check out the work branch, then resume?', [
+      `${label(taskId)} passed review and is waiting to merge`,
+      'HEAD is detached, and there is no branch to merge into',
+    ], [STOP], 'Check out the branch the loop was started on (e.g. git switch <work-branch>), then resume (恢复循环 on the page, or devloop resume); the task merges on the next tick.'),
+
   dispatch_refused: ({ reason, taskId, limits }) =>
     gate(reason, taskId, 'The provider refused to start this task, so nothing has run. Fix the route, or leave it?', [
       `dispatching ${label(taskId)} was refused ${String(limits.maxRefusedDispatches)} times without reaching a model`,

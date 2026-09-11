@@ -159,11 +159,21 @@ export async function removePlanWorktree(root: string): Promise<void> {
  * fail closed; an unchanged branch is `empty_task`. Throws without mutating STATE.
  * Idempotent if a previous attempt already merged and removed the worktree.
  */
+export interface MergeOptions {
+  /**
+   * Branches the workspace must not be on when the merge lands: the loop merges
+   * locally into whatever is checked out, so a checkout switched to one of these
+   * would take the task straight into the trunk. Absent, any branch is accepted.
+   */
+  readonly trunks?: ReadonlySet<string>
+}
+
 export async function mergeTaskWorktree(
   root: string,
   taskId: string,
   recordedBaseSha: string | null,
   reviewedHeadSha: string | null = null,
+  options: MergeOptions = {},
 ): Promise<void> {
   const token = worktreeTaskToken(taskId)
   if (!token) throw new Error(`unsafe task id for worktree: ${taskId}`)
@@ -180,7 +190,13 @@ export async function mergeTaskWorktree(
 
   const headRef = await symbolicHead(resolvedRoot)
   if (!headRef) {
-    throw new Error('refusing to merge onto a detached HEAD')
+    throw new Error('merge_detached_head: refusing to merge onto a detached HEAD')
+  }
+  const headBranch = headRef.startsWith('refs/heads/') ? headRef.slice('refs/heads/'.length) : headRef
+  // Case-folded: on a case-insensitive filesystem (macOS by default) `git switch
+  // Main` succeeds on a loose `main` ref, and commits then advance main itself.
+  if (options.trunks && [...options.trunks].some(trunk => trunk.toLowerCase() === headBranch.toLowerCase())) {
+    throw new Error(`merge_onto_trunk: the workspace is on ${headBranch}; refusing to merge a task into a trunk`)
   }
 
   const branch = `${WORKTREE_BRANCH_PREFIX}${token}`

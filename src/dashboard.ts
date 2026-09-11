@@ -23,7 +23,7 @@ import {
   validateProjectRoot,
   type Project,
 } from './projects.js'
-import { inspectReadiness, readinessRefusal, type Readiness } from './readiness.js'
+import { inspectReadiness, readinessRefusal, readPlanningDocuments, type PlanningDocument, type Readiness } from './readiness.js'
 import { diagnoseHalt } from './resume.js'
 import type { LoopState, Task } from './types.js'
 
@@ -123,6 +123,12 @@ export interface ProjectDetail extends ProjectSummary {
   readonly events: readonly EventView[]
   /** For a project not yet started: whether starting it would be refused, and why. */
   readonly readiness: Readiness | null
+  /** pilot's planning documents in the repository, readable before and after a start. */
+  readonly documents: readonly PlanningDocument[]
+  readonly docsDir: string | null
+  /** The planner's and the reviewer's last notes, kept under `.devloop/`. */
+  readonly planNote: string | null
+  readonly reviewNote: string | null
 }
 
 export type TaskView = Pick<Task,
@@ -137,6 +143,7 @@ export interface EventView {
 
 const GOAL_MAX_BYTES = 64 * 1024
 const PROGRESS_MAX_BYTES = 64 * 1024
+const NOTE_MAX_BYTES = 64 * 1024
 /** A record carries a whole state snapshot, so the tail is read in bytes, not lines. */
 const EVENTS_TAIL_BYTES = 512 * 1024
 const EVENTS_SHOWN = 40
@@ -148,8 +155,11 @@ export async function summarizeProject(project: Project, deps: Pick<DashboardDep
 export async function describeProject(project: Project, deps: Pick<DashboardDeps, 'presence'>, now: number): Promise<ProjectDetail> {
   const { summary, extra } = await readProject(project, deps, now, true)
   const detail = { ...summary, ...(extra ?? emptyDetail()) }
-  if (summary.armed || summary.error !== null) return detail
-  return { ...detail, readiness: await inspectReadiness(project.root).catch(() => null) }
+  if (summary.error !== null) return detail
+  const docs = await readPlanningDocuments(project.root).catch(() => null)
+  const withDocs = { ...detail, documents: docs?.documents ?? [], docsDir: docs?.docsDir ?? null }
+  if (summary.armed) return withDocs
+  return { ...withDocs, readiness: await inspectReadiness(project.root).catch(() => null) }
 }
 
 async function readProject(
@@ -229,6 +239,10 @@ async function readProject(
         lastProgressAt: new Date(state.usage.lastProgressAt).toISOString(),
         events: await readEventTail(eventsPath(project.root)),
         readiness: null,
+        documents: [],
+        docsDir: null,
+        planNote: await readHead(join(devloopDir(project.root), 'PLAN.md'), NOTE_MAX_BYTES),
+        reviewNote: await readHead(join(devloopDir(project.root), 'REVIEW.md'), NOTE_MAX_BYTES),
       },
     }
   } catch (error) {
@@ -250,6 +264,10 @@ function emptyDetail(): Omit<ProjectDetail, keyof ProjectSummary> {
     lastProgressAt: null,
     events: [],
     readiness: null,
+    documents: [],
+    docsDir: null,
+    planNote: null,
+    reviewNote: null,
   }
 }
 
@@ -646,12 +664,30 @@ export function dashboardAssetsDir(): string {
 }
 
 export async function loadDashboardAssets(dir = dashboardAssetsDir()): Promise<DashboardAssets> {
-  const [html, js, css] = await Promise.all([
+  const [html, js, css, version] = await Promise.all([
     readFile(join(dir, 'index.html'), 'utf8'),
     readFile(join(dir, 'app.js'), 'utf8'),
     readFile(join(dir, 'app.css'), 'utf8'),
+    packageVersion(join(dir, '..', 'package.json')),
   ])
-  return { html, js, css }
+  // Stamped once at load, so the page names the release that is actually
+  // installed — the one `dsh plugin add` put there — without another request.
+  return { html: html.replaceAll(VERSION_PLACEHOLDER, escapeHtml(version)), js, css }
+}
+
+const VERSION_PLACEHOLDER = '%DEVLOOP_VERSION%'
+
+async function packageVersion(file: string): Promise<string> {
+  try {
+    const value = (JSON.parse(await readFile(file, 'utf8')) as { version?: unknown }).version
+    return typeof value === 'string' && /^\d+\.\d+\.\d+[\w.+-]*$/.test(value) ? `v${value}` : 'v?'
+  } catch {
+    return 'v?'
+  }
+}
+
+function escapeHtml(text: string): string {
+  return text.replace(/[&<>"']/g, ch => `&#${ch.charCodeAt(0)};`)
 }
 
 /**
