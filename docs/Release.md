@@ -1,8 +1,40 @@
-# Release 0.5.3
+# Release 0.5.4
 
-Bounded autonomous engineering loop: structured model results, deterministic state transitions, host-enforced write scope, SHA-bound independent review, durable recovery, and role/tier routing. Tag `v0.5.3` and the GitHub Release are created **after** this commit is on `main`; steps: [Deploy.md](./Deploy.md).
+Bounded autonomous engineering loop: structured model results, deterministic state transitions, host-enforced write scope, SHA-bound independent review, durable recovery, and role/tier routing. Tag `v0.5.4` and the GitHub Release are created **after** this commit is on `main`; steps: [Deploy.md](./Deploy.md).
 
-Package version: **0.5.3**. This document is the release note, not a second semver.
+Package version: **0.5.4**. This document is the release note, not a second semver.
+
+## New in 0.5.4
+
+Starting a loop on an existing repository, rather than a fresh one.
+
+- **Starting is refused where it would waste the run.** Before GOAL.md is
+  written, the page and the server check three things. The checkout must be on a
+  branch, and that branch must not be the trunk: DevLoop merges each task into
+  the checked-out branch, locally, so a repository left on `main` would take
+  commits straight into it. And no tracked file may have uncommitted changes,
+  which every merge refuses — until now that was found only after plan, delegate
+  and review had been paid for. The trunk comes from `.pilot.yml`'s
+  `base_branch`, else `origin/HEAD`; `main` and `master` always count. A missing
+  `.pilot.yml` or missing planning documents are shown as advice, not refusals.
+  The page offers 重新检查 after you fix things by hand, and keeps the goal
+  you had typed.
+- **The planner reads what the repository already says.** Every backend's plan
+  prompt (dsh, `claude -p`, `codex exec`, Harness subagents all share it) now
+  names `AGENTS.md`, `CLAUDE.md`, `.pilot.yml` and the planning directory
+  (`docs_dir`, default `docs/agent/`: roadmap, tasks, progress, architecture,
+  spec). It reuses task ids and acceptance commands already written there, skips
+  work marked done or out of scope, and lets GOAL.md win a disagreement.
+
+Neither loads the pilot skill, and DevLoop still does not depend on it: pilot
+runs in a Claude Code session, where a person can answer it, and DevLoop reads
+the files it leaves behind. The intended order on an existing repository is:
+`pilot status` / `pilot doctor` (clean up) → `pilot plan` (write `docs/agent/`)
+→ `git switch -c devloop/<goal>` → add the project and start it → a single PR
+from that branch.
+
+A patch: no config and no state field change. An already-started project is
+unaffected; the check applies only to starting one from the page.
 
 ## New in 0.5.3
 
@@ -163,4 +195,4 @@ Host-side checks (`dsh plugin add`, `--dump-config`) are listed in [UserCaseTest
 - Token/cost melt the circuit only when the backend fills `AgentRunResult`; otherwise the loop uses wall-clock `lastProgressAt`. Session cost resets after the first successful STATE persist of this process; daily cost resets at UTC midnight.
 - The automated E2E uses a scripted provider, and the release candidate also completed a real-provider plan → implement → exact-SHA review → merge run without operator state edits.
 - The operator UI is the dashboard; it sees only the spend backends report, and cannot edit an existing goal.
-- npm registry: `@jhfnetboy/dsh-devloop@0.5.3` is published. GitHub and the Release tarball remain supported. See [Install.md](./Install.md).
+- npm registry: `@jhfnetboy/dsh-devloop@0.5.4` is published. GitHub and the Release tarball remain supported. See [Install.md](./Install.md).
