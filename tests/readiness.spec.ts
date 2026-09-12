@@ -56,6 +56,14 @@ describe('readiness to start a loop', () => {
     expect(check(r, 'clean')?.message).toMatch(/1 个/)
   })
 
+  it('still refuses the trunk when a tag has the same name as the branch', async () => {
+    const root = await repoOn(null, 'ready-tag-')
+    await git(root, 'tag', 'main') // makes `symbolic-ref --short HEAD` answer `heads/main`
+    const r = await inspectReadiness(root)
+    expect(r.branch).toBe('main')
+    expect(check(r, 'trunk')).toMatchObject({ ok: false, blocking: true })
+  })
+
   it('refuses a detached HEAD', async () => {
     const root = await repoOn('work', 'ready-detached-')
     await git(root, 'switch', '-q', '--detach')

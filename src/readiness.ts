@@ -332,19 +332,23 @@ export async function isToplevel(root: string): Promise<boolean> {
   }
 }
 
-async function currentBranch(root: string): Promise<string | null> {
-  try {
-    const ref = (await git(root, ['symbolic-ref', '--quiet', '--short', 'HEAD'])).trim()
-    return ref === '' ? null : ref
-  } catch {
-    return null
-  }
+/**
+ * Full refs, prefix stripped — never `--short`: with a tag of the same name,
+ * git shortens `refs/heads/main` to `heads/main`, and the trunk check would then
+ * miss `main` and let a loop start on it.
+ */
+export async function currentBranch(root: string): Promise<string | null> {
+  return stripRef(root, 'HEAD', 'refs/heads/')
 }
 
 async function remoteDefaultBranch(root: string): Promise<string | null> {
+  return stripRef(root, 'refs/remotes/origin/HEAD', 'refs/remotes/origin/')
+}
+
+async function stripRef(root: string, name: string, prefix: string): Promise<string | null> {
   try {
-    const ref = (await git(root, ['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD'])).trim()
-    return ref.startsWith('origin/') ? ref.slice('origin/'.length) : null
+    const ref = (await git(root, ['symbolic-ref', '--quiet', name])).trim()
+    return ref.startsWith(prefix) && ref.length > prefix.length ? ref.slice(prefix.length) : null
   } catch {
     return null
   }
