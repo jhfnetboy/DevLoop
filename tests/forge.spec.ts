@@ -1232,5 +1232,21 @@ describe('ForgePrBackend verdicts from GitHub reviews', () => {
     expect(body).toContain(HEAD_SHA)
     expect(body).toContain('Comments are not read')
     expect(body).not.toContain('<devloop_result>')
+    // Nothing at this commit hands the body to the worker, so the pull request must not promise it.
+    expect(body).not.toMatch(/worker is given|next attempt/)
+  })
+
+  it('takes a dismissed review as withdrawn, not as bringing back the one before it', async () => {
+    expect((await onReviews([review(REVIEWER, 'APPROVED'), review(REVIEWER, 'CHANGES_REQUESTED'), review(REVIEWER, 'DISMISSED')])).detail).toMatch(/^forge_timeout:/)
+    expect((await onReviews([review(REVIEWER, 'APPROVED'), review(REVIEWER, 'DISMISSED'), review(REVIEWER, 'APPROVED')])).outcome).toMatchObject({ verdict: 'PASS' })
+  })
+
+  it('keeps every reviewer\'s request for changes, and marks notes it had to cut', async () => {
+    const both = await onReviews([review(REVIEWER, 'CHANGES_REQUESTED', HEAD_SHA, 'split it'), review('b-reviewer', 'CHANGES_REQUESTED', HEAD_SHA, 'add a test')], { reviewers: [REVIEWER, 'b-reviewer'] })
+    expect(both.outcome).toMatchObject({ verdict: 'REWORK', notes: `${REVIEWER}: split it\n\nb-reviewer: add a test` })
+    const long = await onReviews([review(REVIEWER, 'CHANGES_REQUESTED', HEAD_SHA, 'x'.repeat(9_000))])
+    const notes = (long.outcome as { notes?: string }).notes ?? ''
+    expect(notes.length).toBe(8_000)
+    expect(notes.endsWith('\n[truncated]')).toBe(true)
   })
 })

@@ -564,10 +564,11 @@ export class ForgePrBackend implements AgentBackend {
    *
    * Only an allowlisted reviewer who is not this host counts, and only a review
    * whose `commit_id` is the commit under review: an approval of an earlier push
-   * says nothing about this one. Each reviewer's latest APPROVED or
-   * CHANGES_REQUESTED at this commit is their word (COMMENTED, PENDING and
-   * DISMISSED say nothing), and any reviewer whose word is changes outranks
-   * every approval.
+   * says nothing about this one. Each reviewer's latest APPROVED,
+   * CHANGES_REQUESTED or DISMISSED at this commit is their word — a dismissed
+   * review withdraws it rather than bringing back the one before (COMMENTED and
+   * PENDING say nothing) — and any reviewer whose word is changes outranks
+   * every approval, with every such reviewer's body kept as the notes.
    */
   private async readReviewVerdict(
     root: string,
@@ -587,7 +588,7 @@ export class ForgePrBackend implements AgentBackend {
     if (rows.length > MAX_REVIEW_COMMENTS) {
       throw new Error(`forge_pr: pull request ${number} has more than ${MAX_REVIEW_COMMENTS} reviews`)
     }
-    const latest = new Map<string, { author: string, state: 'APPROVED' | 'CHANGES_REQUESTED', body: string }>()
+    const latest = new Map<string, { author: string, state: 'APPROVED' | 'CHANGES_REQUESTED' | 'DISMISSED', body: string }>()
     rows.forEach((row, index) => {
       const parsed: unknown = parseJson(row, `forge_pr: review ${index}`)
       if (!isRecord(parsed)) throw new Error(`forge_pr: review ${index} is not an object`)
@@ -598,14 +599,17 @@ export class ForgePrBackend implements AgentBackend {
       if (!LOGIN.test(author) || author.toLowerCase() === self.toLowerCase()) return
       if (!this.options.reviewers.some(allowed => allowed.toLowerCase() === author.toLowerCase())) return
       if (commit.toLowerCase() !== sha) return
-      if (state !== 'APPROVED' && state !== 'CHANGES_REQUESTED') return
+      if (state !== 'APPROVED' && state !== 'CHANGES_REQUESTED' && state !== 'DISMISSED') return
       // GitHub lists reviews oldest first, so a later word replaces an earlier one.
       latest.set(author.toLowerCase(), { author, state, body: typeof body === 'string' ? body : '' })
     })
     const words = [...latest.values()]
-    const said = words.find(word => word.state === 'CHANGES_REQUESTED') ?? words.find(word => word.state === 'APPROVED')
+    const changes = words.filter(word => word.state === 'CHANGES_REQUESTED')
+    const said = changes[0] ?? words.find(word => word.state === 'APPROVED')
     if (said === undefined) return null
-    const notes = said.body.trim().slice(0, MAX_NOTES)
+    const notes = truncated(said.state === 'CHANGES_REQUESTED'
+      ? changes.map(word => changes.length > 1 ? `${word.author}: ${word.body.trim()}` : word.body.trim()).filter(Boolean).join('\n\n')
+      : said.body.trim())
     return {
       author: said.author,
       result: {
@@ -715,7 +719,7 @@ export function pullRequestBody(taskId: string, sha: string, reviewers: readonly
       `DevLoop task \`${taskId}\` is ready for review at commit \`${sha}\`.`,
       '',
       'Decide with a GitHub review on this pull request: **Approve**, or **Request changes**',
-      'with what to change in the review body, which the worker is given for its next attempt.',
+      'with what to change in the review body.',
       '',
       `Only reviews from ${who} of exactly this commit are read, never one from the account`,
       'that opened this pull request. Comments are not read. If any of them requests changes,',
@@ -733,6 +737,12 @@ export function pullRequestBody(taskId: string, sha: string, reviewers: readonly
     'and never one from the account that opened this pull request.',
     'Any non-approving verdict for this commit outranks an approval.',
   ].join('\n')
+}
+
+/** Notes within the cap, saying so when they were cut. */
+function truncated(text: string): string {
+  const marker = '\n[truncated]'
+  return text.length <= MAX_NOTES ? text : `${text.slice(0, MAX_NOTES - marker.length)}${marker}`
 }
 
 function isApproval(verdict: ReviewResult['verdict']): boolean {
