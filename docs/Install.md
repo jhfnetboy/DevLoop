@@ -2,7 +2,7 @@
 
 For operators who want `@jhfnetboy/dsh-devloop` in a DeepSeek Harness profile. Maintainer cut/tag steps: [Deploy.md](./Deploy.md). What this version includes: [Release.md](./Release.md).
 
-Pinned `#v0.6.3` commands and the Release tarball link need the GitHub Release created **after** the version bump is on `main` (see Deploy.md). Until that Release exists, install from current `main` (moving branch, not a pin):
+Pinned `#v0.6.4` commands and the Release tarball link need the GitHub Release created **after** the version bump is on `main` (see Deploy.md). Until that Release exists, install from current `main` (moving branch, not a pin):
 
 ```bash
 dsh plugin --profile web add github:jhfnetboy/DevLoop
@@ -11,18 +11,18 @@ dsh plugin --profile web add github:jhfnetboy/DevLoop
 ## Requirements
 
 - Node `^22.19.0 || >=24.0.0` (Node 23 is not in the DSH engines range)
-- pnpm (the copy `dsh plugin` forwards to; this repo pins `10.6.3`)
+- pnpm (the copy `dsh plugin` forwards to; this repo pins `10.6.4`)
 - DeepSeek Harness CLI (`npm i -g @deepseek-ai/dsh`, or `pnpm dsh` from a harness checkout)
 - A profile you already boot (`dsh web`, or another named profile)
 
 ## GitHub git spec (runs `prepare`)
 
-After `v0.6.3` exists, pin the tag:
+After `v0.6.4` exists, pin the tag:
 
 Quote the spec: zsh treats `#` as a glob (`no matches found`).
 
 ```bash
-dsh plugin --profile web add 'github:jhfnetboy/DevLoop#v0.6.3'
+dsh plugin --profile web add 'github:jhfnetboy/DevLoop#v0.6.4'
 ```
 
 Git installs fetch source, not `lib/`. This package’s `prepare` script runs `pnpm build`. pnpm ≥10 will not run that until you allow the package to run scripts.
@@ -65,10 +65,10 @@ You should see a `# == @jhfnetboy/dsh-devloop` layer and an inserted row `id: de
 
 ## GitHub Release tarball (no `prepare`)
 
-After the [v0.6.3 Release](https://github.com/jhfnetboy/DevLoop/releases/tag/v0.6.3) exists, download `jhfnetboy-dsh-devloop-0.6.3.tgz`, then:
+After the [v0.6.4 Release](https://github.com/jhfnetboy/DevLoop/releases/tag/v0.6.4) exists, download `jhfnetboy-dsh-devloop-0.6.4.tgz`, then:
 
 ```bash
-dsh plugin --profile web add ./jhfnetboy-dsh-devloop-0.6.3.tgz
+dsh plugin --profile web add ./jhfnetboy-dsh-devloop-0.6.4.tgz
 ```
 
 The tarball already contains `lib/`, so pnpm does not need a build allowance.
@@ -78,7 +78,7 @@ The tarball already contains `lib/`, so pnpm does not need a build allowance.
 Published. The npm tarball already contains `lib/`, so there is no git `prepare` and no build approval:
 
 ```bash
-dsh plugin --profile web add @jhfnetboy/dsh-devloop@0.6.3
+dsh plugin --profile web add @jhfnetboy/dsh-devloop@0.6.4
 ```
 
 ## Local checkout
@@ -86,7 +86,7 @@ dsh plugin --profile web add @jhfnetboy/dsh-devloop@0.6.3
 ```bash
 git clone https://github.com/jhfnetboy/DevLoop.git
 cd DevLoop
-git checkout v0.6.3   # or main, until the tag exists
+git checkout v0.6.4   # or main, until the tag exists
 pnpm install
 pnpm test
 pnpm build
@@ -136,11 +136,11 @@ cp ~/.dsh/profiles/web/node_modules/@jhfnetboy/dsh-devloop/templates/GOAL.md \
   /path/to/your/project/.devloop/GOAL.md
 ```
 
-Or fetch the template without a clone (use `main` instead of `v0.6.3` until the tag exists):
+Or fetch the template without a clone (use `main` instead of `v0.6.4` until the tag exists):
 
 ```bash
 mkdir -p /path/to/your/project/.devloop
-curl -fsSL https://raw.githubusercontent.com/jhfnetboy/DevLoop/v0.6.3/templates/GOAL.md \
+curl -fsSL https://raw.githubusercontent.com/jhfnetboy/DevLoop/v0.6.4/templates/GOAL.md \
   -o /path/to/your/project/.devloop/GOAL.md
 ```
 
