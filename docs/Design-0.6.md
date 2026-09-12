@@ -9,7 +9,7 @@
 | 日期 | 决定 |
 |---|---|
 | 09-11 | 三方分工：Codex 规划（`plannerRoute`），DeepSeek 写代码（`routing[tier]`），Claude 评审（`reviewerRoute`）。已在 Mac mini 生效并实测。 |
-| 09-11 | **一个 task 一个 PR**，PR 必须小：≤200 行（加+删，不含 lockfile/生成文件/快照）、≤5 个文件、≤2 个顶层目录；高风险内容单独一个 PR。依据：PR-daemon 1,400 个 PR 的历史（≤200 行首轮被打回 23%，201–300 行 42%）。 |
+| 09-11 | **一个 task 一个 PR**，PR 必须小：≤200 行（加+删，不含 lockfile/生成文件/快照）、≤5 个文件、≤2 个顶层目录；高风险内容单独一个 PR。依据：PR-daemon 1,400 个 PR 的历史（≤200 行首轮被打回 23%，201–300 行 42%）——`reviews/model-evals/model-evals.sqlite` 的 `model_review_runs`（2,715 次评审）按 PR 聚合，去掉 bot 和含锁文件的 PR，PR 大小取自 GitHub GraphQL 的 additions+deletions，2026-09-11 统计。 |
 | 09-11 | **开 PR 前必须先过机械规则，再过本地 Claude 自查**；本地这层必须保留。上限先跑一段时间，**全程记日志**，之后用数据调整。 |
 | 09-12 | 任务 PR **开向工作分支** `devloop/<目标>`；目标完成后，再从工作分支开**一个发布 PR** 到主干。 |
 | 09-12 | PR-daemon **APPROVE 后由 DSH（DevLoop）合并**，用 **jhfnetboy** 账号（PR-daemon 用 clestons 评审，两个身份分开）。 |
@@ -22,16 +22,16 @@
 
 pilot `status` 的确定性部分，由宿主代码完成，结果显示在项目页新的「仓库状态」面板。
 
-**扫描**（只读，`GIT_OPTIONAL_LOCKS=0`）：当前分支、未提交改动、本地分支、worktree、已合并进工作分支/主干的分支、DevLoop 留下的 `devloop/*` 分支和 worktree、与主干的 ahead/behind。
+**扫描**（只读，`GIT_OPTIONAL_LOCKS=0`）：当前分支、未提交改动、本地分支、worktree、已合并进当前分支（`git branch --merged HEAD`）的分支、DevLoop 留下的 `devloop/*` 分支和 worktree、与主干的 ahead/behind。
 
-**清理**：页面先列 dry-run 计划（删 / 留及原因），点「执行清理」才动手。与 pilot `safe-cleanup.sh` 同一套边界：
+**清理**：页面先列计划（可删 / 保留及原因），勾选后点「删除选中的分支」才动手。与 pilot `safe-cleanup.sh` 同一套边界：
 
 - 只执行 `git branch -d`（git 自己拒绝未合并的、被 worktree 占用的）。
 - 永远保留：主干、当前工作分支、`.pilot.yml` 的 `protect_patterns`、有未提交改动的 worktree、正在运行的任务分支。
-- **不做**：`-D`、删远程分支、`git worktree remove`——只列出来附原因和命令，由人决定。
-- squash 合并的仓库用 `gh` 按 PR 查；查不了就说「未检查」，不说「没有」。
+- **不做**：`-D`、`git worktree remove` 只列出命令，由人决定；远程分支不扫描、不处理（建议开 GitHub 的合并后自动删除）。
+- （**未实现**，排在 0.6.x）squash 合并的仓库里 `--merged HEAD` 认不出已合并的分支：0.6.0 会把它们列为「还没合并进当前分支」。计划用 `gh` 按 PR 查；查不了就说「未检查」，不说「没有」。
 
-启动检查（0.5.4）并入「仓库状态」，红色项仍然拦住启动。
+（**未实现**）启动检查（0.5.4）并入「仓库状态」。0.6.0 里二者仍是两个面板：启动检查在「启动循环」里，红色项照样拦住启动。
 
 ## 2. 规划（plan）——多模型 PK 定稿
 
