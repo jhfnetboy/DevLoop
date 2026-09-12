@@ -37,14 +37,21 @@ export async function statusView(root: string): Promise<StatusView> {
 }
 
 const MAX_BRANCHES = 500
-const BRANCH = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,254}$/
+/**
+ * Only what could never be a branch, or could be read as an option. The real
+ * allowlist is the plan rebuilt at apply time: a name is deleted only if that
+ * plan offers it, and it reaches git after `--`. A stricter pattern here refused
+ * names git allows (`fix#12`, `feat/ä`), and with every offered branch ticked by
+ * default one of them turned the whole cleanup into a 400.
+ */
+const BRANCH = /^(?!-)[^\x00-\x1f\x7f]{1,255}$/u
 
 /** The confirmed names from a request body, or a reason the body is refused. */
 export function confirmedBranches(body: Record<string, unknown>): readonly string[] | string {
   const list = body.branches
   if (!Array.isArray(list) || list.length === 0) return 'branches must be a non-empty list'
   if (list.length > MAX_BRANCHES) return `at most ${MAX_BRANCHES} branches`
-  if (!list.every(name => typeof name === 'string' && BRANCH.test(name))) return 'every branch must be a plain branch name'
+  if (!list.every(name => typeof name === 'string' && BRANCH.test(name))) return 'every branch must be a branch name: no leading -, no control characters'
   return list as string[]
 }
 

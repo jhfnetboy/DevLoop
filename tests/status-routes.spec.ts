@@ -56,6 +56,18 @@ describe('status and cleanup routes', () => {
     expect(done.json.value.refused.map((r: { name: string }) => r.name)).toEqual(['devloop/T1'])
   })
 
+  it('deletes offered branches whose names git allows but no plain pattern would', async () => {
+    const { root, call } = await setup('route-names-')
+    const odd = ['fix#12', 'a+b', 'user@x', 'feat/ä', 'x"y']
+    for (const name of ['done-a', ...odd]) await git(root, 'branch', name)
+    const offered = (await call('GET', '/status')).json.value.plan.delete as string[]
+    expect(offered.sort()).toEqual(['done-a', ...odd].sort())
+    const done = await call('POST', '/cleanup', { branches: offered })
+    expect(done.status).toBe(200)
+    expect([...done.json.value.deleted].sort()).toEqual(offered)
+    expect((await call('POST', '/cleanup', { branches: ['bad\u0007name'] })).status).toBe(400)
+  })
+
   it('refuses a bad body, answers busy while the loop holds the lock, and touches nothing', async () => {
     const { root, call } = await setup('route-cleanup-')
     await git(root, 'branch', 'merged-b')
