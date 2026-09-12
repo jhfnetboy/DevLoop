@@ -67,6 +67,8 @@ describe('the PR log', () => {
       { ...good, taskId: 'B2', blocking: 'SZ-1' },
       { ...good, taskId: 'B3', size: { lines: '3', files: 1, countedTopDirs: [] } },
       { kind: 'review', at: 'x', taskId: 'B4', head: null },
+      { ...good, taskId: 'B5', head: 7 }, // the page slices head
+      { ...good, taskId: 'B6', at: undefined },
     ]
     await writeFile(join(root, '.devloop', 'PR-LOG.jsonl'), [good, ...bad, review('R')].map(e => JSON.stringify(e)).join('\n') + '\n', 'utf8')
     expect((await readPrLog(root)).map(e => e.taskId)).toEqual(['OK', 'R'])
