@@ -1468,7 +1468,10 @@ process.exit(${code})
     expect((await loadState(root, Date.now())).tasks[0]?.status).toBe('merge_ready')
     const args = JSON.parse(await readFile(seen, 'utf8')) as string[]
     expect(args[args.indexOf('--repo') + 1]).toBe(join(root, '.devloop', 'worktrees', 'd1'))
-    expect(args[args.indexOf('--base') + 1]).toMatch(/^[0-9a-f]{40}$/)
+    // The task's own base, not its head: passing the head would give the checker an empty diff to pass.
+    const task = (await loadState(root, Date.now())).tasks[0]
+    expect(args[args.indexOf('--base') + 1]).toBe(task?.baseSha)
+    expect(task?.baseSha).not.toBe(task?.implementationSha)
     expect(args[args.indexOf('--profile') + 1]).toBe('devloop')
     // The PR log: the check, then the verdict, for the same commit.
     const log = await readPrLog(root)
