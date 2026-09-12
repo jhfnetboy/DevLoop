@@ -27,7 +27,7 @@ describe('a local review before the forge', () => {
     for (const passing of ['PASS', 'PASS_WITH_NOTES'] as const) {
       const local = fake(verdict(passing))
       const forge = fake(verdict('PASS'))
-      expect(await new LocalThenForgeReview(local, LOCAL, forge).run(input())).toBe(await forge.run(input()))
+      expect(await new LocalThenForgeReview(local, LOCAL, forge).run(input())).toEqual(await forge.run(input()))
       expect(local.calls[0]?.route).toEqual(LOCAL)
       expect(forge.calls).toHaveLength(2)
     }
@@ -39,6 +39,18 @@ describe('a local review before the forge', () => {
       expect(await new LocalThenForgeReview(fake(result), LOCAL, forge).run(input())).toEqual(result)
       expect(forge.calls).toHaveLength(0)
     }
+  })
+
+  it('counts the local review\'s usage toward the caps whatever the forge says after it', async () => {
+    const paid = { ...verdict('PASS'), tokens: 12345, costUsd: 0.5 }
+    expect(await new LocalThenForgeReview(fake(paid), LOCAL, fake(verdict('PASS'))).run(input())).toMatchObject({ tokens: 12345, costUsd: 0.5 })
+    expect(await new LocalThenForgeReview(fake(paid), LOCAL, fake({ ...verdict('PASS'), tokens: 10 })).run(input())).toMatchObject({ tokens: 12355, costUsd: 0.5 })
+    // The forge failing before it reached anything does not make the dispatch free: the local review did reach a model.
+    const failed = await new LocalThenForgeReview(fake(paid), LOCAL, fake({ status: 'failed', detail: 'forge_config: x', reachedProvider: false })).run(input())
+    expect(failed).toMatchObject({ status: 'failed', tokens: 12345, costUsd: 0.5 })
+    expect(failed.reachedProvider).toBeUndefined()
+    // Control: a local rework is the answer as it came, usage and all.
+    expect(await new LocalThenForgeReview(fake({ ...verdict('REWORK'), tokens: 12345, costUsd: 0.5 }), LOCAL, fake(verdict('PASS'))).run(input())).toMatchObject({ tokens: 12345, costUsd: 0.5 })
   })
 
   it('sends anything but a review straight to the forge', async () => {
