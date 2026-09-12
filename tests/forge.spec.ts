@@ -1385,3 +1385,60 @@ describe('ForgePrBackend against the loop\'s work branch', () => {
     expect(runInputFor('/repo', { type: 'review', taskId: 'TASK-1' }, state, resolveConfig({}).budget).workBranch).toBe(WORK)
   })
 })
+
+describe('ForgePrBackend merging a task', () => {
+  const WORK = 'devloop/feature'
+  const open = pr({ baseRefName: WORK, state: 'OPEN', mergeCommit: null })
+  const merged = pr({ baseRefName: WORK, state: 'MERGED', mergeCommit: { oid: OTHER_SHA } })
+  const approved = [{ author: REVIEWER, state: 'APPROVED', commit: HEAD_SHA, body: '' }]
+  const request = { workspaceRoot: '/repo', taskId: 'TASK-1', sha: HEAD_SHA, workBranch: WORK }
+  const merger = (stub: StubOptions) => backend({ verdictSource: 'reviews' }, { prView: pr({ baseRefName: WORK }), ...stub })
+  const mergeCalls = (calls: Recorded[]) => calls.filter(call => call.argv[0] === 'pr' && call.argv[1] === 'merge')
+
+  it('merges an approved, green pull request pinned to the reviewed head, and returns its merge commit', async () => {
+    const calls: Recorded[] = []
+    const result = await merger({ prLists: [[open], [merged]], reviews: approved, calls }).mergeTask(request)
+    expect(result).toEqual({ number: 7, mergeCommit: OTHER_SHA })
+    const merge = mergeCalls(calls)
+    expect(merge).toHaveLength(1)
+    expect(merge[0]?.argv).toEqual(['pr', 'merge', '7', '--repo', 'github.com/acme/widgets', '--merge', '--match-head-commit', HEAD_SHA])
+    expect(merge[0]?.argv).not.toContain('--admin')
+  })
+
+  it('does not merge again what is already merged at the reviewed commit', async () => {
+    const calls: Recorded[] = []
+    expect(await merger({ prLists: [[merged]], reviews: [], calls }).mergeTask(request)).toEqual({ number: 7, mergeCommit: OTHER_SHA })
+    expect(mergeCalls(calls)).toHaveLength(0)
+  })
+
+  it('refuses when the approval is gone, the checks turned red, or it is no longer the reviewed head', async () => {
+    for (const stub of [
+      { prLists: [[open]], reviews: [] },
+      { prLists: [[open]], reviews: [{ ...approved[0], state: 'CHANGES_REQUESTED' }] },
+      { prLists: [[open]], reviews: approved, checks: [{ name: 'test', conclusion: 'FAILURE' }] },
+    ]) {
+      const calls: Recorded[] = []
+      await expect(merger({ ...stub, calls }).mergeTask(request)).rejects.toThrow(/^forge_review_gone:/)
+      expect(mergeCalls(calls)).toHaveLength(0)
+    }
+    await expect(merger({ prLists: [[pr({ baseRefName: WORK, state: 'OPEN', headRefOid: OTHER_SHA })]], reviews: approved }).mergeTask(request)).rejects.toThrow(/0 pull requests/)
+    await expect(merger({ prLists: [[pr({ baseRefName: 'main', state: 'OPEN' })]], reviews: approved }).mergeTask(request)).rejects.toThrow(/0 pull requests/)
+  })
+
+  it('merges only into a work branch, never the trunk', async () => {
+    await expect(merger({ prLists: [[open]], reviews: approved }).mergeTask({ ...request, workBranch: 'main' })).rejects.toThrow(/the trunk/)
+    await expect(merger({ prLists: [[open]], reviews: approved }).mergeTask({ ...request, workBranch: '-x' })).rejects.toThrow(/invalid/)
+  })
+
+  it('runs gh merge from an empty directory, never the checkout', async () => {
+    const cwds: string[] = []
+    const inner = stubRunner({ prLists: [[open], [merged]], reviews: approved, prView: pr({ baseRefName: WORK }) })
+    await new ForgePrBackend({ ...FAST, verdictSource: 'reviews' }, async request => {
+      if (request.argv[0] === 'pr' && request.argv[1] === 'merge') cwds.push(request.cwd)
+      return inner(request)
+    }).mergeTask(request)
+    expect(cwds).toHaveLength(1)
+    expect(cwds[0]).not.toBe('/repo')
+    expect(cwds[0]).toContain('devloop-merge-')
+  })
+})
