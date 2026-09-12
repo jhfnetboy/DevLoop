@@ -409,3 +409,18 @@ describe('dashboard actions', () => {
     expect(nobody.status).toBe(404)
   })
 })
+
+describe('the PR record', () => {
+  it('carries the newest check and review lines in the project detail', async () => {
+    const root = await armedProject('dash-prlog-')
+    await saveState(root, baseState())
+    const { appendPrLog } = await import('../src/prlog.ts')
+    const log = { error() {} }
+    await appendPrLog(root, { kind: 'check', at: '2026-09-12T00:00:00Z', taskId: 'T1', head: 'a'.repeat(40), status: 'blocked', size: { lines: 340, files: 7, countedTopDirs: ['src'] }, rules: ['SZ-1', 'B1'], blocking: ['SZ-1'], checker: { rulesVersion: '1.1.0', gitSha: 'abc', dirty: false } }, log)
+    await appendPrLog(root, { kind: 'review', at: '2026-09-12T00:05:00Z', taskId: 'T2', head: 'b'.repeat(40), verdict: 'PASS', reviewer: 'claude/opus' }, log)
+    const handler = createDashboardHandler(deps({ ownRoot: root, home: root }))
+    const res = await call(handler, 'GET', `/devloop/api/projects/${projectId(root)}`)
+    const detail = (JSON.parse(res.body) as { value: { prLog: Array<{ kind: string, taskId: string }> } }).value
+    expect(detail.prLog.map(e => [e.kind, e.taskId])).toEqual([['check', 'T1'], ['review', 'T2']])
+  })
+})

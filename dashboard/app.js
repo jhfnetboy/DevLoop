@@ -648,6 +648,36 @@ function repoPanel(p) {
     el('p', { class: 'note' }, '只会执行 git branch -d，只处理本地分支。强制删除、删 worktree 只列出命令，由你决定；远程分支不在这里处理（建议在 GitHub 开启合并后自动删除分支）。'))
 }
 
+// The pre-PR checks and review verdicts, newest first: the data the PR budget
+// trial is to be judged on. Everything in it came from a checker or a model, so
+// it is placed as text, like every other field here.
+const CHECK_LABEL = { passed: ['通过', 'ok'], blocked: ['拦下', 'bad'], unavailable: ['无结论', 'warn'] }
+
+function prLogPanel(p) {
+  const entries = (p.prLog || []).slice().reverse()
+  if (!entries.length) {
+    return el('section', { class: 'panel' }, el('h3', {}, 'PR 记录'),
+      el('p', { class: 'muted' }, '还没有记录。配置了 pre-PR 检查器后，每个任务的检查结果和评审结论都会记在这里（.devloop/PR-LOG.jsonl）。'))
+  }
+  const rows = entries.map((e) => {
+    const [label, tone] = e.kind === 'check' ? (CHECK_LABEL[e.status] || [e.status, '']) : [`评审 ${e.verdict}`, e.verdict === 'PASS' || e.verdict === 'PASS_WITH_NOTES' ? 'ok' : 'warn']
+    return el('tr', {},
+      el('td', { class: 'mono' }, time(e.at)),
+      el('td', { class: 'mono' }, e.taskId),
+      el('td', {}, badge(label, tone, true)),
+      el('td', { class: 'num' }, e.kind === 'check' && e.size ? `${e.size.lines} 行 / ${e.size.files} 文件` : '—'),
+      el('td', { class: 'mono' }, e.kind === 'check' ? (e.blocking.length ? e.blocking.join(' ') : e.rules.join(' ') || '—') : (e.reviewer || '—')),
+      el('td', { class: 'mono' }, e.kind === 'check' && e.checker ? `${e.checker.rulesVersion || '?'}${e.checker.dirty ? '*' : ''}` : ''),
+      el('td', { class: 'mono' }, e.head ? e.head.slice(0, 7) : ''))
+  })
+  return el('section', { class: 'panel' },
+    el('h3', {}, `PR 记录（最近 ${entries.length} 条）`),
+    el('div', { class: 'table-wrap' }, el('table', {},
+      el('thead', {}, el('tr', {}, ['时间', '任务', '结果', '大小', '规则 / 评审者', '规则版本', '提交'].map(h => el('th', {}, h)))),
+      el('tbody', {}, rows))),
+    el('p', { class: 'note' }, '上限（试行）：每个 PR ≤200 行、≤5 个文件、≤2 个顶层目录。拦下时标出的是阻断规则，否则是提示规则；规则版本带 * 表示检查器有未提交的改动。'))
+}
+
 function renderProject(p) {
   const canPause = p.armed && !p.halted && !p.error
   const head = el('div', { class: 'head' },
@@ -664,6 +694,7 @@ function renderProject(p) {
   if (!p.armed) return [back(), head, sub, flashNode(), startPanel(p), repoPanel(p), docsPanel(p)]
   const main = [gatePanel(p), haltPanel(p), tasksPanel(p), docsPanel(p)]
   const side = [budgetPanel(p), repoPanel(p), eventsPanel(p)]
+  main.push(prLogPanel(p))
   return [back(), head, sub, flashNode(),
     el('div', { class: 'kv' },
       el('span', {}, '最近动作 ', el('b', {}, p.lastAction || '—')),
