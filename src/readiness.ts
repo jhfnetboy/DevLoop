@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process'
 import { constants, lstat, open, realpath } from 'node:fs/promises'
 import { isAbsolute, join, normalize, sep } from 'node:path'
 import { promisify } from 'node:util'
+import { taskGitEnv } from './worktree.js'
 
 /**
  * Whether a repository is fit to start a loop in, checked before the first
@@ -380,11 +381,16 @@ function shellQuote(value: string): string {
 const execFileAsync = promisify(execFile)
 
 export async function git(root: string, args: readonly string[]): Promise<string> {
-  const { stdout } = await execFileAsync('git', ['-C', root, ...args], {
+  // The status scan runs `git status` in every worktree, a task's included, whose `.git` pointer a
+  // worker can rewrite: its git directories are pinned to the host's, and nothing git would run is.
+  const pinned = await taskGitEnv(root)
+  // Hooks stay on in the repository itself: the cleanup relies on its own ref hook (pilot's protect_patterns).
+  const noHooks = pinned === null ? [] : ['-c', `core.hooksPath=${process.platform === 'win32' ? 'NUL' : '/dev/null'}`]
+  const { stdout } = await execFileAsync('git', ['-C', root, '-c', 'core.fsmonitor=false', ...noHooks, ...args], {
     encoding: 'utf8',
     timeout: 10_000,
     // A status for a web page must not take the index lock from a loop that is mid-merge.
-    env: { ...repoNeutralEnv(), GIT_PAGER: 'cat', GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0' },
+    env: { ...repoNeutralEnv(), GIT_PAGER: 'cat', GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0', ...pinned },
   })
   return stdout
 }
@@ -395,6 +401,6 @@ export async function git(root: string, args: readonly string[]): Promise<string
  * the cleanup's `branch -d` act on some other repository.
  */
 function repoNeutralEnv(): NodeJS.ProcessEnv {
-  const { GIT_DIR: _dir, GIT_WORK_TREE: _tree, GIT_INDEX_FILE: _index, ...rest } = process.env
+  const { GIT_DIR: _dir, GIT_WORK_TREE: _tree, GIT_INDEX_FILE: _index, GIT_COMMON_DIR: _common, ...rest } = process.env
   return rest
 }

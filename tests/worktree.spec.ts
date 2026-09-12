@@ -609,3 +609,65 @@ describe('fastForwardWorkBranch', () => {
     expect(await g(root, 'rev-parse', 'HEAD')).not.toBe(other.merge)
   })
 })
+
+describe('a task worktree whose gitdir a worker could write', () => {
+  // A worker given write to <root>/.git/worktrees/<id> can point `commondir` at a
+  // repository of its own, whose config names a program git runs: the host's next
+  // git call in that worktree would run it. The host's git must not follow it.
+  it('never runs a program named by a common dir the worktree was pointed at', async () => {
+    const root = await gitWorkspace()
+    const contract = contractFor('pwn')
+    const tree = await prepareDelegateWorktree(root, contract)
+    const fake = await mkdtempInRepo('devloop-fake-common-')
+    scratch.push(fake)
+    await execFileAsync('cp', ['-R', join(root, '.git') + '/.', fake])
+    const marker = join(fake, 'PWNED')
+    const hook = join(fake, 'monitor.sh')
+    await writeFile(hook, `#!/bin/sh\ntouch '${marker}'\nexit 1\n`, 'utf8')
+    await chmod(hook, 0o755)
+    await execFileAsync('git', ['config', '--file', join(fake, 'config'), 'core.fsmonitor', hook])
+    await writeFile(join(root, '.git', 'worktrees', 'pwn', 'commondir'), `${fake}\n`, 'utf8')
+    await writeFile(join(tree, 'src.txt'), 'work\n', 'utf8')
+    await expect(commitDirtyTaskWorktree(tree, 'pwn')).rejects.toThrow(/pointed at another repository|refusing parent commit/)
+    await expect(lstat(marker)).rejects.toThrow()
+    // The pre-PR checker runs git in the worktree too: it is refused as unavailable, never run there.
+    const { runPreprCheck } = await import('../src/prepr.ts')
+    const check = await runPreprCheck(['sh', '-c', 'git status >/dev/null; echo {}'], 'devloop', tree, 'a'.repeat(40), 10_000)
+    expect(check).toMatchObject({ status: 'unavailable' })
+    expect(check.detail).toMatch(/pointed at another repository/)
+    await expect(lstat(marker)).rejects.toThrow()
+  })
+
+  it('still commits in an untouched worktree, with git pinned to the host\'s own directories', async () => {
+    const root = await gitWorkspace()
+    const tree = await prepareDelegateWorktree(root, contractFor('ok1'))
+    await writeFile(join(tree, 'src.txt'), 'work\n', 'utf8')
+    await commitDirtyTaskWorktree(tree, 'ok1')
+    expect((await execFileAsync('git', ['-C', tree, 'log', '-1', '--format=%s'])).stdout.trim()).toBe('devloop: delegate')
+  })
+})
+
+describe('the repository status scan over a worker\'s worktree', () => {
+  // No gitdir access needed: the worker rewrites the `.git` pointer inside its own worktree to a
+  // linked gitdir of its own, whose commondir names a repository with a program in its config.
+  it('runs git status there without running anything the worktree points at, and counts it dirty', async () => {
+    const root = await gitWorkspace()
+    const tree = await prepareDelegateWorktree(root, contractFor('scan'))
+    const fake = await mkdtempInRepo('devloop-fake-scan-')
+    scratch.push(fake)
+    const common = join(fake, 'common')
+    await execFileAsync('cp', ['-R', join(root, '.git') + '/.', common])
+    const marker = join(fake, 'PWNED')
+    const hook = join(fake, 'monitor.sh')
+    await writeFile(hook, `#!/bin/sh\ntouch '${marker}'\nexit 1\n`, 'utf8')
+    await chmod(hook, 0o755)
+    await execFileAsync('git', ['config', '--file', join(common, 'config'), 'core.fsmonitor', hook])
+    const linked = join(common, 'worktrees', 'scan')
+    await writeFile(join(linked, 'commondir'), `${common}\n`, 'utf8')
+    await writeFile(join(tree, '.git'), `gitdir: ${linked}\n`, 'utf8')
+    const { scanRepo } = await import('../src/status.ts')
+    const status = await scanRepo(root)
+    await expect(lstat(marker)).rejects.toThrow()
+    expect(status.worktrees.find(w => w.path.endsWith('/.devloop/worktrees/scan'))).toBeDefined()
+  })
+})
