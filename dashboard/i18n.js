@@ -14,14 +14,14 @@ const LANG_KEY = 'devloop.lang'
 let currentLang = (() => {
   try {
     const saved = localStorage.getItem(LANG_KEY)
-    return saved in LANG_INDEX ? saved : 'en'
+    return saved !== null && Object.hasOwn(LANG_INDEX, saved) ? saved : 'en'
   } catch {
     return 'en'
   }
 })()
 
 function setLang(lang) {
-  if (!(lang in LANG_INDEX)) return
+  if (!Object.hasOwn(LANG_INDEX, lang)) return
   currentLang = lang
   try { localStorage.setItem(LANG_KEY, lang) } catch { /* private window: this visit only */ }
   document.documentElement.lang = LANG_LOCALE[lang]
@@ -60,7 +60,7 @@ const STRINGS = {
   'status.ready': ['Ready', '待开始', 'พร้อมเริ่ม'],
   'status.running': ['Running', '进行中', 'กำลังทำ'],
   'status.review_pending': ['Awaiting review', '待评审', 'รอรีวิว'],
-  'status.merge_ready': ['Ready to merge', '待合并', 'พร้อมรวม'],
+  'status.merge_ready': ['Ready to merge', '待合并', 'พร้อมรวมโค้ด'],
   'status.rework': ['Rework', '返工', 'แก้ไขใหม่'],
   'status.blocked': ['Blocked', '阻塞', 'ติดขัด'],
   'status.done': ['Done', '完成', 'เสร็จแล้ว'],
@@ -87,7 +87,7 @@ const STRINGS = {
   'doing.plan': ['Planning tasks.', '正在规划任务。', 'กำลังวางแผนงาน'],
   'doing.delegate': ['Implementing {task}.', '正在实现 {task}。', 'กำลังพัฒนา {task}'],
   'doing.review': ['Reviewing {task}.', '正在评审 {task}。', 'กำลังรีวิว {task}'],
-  'doing.merge': ['Merging {task}.', '正在合并 {task}。', 'กำลังรวม {task}'],
+  'doing.merge': ['Merging {task}.', '正在合并 {task}。', 'กำลังรวมโค้ด {task}'],
   'next.tick': ['Waiting for the next tick.', '等下一轮。', 'รอรอบถัดไป'],
   'next.stopped': ['The loop is not running: restart dsh web, or check this project\'s config.', '循环没在运行：重启 dsh web，或检查这个项目的配置。', 'ลูปไม่ได้ทำงาน: รีสตาร์ต dsh web หรือตรวจสอบการตั้งค่าของโปรเจกต์นี้'],
   'next.unarmed': ['Not started: open it, write the goal, and start.', '还没启动：进去写下目标，点启动。', 'ยังไม่เริ่ม: เปิดเข้าไป เขียนเป้าหมาย แล้วกดเริ่ม'],
@@ -127,7 +127,7 @@ const STRINGS = {
   'add.pickFirst': ['Pick a repository first', '先选一个仓库', 'เลือกรีโพก่อน'],
   'add.done': ['Added {root}. It has no goal yet: open it and write one to start.', '已添加：{root}。它还没有目标，点进去写一个就会开始。', 'เพิ่ม {root} แล้ว ยังไม่มีเป้าหมาย: เปิดเข้าไปแล้วเขียนเป้าหมายเพื่อเริ่ม'],
   'start.title': ['Start the loop', '启动循环', 'เริ่มลูป'],
-  'start.intro': ['Write the goal for this work. Once saved as .devloop/GOAL.md, the loop plans it into tasks, then has models implement, review and merge them one by one.', '写下这个需求的目标。保存为 .devloop/GOAL.md 后，循环会先规划出一系列任务，再逐个交给模型实现、评审、合并。', 'เขียนเป้าหมายของงานนี้ เมื่อบันทึกเป็น .devloop/GOAL.md แล้ว ลูปจะวางแผนเป็นงานย่อย แล้วให้โมเดลพัฒนา รีวิว และรวมทีละงาน'],
+  'start.intro': ['Write the goal for this work. Once saved as .devloop/GOAL.md, the loop plans it into tasks, then has models implement, review and merge them one by one.', '写下这个需求的目标。保存为 .devloop/GOAL.md 后，循环会先规划出一系列任务，再逐个交给模型实现、评审、合并。', 'เขียนเป้าหมายของงานนี้ เมื่อบันทึกเป็น .devloop/GOAL.md แล้ว ลูปจะวางแผนเป็นงานย่อย แล้วให้โมเดลพัฒนา รีวิว และรวมโค้ดทีละงาน'],
   'start.placeholder': ['# Goal\n\nWhich feature or task (e.g. T1.2.x in docs/agent/tasks.md), what counts as done (the acceptance commands), the scope, what not to do…', '# 目标\n\n对应哪个 Feature / Task（如 docs/agent/tasks.md 里的 T1.2.x）、做到什么程度算完成（验收命令）、范围、不做什么……', '# เป้าหมาย\n\nฟีเจอร์หรืองานไหน (เช่น T1.2.x ใน docs/agent/tasks.md) แค่ไหนถือว่าเสร็จ (คำสั่งตรวจรับ) ขอบเขต และสิ่งที่ไม่ต้องทำ…'],
   'start.button': ['Write GOAL.md and start', '写入 GOAL.md 并启动', 'เขียน GOAL.md แล้วเริ่ม'],
   'start.confirm': ['Start this project\'s loop? It will call models as configured, spend budget, and merge tasks into the current branch. The goal cannot be changed from the page once written.', '启动这个项目的循环？之后它会按配置调用模型、花费预算，并在当前分支上合并任务。目标写入后不能从页面修改。', 'เริ่มลูปของโปรเจกต์นี้? ลูปจะเรียกโมเดลตามที่ตั้งค่าไว้ ใช้งบประมาณ และรวมงานเข้ากับสาขาปัจจุบัน เมื่อเขียนเป้าหมายแล้วจะแก้จากหน้านี้ไม่ได้'],
@@ -162,7 +162,7 @@ const STRINGS = {
   'gate.manual': ['What you need to do: ', '要你做的事：', 'สิ่งที่คุณต้องทำ: '],
   'gate.more': ['Other answers ({n})', '其他选项（{n}）', 'ตัวเลือกอื่น ({n})'],
   'halt.completed': ['Goal complete', '目标已完成', 'เป้าหมายเสร็จแล้ว'],
-  'halt.completedText': ['Every task was reviewed, passed and merged. This loop has nothing more to do.', '所有任务都已评审通过并合并到主分支。这个循环不会再做别的事。', 'ทุกงานผ่านการรีวิวและรวมแล้ว ลูปนี้ไม่มีอะไรต้องทำอีก'],
+  'halt.completedText': ['Every task was reviewed, passed and merged. This loop has nothing more to do.', '所有任务都已评审通过并合并到主分支。这个循环不会再做别的事。', 'ทุกงานผ่านการรีวิวและรวมโค้ดแล้ว ลูปนี้ไม่มีอะไรต้องทำอีก'],
   'halt.completedNote': ['Add new work as a new project. To reopen a task here, run devloop resume --task <task id> on the machine.', '新需求建议作为新项目添加。确实要在这里重开某个任务，在本机用 devloop resume --task <任务ID>。', 'งานใหม่ควรเพิ่มเป็นโปรเจกต์ใหม่ หากต้องการเปิดงานใหม่ที่นี่ ให้รัน devloop resume --task <รหัสงาน> บนเครื่อง'],
   'halt.title': ['Why it stopped', '停机原因', 'สาเหตุที่หยุด'],
   'halt.hold': ['supervisor hold: {reason}', 'supervisor hold：{reason}', 'supervisor hold: {reason}'],
@@ -197,4 +197,35 @@ const STRINGS = {
   'result.written': ['Written (revision {revision}). The loop continues on the next tick.', '已写入（revision {revision}）。循环会在下一轮接着跑。', 'บันทึกแล้ว (revision {revision}) ลูปจะทำงานต่อในรอบถัดไป'],
   'result.stale': ['The state changed and the page was refreshed. Look again before deciding.', '状态已经变了，页面已刷新。请看一眼再决定。', 'สถานะเปลี่ยนแล้วและหน้าได้รีเฟรช โปรดดูอีกครั้งก่อนตัดสินใจ'],
   'result.failed': ['Not done: {error}', '没有执行：{error}', 'ไม่ได้ดำเนินการ: {error}'],
+
+  // The documents panel and the guide.
+  'docs.title': ['Documents', '文档', 'เอกสาร'],
+  'docs.none': ['No documents to show yet. Planning documents in {dir}/ (roadmap, tasks, acceptance…) and the PLAN / REVIEW / PROGRESS the loop writes appear here.', '还没有可看的文档。{dir}/ 里的 roadmap、tasks、acceptance 等规划文档，以及循环写下的 PLAN / REVIEW / PROGRESS 都会显示在这里。', 'ยังไม่มีเอกสารให้ดู เอกสารวางแผนใน {dir}/ (roadmap, tasks, acceptance…) และ PLAN / REVIEW / PROGRESS ที่ลูปเขียนจะแสดงที่นี่'],
+  'docs.truncated': [' (first 64 KB only)', '（只显示了前 64 KB）', ' (แสดงเพียง 64 KB แรก)'],
+  'docs.goal': ['Goal', '目标', 'เป้าหมาย'],
+  'docs.planNote': ['Planning notes', '规划记录', 'บันทึกการวางแผน'],
+  'docs.reviewNote': ['Review notes', '评审记录', 'บันทึกการรีวิว'],
+  'docs.progressNote': ['Loop progress', '循环进度', 'ความคืบหน้าของลูป'],
+  'docs.roadmap.md': ['Roadmap', '路线图', 'แผนงาน'],
+  'docs.tasks.md': ['Tasks', '任务清单', 'รายการงาน'],
+  'docs.progress.md': ['Progress', '仓库进展', 'ความคืบหน้า'],
+  'docs.acceptance.md': ['Acceptance', '验收', 'การตรวจรับ'],
+  'docs.architecture.md': ['Architecture', '架构', 'สถาปัตยกรรม'],
+  'docs.spec.md': ['Spec', '规格', 'ข้อกำหนด'],
+  'docs.research.md': ['Research', '调研', 'การค้นคว้า'],
+  'guide.title': ['How to use it: from a repository to a delivery', '使用说明：从一个仓库到交付', 'วิธีใช้: จากรีโพจนถึงส่งมอบ'],
+  'guide.roles': ['Recommended split: Codex plans, DeepSeek writes the code, Claude reviews and accepts (set in the web profile\'s plannerRoute / routing / reviewerRoute). Each task is done in its own worktree and merged only after review passes.', '推荐分工：Codex 做规划，DeepSeek 写代码，Claude 做评审和验收（在 web profile 的 plannerRoute / routing / reviewerRoute 里配置）。每个任务在独立的 worktree 里完成，评审通过才合并。', 'การแบ่งงานที่แนะนำ: Codex วางแผน DeepSeek เขียนโค้ด Claude รีวิวและตรวจรับ (ตั้งค่าใน plannerRoute / routing / reviewerRoute ของ web profile) แต่ละงานทำใน worktree ของตัวเอง และรวมเมื่อผ่านการรีวิวเท่านั้น'],
+  'guide.prepare': ['Prepare the repository', '准备仓库', 'เตรียมรีโพ'],
+  'guide.prepare.text': ['In Claude Code, run pilot status on the repository (clean up merged branches, check the tree is clean) and pilot plan (write the roadmap, task list and acceptance criteria under docs/agent/). The planner reads them.', '在 Claude Code 里对这个仓库跑 pilot status（清理已合并的分支、确认工作区干净）和 pilot plan（写出 docs/agent/ 下的路线图、任务清单、验收标准）。规划器会读这些文档。', 'ใน Claude Code ให้รัน pilot status กับรีโพ (ล้างสาขาที่รวมแล้ว ตรวจว่าไม่มีไฟล์ค้าง) และ pilot plan (เขียนแผนงาน รายการงาน และเกณฑ์ตรวจรับใน docs/agent/) ตัววางแผนจะอ่านเอกสารเหล่านี้'],
+  'guide.branch': ['Switch to a work branch', '切到工作分支', 'สลับไปสาขาทำงาน'],
+  'guide.branch.text': ['git switch -c devloop/<goal-name>. DevLoop merges each task into the current branch locally, never into main / master, and checks this at start and before every merge.', 'git switch -c devloop/<目标名>。DevLoop 把每个任务在本地合并进当前分支，从不合进 main / master；启动和每次合并前都会检查。', 'git switch -c devloop/<ชื่อเป้าหมาย> DevLoop รวมแต่ละงานเข้าสาขาปัจจุบันบนเครื่อง ไม่รวมเข้า main / master และตรวจสอบตอนเริ่มและก่อนรวมทุกครั้ง'],
+  'guide.add': ['Add the project', '添加项目', 'เพิ่มโปรเจกต์'],
+  'guide.add.text': ['Press "{browse}" below, select the repository, and press "{add}".', '点下面的「{browse}」，选中仓库，点「{add}」。', 'กด "{browse}" ด้านล่าง เลือกรีโพ แล้วกด "{add}"'],
+  'guide.start': ['Write the goal and start', '写目标并启动', 'เขียนเป้าหมายแล้วเริ่ม'],
+  'guide.start.text': ['Open the project page, check the start checks are all green, read the plan under "{docs}", then write the goal: which feature or task, the acceptance commands, the scope, what not to do. Press "{start}".', '进入项目页，先看启动检查全绿，再看「{docs}」里的规划，然后写目标：对应哪个 Feature / Task、验收命令、范围、不做什么。点「{start}」。', 'เปิดหน้าโปรเจกต์ ตรวจว่าการตรวจก่อนเริ่มเป็นสีเขียวทั้งหมด อ่านแผนใน "{docs}" แล้วเขียนเป้าหมาย: ฟีเจอร์หรืองานไหน คำสั่งตรวจรับ ขอบเขต และสิ่งที่ไม่ต้องทำ กด "{start}"'],
+  'guide.watch': ['Watch it run', '看着它跑', 'ดูการทำงาน'],
+  'guide.watch.text': ['The task table shows each task\'s state and acceptance criteria; "{docs}" shows the plan, review notes and progress. When it needs your decision the project shows "{question}", and you answer on the page.', '任务表显示每个任务的状态和验收标准；「{docs}」里能看到规划、评审记录和进度。需要你拍板时，项目会标「{question}」，页面上直接回答。', 'ตารางงานแสดงสถานะและเกณฑ์ตรวจรับของแต่ละงาน "{docs}" แสดงแผน บันทึกรีวิว และความคืบหน้า เมื่อต้องการการตัดสินใจของคุณ โปรเจกต์จะแสดง "{question}" และคุณตอบได้บนหน้านี้'],
+  'guide.finish': ['Finish', '收尾', 'ปิดงาน'],
+  'guide.finish.text': ['When the goal is done, open a PR from the devloop/<goal-name> branch, have PR-daemon review it, and merge it into the trunk once it passes.', '目标完成后，从 devloop/<目标名> 分支开一个 PR，交给 PR-daemon 评审，通过后再合并进主干。', 'เมื่อเป้าหมายเสร็จ เปิด PR จากสาขา devloop/<ชื่อเป้าหมาย> ให้ PR-daemon รีวิว แล้วรวมเข้าสาขาหลักเมื่อผ่าน'],
+  'guide.after': ['You can pause from the project page at any time; a stopped project can be resumed, or removed from the list (the files in the repository stay as they are).', '随时可以在项目页暂停；已停下的项目可以恢复，或从列表里移除（仓库里的文件原样保留）。', 'หยุดชั่วคราวจากหน้าโปรเจกต์ได้ทุกเมื่อ โปรเจกต์ที่หยุดแล้วสามารถทำงานต่อ หรือนำออกจากรายการได้ (ไฟล์ในรีโพยังอยู่ตามเดิม)'],
 }

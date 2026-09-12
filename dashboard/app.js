@@ -559,14 +559,14 @@ const openDoc = new Map()
 
 function docsPanel(p) {
   const docs = []
-  if (p.goal) docs.push({ key: 'goal', label: '目标', path: '.devloop/GOAL.md', text: p.goal })
-  for (const d of p.documents || []) docs.push({ key: d.path, label: DOC_LABEL[d.name] || d.name, path: d.path, text: d.text, truncated: d.truncated })
-  if (p.planNote) docs.push({ key: 'plan', label: '规划记录', path: '.devloop/PLAN.md', text: p.planNote })
-  if (p.reviewNote) docs.push({ key: 'review', label: '评审记录', path: '.devloop/REVIEW.md', text: p.reviewNote })
-  if (p.progress) docs.push({ key: 'progress', label: '循环进度', path: '.devloop/PROGRESS.md', text: p.progress })
+  if (p.goal) docs.push({ key: 'goal', label: t('docs.goal'), path: '.devloop/GOAL.md', text: p.goal })
+  for (const d of p.documents || []) docs.push({ key: d.path, label: DOC_NAMES.has(d.name) ? t(`docs.${d.name}`) : d.name, path: d.path, text: d.text, truncated: d.truncated })
+  if (p.planNote) docs.push({ key: 'plan', label: t('docs.planNote'), path: '.devloop/PLAN.md', text: p.planNote })
+  if (p.reviewNote) docs.push({ key: 'review', label: t('docs.reviewNote'), path: '.devloop/REVIEW.md', text: p.reviewNote })
+  if (p.progress) docs.push({ key: 'progress', label: t('docs.progressNote'), path: '.devloop/PROGRESS.md', text: p.progress })
   if (!docs.length) {
-    return el('section', { class: 'panel' }, el('h3', {}, '文档'),
-      el('p', { class: 'muted' }, `还没有可看的文档。${p.docsDir || 'docs/agent'}/ 里的 roadmap、tasks、acceptance 等规划文档，以及循环写下的 PLAN / REVIEW / PROGRESS 都会显示在这里。`))
+    return el('section', { class: 'panel' }, el('h3', {}, t('docs.title')),
+      el('p', { class: 'muted' }, t('docs.none', { dir: p.docsDir || 'docs/agent' })))
   }
   const current = docs.find(d => d.key === openDoc.get(p.id)) || docs[0]
   const tabs = docs.map((d) => {
@@ -575,16 +575,14 @@ function docsPanel(p) {
     return tab
   })
   return el('section', { class: 'panel docs' },
-    el('h3', {}, '文档'),
+    el('h3', {}, t('docs.title')),
     el('div', { class: 'doc-tabs' }, tabs),
-    el('div', { class: 'path' }, current.path, current.truncated ? '（只显示了前 64 KB）' : ''),
+    el('div', { class: 'path' }, current.path, current.truncated ? t('docs.truncated') : ''),
     renderMarkdown(current.text))
 }
 
-const DOC_LABEL = {
-  'roadmap.md': '路线图', 'tasks.md': '任务清单', 'progress.md': '仓库进展', 'acceptance.md': '验收',
-  'architecture.md': '架构', 'spec.md': '规格', 'research.md': '调研',
-}
+// pilot's planning documents that have a name of their own; any other file shows as its file name.
+const DOC_NAMES = new Set(['roadmap.md', 'tasks.md', 'progress.md', 'acceptance.md', 'architecture.md', 'spec.md', 'research.md'])
 
 // ---- guide ------------------------------------------------------------------
 
@@ -599,21 +597,19 @@ function guideOpen() {
   }
 }
 
-const GUIDE_STEPS = [
-  ['准备仓库', '在 Claude Code 里对这个仓库跑 pilot status（清理已合并的分支、确认工作区干净）和 pilot plan（写出 docs/agent/ 下的路线图、任务清单、验收标准）。规划器会读这些文档。'],
-  ['切到工作分支', 'git switch -c devloop/<目标名>。DevLoop 把每个任务在本地合并进当前分支，从不合进 main / master；启动和每次合并前都会检查。'],
-  ['添加项目', '点下面的「浏览仓库…」，选中仓库，点「添加」。'],
-  ['写目标并启动', '进入项目页，先看「启动检查」全绿，再看「文档」里的规划，然后写目标：对应哪个 Feature / Task、验收命令、范围、不做什么。点「写入 GOAL.md 并启动」。'],
-  ['看着它跑', '任务表显示每个任务的状态和验收标准；「文档」里能看到规划、评审记录和进度。需要你拍板时，项目会标「等你回答」，页面上直接回答。'],
-  ['收尾', '目标完成后，从 devloop/<目标名> 分支开一个 PR，交给 PR-daemon 评审，通过后再合并进主干。'],
-]
+const GUIDE_STEPS = ['prepare', 'branch', 'add', 'start', 'watch', 'finish']
+
+// The buttons and panels a step names, in the words the page uses for them.
+function guideNames() {
+  return { browse: t('btn.browse'), add: t('add.add'), docs: t('docs.title'), start: t('start.button'), question: t('badge.question') }
+}
 
 function guidePanel() {
   const details = el('details', { class: 'guide' },
-    el('summary', {}, '使用说明：从一个仓库到交付'),
-    el('p', { class: 'note' }, '推荐分工：Codex 做规划，DeepSeek 写代码，Claude 做评审和验收（在 web profile 的 plannerRoute / routing / reviewerRoute 里配置）。每个任务在独立的 worktree 里完成，评审通过才合并。'),
-    el('ol', { class: 'guide-steps' }, GUIDE_STEPS.map(([title, body]) => el('li', {}, el('b', {}, title), el('span', {}, body)))),
-    el('p', { class: 'note' }, '随时可以在项目页暂停；已停下的项目可以恢复，或从列表里移除（仓库里的文件原样保留）。'))
+    el('summary', {}, t('guide.title')),
+    el('p', { class: 'note' }, t('guide.roles')),
+    el('ol', { class: 'guide-steps' }, GUIDE_STEPS.map(step => el('li', {}, el('b', {}, t(`guide.${step}`)), el('span', {}, t(`guide.${step}.text`, guideNames()))))),
+    el('p', { class: 'note' }, t('guide.after')))
   details.open = guideOpen()
   details.addEventListener('toggle', () => {
     try { localStorage.setItem(GUIDE_KEY, details.open ? '1' : '0') } catch { /* storage blocked */ }
