@@ -287,4 +287,19 @@ const STRINGS = {
   'ready.plan.external': ['.pilot.yml declares planning outside the repository: the planner can only use GOAL.md and AGENTS.md / CLAUDE.md', '.pilot.yml 声明规划在仓库外：规划器只能参考 GOAL.md 和 AGENTS.md / CLAUDE.md', '.pilot.yml ประกาศว่าแผนงานอยู่นอกรีโพ: ตัววางแผนใช้ได้เพียง GOAL.md และ AGENTS.md / CLAUDE.md'],
   'ready.plan.found': ['The planner will read from {dir}/: {files}', '规划器会读 {dir}/ 里的：{files}', 'ตัววางแผนจะอ่านจาก {dir}/: {files}'],
   'ready.plan.none': ['No planning documents in {dir}/. pilot plan writes them; without them the planner only has GOAL.md.', '{dir}/ 里没有规划文档。pilot plan 会写出它们；没有的话规划器只能看 GOAL.md。', 'ไม่มีเอกสารวางแผนใน {dir}/ pilot plan จะเขียนให้ ถ้าไม่มี ตัววางแผนจะมีเพียง GOAL.md'],
+
+  // Why the server keeps a branch, leaves something to you, or refused a delete (src/cleanup.ts).
+  'cleanup.current': ['current branch', '当前分支', 'สาขาปัจจุบัน'],
+  'cleanup.trunk': ['trunk', '主干', 'สาขาหลัก'],
+  'cleanup.pattern': ['protected prefix (.pilot.yml protect_patterns, or release/hotfix/deploy)', '受保护前缀（.pilot.yml protect_patterns 或 release/hotfix/deploy）', 'คำนำหน้าที่ถูกป้องกัน (protect_patterns ของ .pilot.yml หรือ release/hotfix/deploy)'],
+  'cleanup.worktree': ['checked out by a worktree', '被某个 worktree 检出', 'ถูกเช็กเอาต์โดย worktree'],
+  'cleanup.active_task': ['a task the loop has not finished', '循环里还没完成的任务', 'งานที่ลูปยังทำไม่เสร็จ'],
+  'cleanup.unmerged': ['not merged into the current branch yet', '还没合并进当前分支', 'ยังไม่ได้รวมเข้าสาขาปัจจุบัน'],
+  'cleanup.unmergedTask': ['unmerged DevLoop task branch', '未合并的 DevLoop 任务分支', 'สาขางาน DevLoop ที่ยังไม่รวม'],
+  'cleanup.dirtyWorktree': ['the worktree has uncommitted changes: look first', 'worktree 有未提交的改动，先看一眼', 'worktree มีการแก้ไขที่ยังไม่คอมมิต: ดูก่อน'],
+  'cleanup.cleanWorktree': ['a clean worktree: remove it if it is no longer needed', '干净的 worktree，不需要了可以删', 'worktree ที่สะอาด: ลบได้ถ้าไม่ต้องใช้แล้ว'],
+  'cleanup.notOffered': ['no longer on the list to delete (the state changed), so not deleted', '现在已经不在可删除列表里（状态变了），没有删', 'ไม่อยู่ในรายการที่ลบได้แล้ว (สถานะเปลี่ยน) จึงไม่ได้ลบ'],
+  'cleanup.notMerged': ['git refused: the branch is not fully merged', 'git 拒绝：分支没有完全合并', 'git ปฏิเสธ: สาขายังรวมไม่ครบ'],
+  'cleanup.checkedOut': ['git refused: the branch is checked out by a worktree', 'git 拒绝：分支被某个 worktree 检出', 'git ปฏิเสธ: สาขาถูกเช็กเอาต์โดย worktree'],
+  'cleanup.gitRefused': ['git refused to delete this branch', 'git 拒绝删除这个分支', 'git ปฏิเสธการลบสาขานี้'],
 }

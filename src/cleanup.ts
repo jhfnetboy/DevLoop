@@ -12,8 +12,9 @@ import { scanRepo, type RepoStatus, type ScanOptions } from './status.js'
 export interface CleanupPlan {
   /** Merged into HEAD and protected by nothing: what `apply` may delete. */
   readonly delete: readonly string[]
-  readonly keep: readonly { readonly name: string, readonly reason: string }[]
-  readonly manual: readonly { readonly target: string, readonly reason: string, readonly command: string }[]
+  /** `code` names the reason for a page to say in its reader's language; `reason` is the server's own words. */
+  readonly keep: readonly { readonly name: string, readonly code: string, readonly reason: string }[]
+  readonly manual: readonly { readonly target: string, readonly code: string, readonly reason: string, readonly command: string }[]
 }
 
 const KEEP_REASON: Record<NonNullable<RepoStatus['branches'][number]['protectedBy']>, string> = {
@@ -26,17 +27,17 @@ const KEEP_REASON: Record<NonNullable<RepoStatus['branches'][number]['protectedB
 
 export function planCleanup(status: RepoStatus): CleanupPlan {
   const del: string[] = []
-  const keep: { name: string, reason: string }[] = []
-  const manual: { target: string, reason: string, command: string }[] = []
+  const keep: { name: string, code: string, reason: string }[] = []
+  const manual: { target: string, code: string, reason: string, command: string }[] = []
   for (const b of status.branches) {
-    if (b.protectedBy !== null) keep.push({ name: b.name, reason: KEEP_REASON[b.protectedBy] })
+    if (b.protectedBy !== null) keep.push({ name: b.name, code: b.protectedBy, reason: KEEP_REASON[b.protectedBy] })
     else if (b.merged) del.push(b.name)
     else {
-      keep.push({ name: b.name, reason: '还没合并进当前分支' })
+      keep.push({ name: b.name, code: 'unmerged', reason: '还没合并进当前分支' })
       // A task branch the loop gave up on is the usual leftover; deleting
       // unmerged work is still a person's call.
       if (b.name.startsWith('devloop/')) {
-        manual.push({ target: b.name, reason: '未合并的 DevLoop 任务分支', command: `git branch -D -- ${quote(b.name)}` })
+        manual.push({ target: b.name, code: 'unmergedTask', reason: '未合并的 DevLoop 任务分支', command: `git branch -D -- ${quote(b.name)}` })
       }
     }
   }
@@ -48,15 +49,15 @@ export function planCleanup(status: RepoStatus): CleanupPlan {
     // worktree when the project was registered from one — git would remove it.
     if (w.primary || w.current || /[/\\]\.devloop[/\\]worktrees[/\\]/.test(w.path)) continue
     manual.push(w.dirty
-      ? { target: w.path, reason: 'worktree 有未提交的改动，先看一眼', command: `git -C ${quote(w.path)} status` }
-      : { target: w.path, reason: '干净的 worktree，不需要了可以删', command: `git worktree remove ${quote(w.path)}` })
+      ? { target: w.path, code: 'dirtyWorktree', reason: 'worktree 有未提交的改动，先看一眼', command: `git -C ${quote(w.path)} status` }
+      : { target: w.path, code: 'cleanWorktree', reason: '干净的 worktree，不需要了可以删', command: `git worktree remove ${quote(w.path)}` })
   }
   return { delete: del, keep, manual }
 }
 
 export interface CleanupResult {
   readonly deleted: readonly string[]
-  readonly refused: readonly { readonly name: string, readonly reason: string }[]
+  readonly refused: readonly { readonly name: string, readonly code: string, readonly reason: string }[]
 }
 
 /**
@@ -70,17 +71,17 @@ export async function applyCleanup(root: string, confirmed: readonly string[], o
   const plan = planCleanup(await scanRepo(root, options))
   const offered = new Set(plan.delete)
   const deleted: string[] = []
-  const refused: { name: string, reason: string }[] = []
+  const refused: { name: string, code: string, reason: string }[] = []
   for (const name of new Set(confirmed)) {
     if (!offered.has(name)) {
-      refused.push({ name, reason: '现在已经不在可删除列表里（状态变了），没有删' })
+      refused.push({ name, code: 'notOffered', reason: '现在已经不在可删除列表里（状态变了），没有删' })
       continue
     }
     try {
       await git(root, ['branch', '-d', '--', name])
       deleted.push(name)
     } catch (error) {
-      refused.push({ name, reason: refusalReason(error) })
+      refused.push({ name, ...refusal(error) })
     }
   }
   return { deleted, refused }
@@ -92,10 +93,14 @@ export async function applyCleanup(root: string, confirmed: readonly string[], o
  * worktree's path.
  */
 export function refusalReason(error: unknown): string {
+  return refusal(error).reason
+}
+
+function refusal(error: unknown): { code: string, reason: string } {
   const stderr = String((error as { stderr?: unknown } | null)?.stderr ?? '')
-  if (/not fully merged/.test(stderr)) return 'git 拒绝：分支没有完全合并'
-  if (/(checked out|used by worktree)/.test(stderr)) return 'git 拒绝：分支被某个 worktree 检出'
-  return 'git 拒绝删除这个分支'
+  if (/not fully merged/.test(stderr)) return { code: 'notMerged', reason: 'git 拒绝：分支没有完全合并' }
+  if (/(checked out|used by worktree)/.test(stderr)) return { code: 'checkedOut', reason: 'git 拒绝：分支被某个 worktree 检出' }
+  return { code: 'gitRefused', reason: 'git 拒绝删除这个分支' }
 }
 
 function quote(path: string): string {

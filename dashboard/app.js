@@ -675,7 +675,7 @@ function repoPanel(p) {
       if (!names.length) throw new Error(t('repo.noneSelected'))
       const result = await postJson(`${API}/projects/${p.id}/cleanup`, { branches: names })
       void loadRepo(p.id)
-      const refused = result.refused.map(r => t('repo.refusedOne', { name: r.name, reason: r.reason })).join(t('repo.listSep'))
+      const refused = result.refused.map(r => t('repo.refusedOne', { name: r.name, reason: serverText('cleanup', r.code, {}, r.reason) })).join(t('repo.listSep'))
       const deleted = result.deleted.length ? t('repo.deletedNames', { n: result.deleted.length, names: result.deleted.join(t('repo.listSep')) }) : t('repo.deletedNone')
       return { text: refused ? `${deleted} ${t('repo.refused', { list: refused })}` : deleted }
     })
@@ -693,9 +693,9 @@ function repoPanel(p) {
     plan.delete.length ? el('div', { class: 'branch-list' }, boxes) : el('p', { class: 'muted' }, t('repo.nothingToDelete')),
     el('div', { class: 'actions' }, del, recheck),
     plan.manual.length ? el('details', {}, el('summary', {}, t('repo.manual', { n: plan.manual.length })),
-      el('ul', { class: 'plain' }, plan.manual.map(m => el('li', {}, m.reason, t('repo.colon'), el('code', {}, m.command))))) : null,
+      el('ul', { class: 'plain' }, plan.manual.map(m => el('li', {}, serverText('cleanup', m.code, {}, m.reason), t('repo.colon'), el('code', {}, m.command))))) : null,
     el('details', {}, el('summary', {}, t('repo.kept', { n: plan.keep.length })),
-      el('ul', { class: 'plain' }, plan.keep.map(k => el('li', {}, el('span', { class: 'mono' }, k.name), ' — ', k.reason)))),
+      el('ul', { class: 'plain' }, plan.keep.map(k => el('li', {}, el('span', { class: 'mono' }, k.name), ' — ', serverText('cleanup', k.code, {}, k.reason))))),
     el('p', { class: 'note' }, t('repo.note')))
 }
 

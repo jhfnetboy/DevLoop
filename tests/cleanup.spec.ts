@@ -31,6 +31,9 @@ describe('planning a cleanup', () => {
     ]))
     expect(plan.delete).toEqual(['done'])
     expect(plan.keep.map(k => k.name)).toEqual(['work', 'release/1', 'open', 'devloop/T9', 'devloop/a$b'])
+    // Each reason also as a code, for a page to say in its reader's language.
+    expect(plan.keep.map(k => k.code)).toEqual(['current', 'pattern', 'unmerged', 'unmerged', 'unmerged'])
+    expect(plan.manual.map(m => m.code)).toEqual(['unmergedTask', 'unmergedTask', 'cleanWorktree', 'dirtyWorktree'])
     // Never run here: -D for an abandoned task branch, worktree removal, a look at a dirty one.
     expect(plan.manual.map(m => m.command)).toEqual([
       'git branch -D -- devloop/T9',
@@ -72,7 +75,7 @@ describe('applying a cleanup', () => {
     await writeFile(join(root, hooks, 'reference-transaction'), '#!/bin/sh\n[ "$1" = prepared ] && grep -q "^[0-9a-f]* 0\\{40\\} refs/heads/" && exit 1\nexit 0\n', { mode: 0o755 })
     const result = await applyCleanup(root, ['guarded'])
     expect(result.deleted).toEqual([])
-    expect(result.refused).toEqual([{ name: 'guarded', reason: 'git 拒绝删除这个分支' }])
+    expect(result.refused).toEqual([{ name: 'guarded', code: 'gitRefused', reason: 'git 拒绝删除这个分支' }])
     expect((await git(root, 'rev-parse', '--verify', 'refs/heads/guarded')).stdout.trim()).toMatch(/^[0-9a-f]{40}$/)
   })
 
@@ -98,7 +101,7 @@ describe('applying a cleanup', () => {
     await git(root, 'branch', '--set-upstream-to=main', 'featA') // …but its upstream lacks the commit
     const result = await applyCleanup(root, ['featA'])
     expect(result.deleted).toEqual([]) // -D would have deleted it
-    expect(result.refused).toEqual([{ name: 'featA', reason: 'git 拒绝：分支没有完全合并' }])
+    expect(result.refused).toEqual([{ name: 'featA', code: 'notMerged', reason: 'git 拒绝：分支没有完全合并' }])
     expect((await git(root, 'rev-parse', '--verify', 'refs/heads/featA')).stdout).toBeTruthy()
   })
 

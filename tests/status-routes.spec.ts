@@ -48,7 +48,7 @@ describe('status and cleanup routes', () => {
     const view = await call('GET', '/status')
     expect(view.status).toBe(200)
     expect(view.json.value.plan.delete).toEqual(['merged-a'])
-    expect(view.json.value.plan.keep).toContainEqual({ name: 'devloop/T1', reason: '循环里还没完成的任务' })
+    expect(view.json.value.plan.keep).toContainEqual({ name: 'devloop/T1', code: 'active_task', reason: '循环里还没完成的任务' })
 
     const done = await call('POST', '/cleanup', { branches: ['merged-a', 'devloop/T1'] })
     expect(done.status).toBe(200)
