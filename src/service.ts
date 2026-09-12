@@ -170,6 +170,20 @@ export class ProjectLoop {
           this.pendingCommitHold = null
           await clearCommitHoldMarker(this.config.root)
         }
+        const pendingHold = await readPendingHold(this.config.root)
+        if (pendingHold) {
+          // Applied only to a running loop; one already halted is showing its own hold,
+          // and a resume after it must not bring this stale one back.
+          if (!current.killSwitch && !current.supervisor) {
+            const { taskId, reason } = pendingHold
+            current = await saveState(this.config.root, {
+              ...current,
+              supervisor: { taskId, reason },
+              lastAction: { type: 'escalate', taskId, reason },
+            }, { expectedRevision: current.revision, action: `hold:${reason}` })
+          }
+          await unlink(join(this.config.root, DEVLOOP_DIR, PENDING_HOLD_FILE)).catch(() => undefined)
+        }
         let sessionRolled = false
         let pendingApplied = false
         if (this.pendingSignals && !current.killSwitch && !current.supervisor) {
@@ -876,6 +890,47 @@ async function clearCommitHoldMarker(root: string): Promise<void> {
   }
 }
 
+const PENDING_HOLD_FILE = 'PENDING_HOLD'
+const HOLD_REASON = /^[a-z_]+(?::[^\n]{0,200})?$/
+
+function pendingHoldPath(root: string): string {
+  return join(root, DEVLOOP_DIR, PENDING_HOLD_FILE)
+}
+
+/** A hold that could not be written because the lock stayed busy, kept for the next tick. */
+async function writePendingHold(root: string, taskId: string | null, reason: HoldReason, log: { error(message: string, ...rest: unknown[]): void }): Promise<void> {
+  const file = pendingHoldPath(root)
+  const temp = `${file}.${String(process.pid)}.${String(Date.now())}.tmp`
+  try {
+    const handle = await open(temp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600)
+    try {
+      await handle.writeFile(`${JSON.stringify({ taskId, reason })}\n`, 'utf8')
+    } finally {
+      await handle.close()
+    }
+    await rename(temp, file)
+  } catch (error) {
+    await unlink(temp).catch(() => undefined)
+    log.error('[dsh-devloop] pending hold marker write failed', error)
+  }
+}
+
+async function readPendingHold(root: string): Promise<{ taskId: string | null, reason: HoldReason } | null> {
+  let handle
+  try {
+    handle = await open(pendingHoldPath(root), constants.O_RDONLY | constants.O_NOFOLLOW)
+    if (!(await handle.stat()).isFile()) return null
+    const value = JSON.parse(await handle.readFile('utf8')) as { taskId?: unknown, reason?: unknown }
+    const taskId = value.taskId === null ? null : typeof value.taskId === 'string' && worktreeTaskToken(value.taskId) ? value.taskId : undefined
+    if (taskId === undefined || typeof value.reason !== 'string' || !HOLD_REASON.test(value.reason)) return null
+    return { taskId, reason: value.reason as HoldReason }
+  } catch {
+    return null
+  } finally {
+    await handle?.close().catch(() => undefined)
+  }
+}
+
 async function persistParentCommitHold(
   root: string,
   taskId: string,
@@ -901,14 +956,25 @@ async function persistParentCommitHold(
   return false
 }
 
-async function persistAgentTransition(
+/** How long a finished dispatch waits for the state lock before its result is given up on. */
+export const RESULT_LOCK_DEADLINE_MS = 60_000
+const LOCK_RETRY_MS = 100
+
+/**
+ * Fold a validated result into STATE. A busy lock used to drop the result after
+ * one try, and the loop halted on no_progress 15 minutes later — a resume then
+ * paid for the same run again. The page's actions hold this lock only briefly,
+ * so wait for it, rereading STATE on every attempt, until the deadline.
+ */
+export async function persistAgentTransition(
   root: string,
   action: AgentAction,
   dispatched: AgentRunResult & { readonly outcome: NonNullable<AgentRunResult['outcome']> },
   implementationSha: string | undefined,
   log: { error(message: string, ...rest: unknown[]): void },
+  deadlineMs = RESULT_LOCK_DEADLINE_MS,
 ): Promise<void> {
-  const folded = await withStateLock(root, async () => {
+  const fold = () => withStateLock(root, async () => {
     const now = Date.now()
     const current = await loadState(root, now)
     if (current.killSwitch || current.supervisor) throw new Error('stale_agent_result: loop is halted')
@@ -925,6 +991,12 @@ async function persistAgentTransition(
     })
     await snapshotProgress(root, next, now, log)
   })
+  const until = Date.now() + deadlineMs
+  let folded = await fold()
+  while (!folded.ok && Date.now() < until) {
+    await new Promise(resolve => setTimeout(resolve, LOCK_RETRY_MS))
+    folded = await fold()
+  }
   if (!folded.ok) throw new Error('result_transition_lock_busy')
 }
 
@@ -994,7 +1066,7 @@ async function persistBackendFailure(
   }
 }
 
-async function persistAgentHold(
+export async function persistAgentHold(
   root: string,
   taskId: string | null,
   reason: HoldReason,
@@ -1018,6 +1090,9 @@ async function persistAgentHold(
     }
     if (attempt === 0) await new Promise(resolve => setTimeout(resolve, 50))
   }
+  // Still busy: leave the hold where the next tick applies it under the lock, so a
+  // contended lock ends in the specific halt rather than a generic no_progress one.
+  await writePendingHold(root, taskId, reason, log)
   return false
 }
 
