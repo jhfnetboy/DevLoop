@@ -1,5 +1,6 @@
 import { applyCleanup, planCleanup, type CleanupPlan, type CleanupResult } from './cleanup.js'
 import { loadState, withStateLock, workspaceArmed } from './persist.js'
+import { integrityHold } from './resume.js'
 import { scanRepo, type RepoStatus } from './status.js'
 import { WORKTREE_BRANCH_PREFIX, worktreeTaskToken } from './worktree.js'
 
@@ -9,10 +10,18 @@ export interface StatusView {
   readonly plan: CleanupPlan
 }
 
-/** The branch of every task the loop has not finished; cleanup never offers these. */
+/** STATE could not be read, so which task branches are live is unknown. */
+export class UnreadableStateError extends Error {}
+
+/**
+ * The branch of every task the loop has not finished; cleanup never offers
+ * these. An unreadable STATE loads as a halted placeholder with no tasks, and an
+ * empty set would then offer every task branch: refuse instead.
+ */
 async function activeBranches(root: string): Promise<Set<string>> {
   if (!await workspaceArmed(root)) return new Set()
   const state = await loadState(root, Date.now())
+  if (integrityHold(state) !== null) throw new UnreadableStateError('state_unreadable')
   const names = new Set<string>()
   for (const task of state.tasks) {
     if (task.status === 'done') continue
@@ -40,13 +49,20 @@ export function confirmedBranches(body: Record<string, unknown>): readonly strin
 }
 
 /**
- * Apply a confirmed cleanup. An armed project may have a loop creating and
- * merging branches, so its state lock is held throughout and the active set is
- * read inside it; `busy` means the loop holds the lock and nothing was touched.
+ * Apply a confirmed cleanup. The state lock is held only to read which task
+ * branches are live, not through the scan and the deletes: a loop that finds
+ * the lock busy when saving a model result drops that result, and a cleanup of
+ * many branches held it for over a second. Nothing needs it longer — git
+ * refuses to delete a branch a worktree has checked out (so a task started
+ * after the read is safe) or one not merged. `busy` means the loop held the
+ * lock at that moment and nothing was touched.
  */
 export async function runCleanup(root: string, confirmed: readonly string[]): Promise<CleanupResult | 'busy'> {
-  const run = async (): Promise<CleanupResult> => applyCleanup(root, confirmed, { activeBranches: await activeBranches(root) })
-  if (!await workspaceArmed(root)) return run()
-  const locked = await withStateLock(root, run)
-  return locked.ok ? locked.value : 'busy'
+  let active = new Set<string>()
+  if (await workspaceArmed(root)) {
+    const locked = await withStateLock(root, () => activeBranches(root))
+    if (!locked.ok) return 'busy'
+    active = locked.value
+  }
+  return applyCleanup(root, confirmed, { activeBranches: active })
 }

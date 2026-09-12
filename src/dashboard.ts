@@ -25,7 +25,7 @@ import {
 } from './projects.js'
 import { inspectReadiness, readinessRefusal, readPlanningDocuments, type PlanningDocument, type Readiness } from './readiness.js'
 import { diagnoseHalt } from './resume.js'
-import { confirmedBranches, runCleanup, statusView } from './status-routes.js'
+import { confirmedBranches, runCleanup, statusView, UnreadableStateError } from './status-routes.js'
 import type { LoopState, Task } from './types.js'
 
 /**
@@ -77,6 +77,8 @@ export interface DashboardDeps {
    * rest. A project run by another process notices on its own next tick.
    */
   readonly onOperatorAction?: (project: Project, verb: DashboardVerb) => void
+  /** Where failures the page only sees as a short refusal are recorded in full. */
+  readonly logError?: (message: string, error: unknown) => void
 }
 
 export interface DashboardAssets {
@@ -435,15 +437,20 @@ export function createDashboardHandler(deps: DashboardDeps): (req: IncomingMessa
       if (path === `${DASHBOARD_PATH}/api/browse`) return browse(req, res, deps, url.searchParams.get('path') ?? '')
       const prefix = `${DASHBOARD_PATH}/api/projects/`
       if (path.startsWith(prefix)) {
-        const [id = '', view] = path.slice(prefix.length).split('/', 2)
-        if (view !== undefined && view !== 'status') return send(res, req, 404, 'text/plain; charset=utf-8', 'not found\n')
+        const segments = path.slice(prefix.length).split('/')
+        const [id = '', view] = segments
+        if (segments.length > 2 || (view !== undefined && view !== 'status')) return send(res, req, 404, 'text/plain; charset=utf-8', 'not found\n')
         const project = findProject(await listProjects(deps.ownRoot, deps.home), id)
         if (!project) return json(res, req, 404, { ok: false, error: { code: 'not-found', message: 'no such project' } })
         if (view === 'status') {
-          // A repository moved or deleted since registration: say so, without git's stderr and paths.
-          const value = await statusView(project.root).catch(() => null)
-          if (value === null) return json(res, req, 422, { ok: false, error: { code: 'refused', message: 'could not read this repository\'s branches' } })
-          return json(res, req, 200, { ok: true, value })
+          // Moved or deleted since registration, or STATE unreadable: say so without git's
+          // stderr or paths, and keep the full error in the log.
+          try {
+            return json(res, req, 200, { ok: true, value: await statusView(project.root) })
+          } catch (error) {
+            deps.logError?.('[dsh-devloop] repository status failed', error)
+            return json(res, req, 422, { ok: false, error: refusalFor(error) })
+          }
         }
         return json(res, req, 200, { ok: true, value: await describeProject(project, deps, now()) })
       }
@@ -565,9 +572,16 @@ async function cleanup(req: IncomingMessage, res: ServerResponse, deps: Dashboar
     const result = await runCleanup(project.root, confirmed)
     if (result === 'busy') return fail(503, 'busy', 'the loop holds this project\'s lock; try again in a moment')
     return json(res, req, 200, { ok: true, value: result })
-  } catch {
-    return fail(422, 'refused', 'could not read this repository\'s branches')
+  } catch (error) {
+    deps.logError?.('[dsh-devloop] cleanup failed', error)
+    return json(res, req, 422, { ok: false, error: refusalFor(error) })
   }
+}
+
+function refusalFor(error: unknown): { code: string, message: string } {
+  return error instanceof UnreadableStateError
+    ? { code: 'refused', message: 'this project\'s STATE cannot be read, so its task branches are unknown; repair it first' }
+    : { code: 'refused', message: 'could not read this repository\'s branches' }
 }
 
 /** Register a repository. Its loop starts at once and idles until it is armed. */
@@ -741,6 +755,7 @@ export function mountDashboard(
             ...deps,
             assets,
             requestRejection: request => host.connection.requestRejection(request),
+            logError: (message, error) => inner.logger.error(message, error),
           }),
         })
         inner.logger.info(`[dsh-devloop] dashboard at ${DASHBOARD_PATH}/`)

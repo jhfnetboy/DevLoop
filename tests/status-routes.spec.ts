@@ -18,8 +18,10 @@ async function setup(prefix: string) {
   const home = await mkdtemp(join(tmpdir(), 'status-home-'))
   await mkdir(join(home, 'devloop'))
   await writeFile(registryPath(home), JSON.stringify({ projects: [{ root }] }), 'utf8')
+  const logged: unknown[] = []
   const handler = createDashboardHandler({
     ownRoot: home, home, presence: () => 'running', requestRejection: () => undefined, assets: { html: '', js: '', css: '' },
+    logError: (_message, error) => { logged.push(error) },
   })
   const call = async (method: string, path: string, body?: unknown, type = 'application/json') => {
     const out = { status: 0, body: '' }
@@ -31,7 +33,7 @@ async function setup(prefix: string) {
     try { parsed = JSON.parse(out.body || '{}') } catch { /* plain-text answers, like 405 */ }
     return { status: out.status, body: out.body, json: parsed }
   }
-  return { root, call }
+  return { root, call, logged }
 }
 
 describe('status and cleanup routes', () => {
@@ -72,11 +74,40 @@ describe('status and cleanup routes', () => {
   })
 
   it('says a vanished repository cannot be read, without git\'s message or its path', async () => {
-    const { root, call } = await setup('route-gone-')
+    const { root, call, logged } = await setup('route-gone-')
     await promisify(execFile)('rm', ['-rf', join(root, '.git')])
     const res = await call('GET', '/status')
     expect(res.status).toBe(422)
     expect(res.body).not.toContain(root)
+    expect(logged).toHaveLength(1) // the full error goes to the log, not the page
     expect((await call('GET', '/other')).status).toBe(404)
+    expect((await call('GET', '/status/x')).status).toBe(404)
+  })
+
+  it('refuses to scan or clean up when STATE cannot be read, instead of offering task branches', async () => {
+    const { root, call } = await setup('route-badstate-')
+    await git(root, 'branch', 'devloop/T1')
+    await mkdir(join(root, '.devloop'))
+    await writeFile(join(root, '.devloop', 'GOAL.md'), '# g\n', 'utf8')
+    await writeFile(join(root, '.devloop', 'STATE.json'), '{ not json', 'utf8') // no journal to recover from
+    const view = await call('GET', '/status')
+    expect(view.status).toBe(422)
+    expect(view.body).toMatch(/STATE cannot be read/)
+    expect((await call('POST', '/cleanup', { branches: ['devloop/T1'] })).status).toBe(422)
+    expect((await git(root, 'rev-parse', '--verify', 'refs/heads/devloop/T1')).stdout).toBeTruthy()
+  })
+
+  it('holds the state lock only to read the live task branches, not through the deletes', async () => {
+    const { root, call } = await setup('route-window-')
+    const names = Array.from({ length: 150 }, (_, i) => `merged-${i}`)
+    for (const name of names) await git(root, 'branch', name)
+    await mkdir(join(root, '.devloop'))
+    await writeFile(join(root, '.devloop', 'GOAL.md'), '# g\n', 'utf8')
+    await saveState(root, emptyState(Date.now()))
+    const cleaning = call('POST', '/cleanup', { branches: names })
+    await new Promise(resolve => setTimeout(resolve, 150)) // well inside 150 sequential deletes
+    const loop = await withStateLock(root, async () => 'got it')
+    expect(loop).toEqual({ ok: true, value: 'got it' }) // a loop saving a result is not refused
+    expect((await cleaning).json.value.deleted).toHaveLength(150)
   })
 })
