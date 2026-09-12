@@ -203,6 +203,13 @@ describe('dashboard projects', () => {
     expect(detail.loop).toBe('stopped')
     // A halt asks for the operator: the home page's first column, aged from when it stopped.
     expect(detail).toMatchObject({ lane: 'needs_you', since: held.updatedAt })
+
+    // Answered "leave it": idle. A different halt since is a new question, and back in the first column.
+    const lane = async () => ((JSON.parse((await call(handler, 'GET', `/devloop/api/projects/${projectId(root)}`)).body) as { value: { lane: string } }).value.lane)
+    const left = await saveState(root, { ...held, acknowledged: { at: held.updatedAt, reason: 'empty_task', taskId: 't2' } }, { expectedRevision: held.revision, action: 'answer:stop' })
+    expect(await lane()).toBe('idle')
+    await saveState(root, { ...left, supervisor: { taskId: 't2', reason: 'scope_violation' } }, { expectedRevision: left.revision, action: 'hold:scope_violation' })
+    expect(await lane()).toBe('needs_you')
     expect(detail.armed).toBe(true)
     expect(detail.halted).toBe(true)
     expect(detail.goal).toBe('# Ship the thing\n')

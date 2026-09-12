@@ -15,6 +15,8 @@ export interface AttentionInput {
   readonly halted: boolean
   readonly loop: 'running' | 'stopped' | 'elsewhere'
   readonly state: Pick<LoopState, 'paused' | 'acknowledged' | 'updatedAt'> | null
+  /** The reason the halt is asking about now, when it asks one. */
+  readonly holdReason: string | null
 }
 
 export interface Attention {
@@ -29,7 +31,9 @@ export function attentionFor(input: AttentionInput): Attention {
   if (input.completed) return { lane: 'done', since: input.state?.updatedAt ?? null }
   // Parked by a person: a pause, or an answer of "leave it" to a halt. Neither asks anything more.
   if (input.state?.paused) return { lane: 'idle', since: input.state.paused.at }
-  if (input.halted && input.state?.acknowledged) return { lane: 'idle', since: input.state.acknowledged.at }
+  // Only for the halt that was answered: a different one since is a new question.
+  const answered = input.state?.acknowledged
+  if (input.halted && answered && answered.reason === input.holdReason) return { lane: 'idle', since: answered.at }
   // A halted loop writes nothing more, so its last write is when it stopped.
   if (input.halted) return { lane: 'needs_you', since: input.state?.updatedAt ?? null }
   // Armed and not halted, but the process meant to run it has stopped: nothing will move by itself.

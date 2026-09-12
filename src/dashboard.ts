@@ -205,9 +205,9 @@ async function readProject(
     lane: 'idle',
     since: null,
   }
-  const placed = (summary: ProjectSummary, state: LoopState | null): ProjectSummary => ({
+  const placed = (summary: ProjectSummary, state: LoopState | null, holdReason: string | null = null): ProjectSummary => ({
     ...summary,
-    ...attentionFor({ ...summary, error: summary.error !== null, state }),
+    ...attentionFor({ ...summary, error: summary.error !== null, state, holdReason }),
   })
 
   try {
@@ -239,7 +239,7 @@ async function readProject(
       costUsdSession: state.usage.costUsdSession,
       costUsdDay: state.usage.costUsdDay,
       updatedAt: state.updatedAt,
-    }, state)
+    }, state, gate?.reason ?? null)
     if (!full) return { summary, extra: null }
     return {
       summary,
