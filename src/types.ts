@@ -205,6 +205,8 @@ export interface TaskContract {
   readonly baseSha?: string
   /** Exact implementation commit to inspect during review. */
   readonly implementationSha?: string
+  /** That commit's size, when it is over the PR budget but inside the elastic band. */
+  readonly overBudget?: string
 }
 
 export interface Route {

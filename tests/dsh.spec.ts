@@ -182,6 +182,20 @@ describe('createBackend from config', () => {
   })
 })
 
+describe('the review of an elastic-band change', () => {
+  it('tells the reviewer the size and asks it to judge it, and tells no one else', () => {
+    const task = makeTask({ id: 'd1', status: 'review_pending', implementationSha: 'a'.repeat(40), overBudget: '230 lines, 6 files' })
+    const input = (type: 'review' | 'delegate', t = task) => runInputFor('/repo', { type, taskId: 'd1' }, baseState({ tasks: [t] }), resolveConfig({}).budget)
+    const review = headlessPrompt(input('review'))
+    expect(review).toContain('over the pull request size budget, inside the band allowed for review (230 lines, 6 files)')
+    expect(review).toMatch(/REWORK naming what to cut.*REPLAN if it bundles work/)
+    // Not in the worker's contract either: it reads .devloop/CONTRACT.json.
+    expect(input('delegate').contract).not.toHaveProperty('overBudget')
+    const { overBudget: _gone, ...within } = task
+    expect(headlessPrompt(input('review', within))).not.toContain('size budget')
+  })
+})
+
 describe('what dsh can report', () => {
   it('reports neither tokens nor a price, because the CLI offers neither', async () => {
     // Locks today's limitation as an assertion: the day dsh gains an output
