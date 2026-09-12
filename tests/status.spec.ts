@@ -68,3 +68,11 @@ describe('scanning a repository', () => {
   })
 })
 
+describe('scanning only a repository of its own', () => {
+  it('refuses a root git would resolve to an enclosing repository', async () => {
+    const outer = await realpath(await mkdtempInRepo('status-outer-'))
+    await initWorkRepo(outer)
+    await promisify(execFile)('rm', ['-rf', join(outer, '.git')]) // inside this checkout: git would answer for DevLoop
+    await expect(scanRepo(outer)).rejects.toThrow(/toplevel/)
+  })
+})

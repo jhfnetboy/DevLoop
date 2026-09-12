@@ -323,7 +323,7 @@ async function readPlain(path: string, max: number): Promise<string | null> {
   }
 }
 
-async function isToplevel(root: string): Promise<boolean> {
+export async function isToplevel(root: string): Promise<boolean> {
   try {
     const top = (await git(root, ['rev-parse', '--show-toplevel'])).trim()
     return top !== '' && await realpath(top) === await realpath(root)

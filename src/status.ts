@@ -1,4 +1,4 @@
-import { baseBranch, git, PROTECT_FLOOR, readPilotConfig, trunkBranches } from './readiness.js'
+import { baseBranch, git, isToplevel, PROTECT_FLOOR, readPilotConfig, trunkBranches } from './readiness.js'
 
 /**
  * What a repository looks like right now, for the page's 仓库状态 panel: the
@@ -37,16 +37,16 @@ export interface ScanOptions {
 }
 
 export async function scanRepo(root: string, options: ScanOptions = {}): Promise<RepoStatus> {
+  // Otherwise git answers for an enclosing repository, and cleanup acts on its branches.
+  if (!await isToplevel(root)) throw new Error('not a git toplevel')
   const pilot = await readPilotConfig(root)
   const base = await baseBranch(root, pilot)
   const trunks = await trunkBranches(root)
   const patterns = pilot?.protectPatterns ?? PROTECT_FLOOR
   const branch = await optional(root, ['symbolic-ref', '--quiet', '--short', 'HEAD'])
   const worktrees = await listWorktrees(root)
-  // Every comparison below is case-folded: on APFS or NTFS `git switch Feature`
-  // over a loose `feature` ref leaves HEAD at refs/heads/Feature while
-  // for-each-ref lists `feature`, and an exact match would then offer the
-  // current branch for deletion — the same ref file.
+  // Case-folded: on APFS `git switch Feature` over a loose `feature` ref makes
+  // HEAD `Feature`; an exact match would offer the current branch for deletion.
   const fold = (name: string): string => name.toLowerCase()
   const current = branch === null ? null : fold(branch)
   const checkedOut = new Set(worktrees.map(w => w.branch).filter((b): b is string => b !== null).map(fold))
