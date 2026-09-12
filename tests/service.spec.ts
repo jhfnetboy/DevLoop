@@ -1387,11 +1387,15 @@ describe('saving a result while the state lock is busy', () => {
     await expect(readFile(target, 'utf8')).resolves.toContain('result_transition_failed')
     expect((await loadState(root, Date.now())).supervisor).toBeNull()
 
-    // Unreadable is not corrupt: a transient failure must not delete a real hold.
+    // Unreadable is not corrupt: a transient failure must not delete a real hold — nor pass unsaid.
     const marker = join(root, '.devloop', 'PENDING_HOLD')
     await writeFile(marker, '{"taskId":null,"reason":"result_transition_failed"}\n', { mode: 0o000 })
+    const logged: string[] = []
+    const error = service.ctx.logger.error.bind(service.ctx.logger)
+    service.ctx.logger.error = (message: unknown): void => { logged.push(String(message)); void error }
     await service.tick()
     await expect(lstat(marker)).resolves.toBeTruthy()
+    expect(logged.some(line => line.includes('PENDING_HOLD marker unreadable'))).toBe(true)
     await chmod(marker, 0o600)
   })
 

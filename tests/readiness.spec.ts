@@ -180,6 +180,8 @@ describe('the planner prompt', () => {
     expect(prompt).toContain(PLAN_CONTEXT)
     for (const name of ['AGENTS.md', 'CLAUDE.md', '.pilot.yml', 'tasks.md', 'roadmap.md']) expect(prompt).toContain(name)
     expect(prompt).toContain('GOAL.md wins')
+    // The PR budget, so tasks are split when planned rather than refused after they are paid for.
+    for (const limit of ['200 changed lines', '5 files', '2 top-level directories', 'tasks of their own']) expect(prompt).toContain(limit)
   })
 })
 
