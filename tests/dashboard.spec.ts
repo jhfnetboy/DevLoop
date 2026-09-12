@@ -342,7 +342,9 @@ describe('dashboard strings', () => {
     const cleanup = await readFile(join(import.meta.dirname, '..', 'src', 'cleanup.ts'), 'utf8')
     const reasons = [...cleanup.matchAll(/code: '([a-zA-Z_]+)'/g)].map(m => m[1]!)
     expect(reasons.length).toBeGreaterThanOrEqual(8)
-    for (const code of [...reasons, 'current', 'trunk', 'pattern', 'worktree', 'active_task']) asked.add(`cleanup.${code}`)
+    const { PROTECTIONS } = await import('../src/cleanup.ts')
+    expect(PROTECTIONS.length).toBeGreaterThanOrEqual(5)
+    for (const code of [...reasons, ...PROTECTIONS]) asked.add(`cleanup.${code}`)
     for (const code of ['glob', 'invalid']) asked.add(`protect.${code}`)
     for (const key of ['retry', 'review', 'accept', 'stop']) asked.add(`summary.${key}`)
     // Every halt code src/resume.ts can send.
