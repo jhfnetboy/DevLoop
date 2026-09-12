@@ -82,8 +82,8 @@ export async function readPrLog(root: string, limit = 100): Promise<PrLogEntry[]
     const entries: PrLogEntry[] = []
     for (const line of lines) {
       try {
-        const value = JSON.parse(line) as { kind?: unknown, taskId?: unknown }
-        if ((value.kind === 'check' || value.kind === 'review') && typeof value.taskId === 'string') entries.push(value as PrLogEntry)
+        const entry = asEntry(JSON.parse(line))
+        if (entry !== null) entries.push(entry)
       } catch {
         // torn final append, or not ours
       }
@@ -94,4 +94,29 @@ export async function readPrLog(root: string, limit = 100): Promise<PrLogEntry[]
   } finally {
     await handle?.close().catch(() => undefined)
   }
+}
+
+const STATUSES = new Set(['passed', 'blocked', 'unavailable'])
+const text = (v: unknown): v is string => typeof v === 'string'
+const texts = (v: unknown): v is string[] => Array.isArray(v) && v.every(text)
+const nullableText = (v: unknown): v is string | null => v === null || text(v)
+
+/**
+ * The whole shape, or nothing. The page renders every field, so a line that
+ * has a kind and a task but not the rest — hand-written, or from an older
+ * build — would take the project page down with it; such a line is dropped.
+ */
+function asEntry(value: unknown): PrLogEntry | null {
+  if (typeof value !== 'object' || value === null) return null
+  const v = value as Record<string, unknown>
+  if (!text(v.at) || !text(v.taskId) || !nullableText(v.head)) return null
+  if (v.kind === 'review') {
+    return text(v.verdict) && nullableText(v.reviewer) ? v as unknown as PrLogEntry : null
+  }
+  if (v.kind !== 'check' || !text(v.status) || !STATUSES.has(v.status) || !texts(v.rules) || !texts(v.blocking)) return null
+  const size = v.size as Record<string, unknown> | null
+  if (size !== null && (typeof size !== 'object' || typeof size.lines !== 'number' || typeof size.files !== 'number' || !texts(size.countedTopDirs))) return null
+  const checker = v.checker as Record<string, unknown> | null
+  if (checker !== null && (typeof checker !== 'object' || !nullableText(checker.rulesVersion) || !nullableText(checker.gitSha))) return null
+  return v as unknown as PrLogEntry
 }
