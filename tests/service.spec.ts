@@ -15,6 +15,7 @@ import { gateFor } from '../src/gate.ts'
 import { resumeLoop } from '../src/operator.ts'
 import { emptyState, loadState, saveState, statePath, withStateLock, workspaceArmed } from '../src/persist.ts'
 import { contractForTask } from '../src/router.ts'
+import type { Task } from '../src/types.ts'
 import DevloopService, { persistAgentHold, persistAgentTransition } from '../src/service.ts'
 import { readPrLog } from '../src/prlog.ts'
 import { planWorktreePath, prepareDelegateWorktree, readContractBaseSha, taskWorktreeHeadSha, worktreePath } from '../src/worktree.ts'
@@ -1438,23 +1439,23 @@ describe('the pre-PR checker gates the review', () => {
   afterEach(() => { for (const service of services.splice(0)) service.stop() })
 
   /** A stand-in checker printing `findings` and exiting `code`; records the argv it got. */
-  async function checker(findings: object[], code: number): Promise<{ argv: string[], seen: string }> {
+  async function checker(findings: object[], code: number, size: object = {}): Promise<{ argv: string[], seen: string }> {
     const dir = await mkdtemp(join(tmpdir(), 'prepr-svc-'))
     const seen = join(dir, 'argv.json')
     await writeFile(join(dir, 'check.mjs'), `import { writeFileSync } from 'node:fs'
 writeFileSync(${JSON.stringify(seen)}, JSON.stringify(process.argv.slice(2)))
-process.stdout.write(${JSON.stringify(JSON.stringify({ checker: { rules_version: '1.1.0' }, size: { lines: 340, files: 7, counted_top_dirs: ['src'] }, findings }))})
+process.stdout.write(${JSON.stringify(JSON.stringify({ checker: { rules_version: '1.1.0' }, size: { lines: 340, files: 7, counted_top_dirs: ['src'], ...size }, findings }))})
 process.exit(${code})
 `, 'utf8')
     return { argv: ['node', join(dir, 'check.mjs')], seen }
   }
 
-  async function runWith(prePrCheck: string[]): Promise<{ root: string, reviews: number }> {
+  async function runWith(prePrCheck: string[], task: Partial<Task> = {}): Promise<{ root: string, reviews: number }> {
     const root = await mkdtempInRepo('devloop-prepr-svc-')
     await mkdir(join(root, '.devloop'))
     await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
     await initWorkRepo(root)
-    await saveState(root, { ...emptyState(Date.now()), tasks: [makeTask({ id: 'd1', status: 'ready', allowedPaths: ['src/**'] })] })
+    await saveState(root, { ...emptyState(Date.now()), tasks: [makeTask({ id: 'd1', status: 'ready', allowedPaths: ['src/**'], ...task })] })
     let reviews = 0
     const backend: AgentBackend = {
       async run(input: AgentRunInput): Promise<AgentRunResult> {
@@ -1493,6 +1494,20 @@ process.exit(${code})
     expect(log.map(e => e.kind)).toEqual(['check', 'review'])
     expect(log[0]).toMatchObject({ taskId: 'd1', status: 'passed', size: { lines: 340, files: 7 }, rules: ['B1'], blocking: [], checker: { rulesVersion: '1.1.0' } })
     expect(log[1]).toMatchObject({ taskId: 'd1', verdict: 'PASS', reviewer: 'test/reviewer', head: log[0]?.head })
+  })
+
+  it('reviews an elastic-band change with its size on the task, and logs it beside the planner\'s estimate', async () => {
+    const limits = { max_lines: 200, max_files: 5, max_top_dirs: 2, elastic_lines: 260, elastic_files: 6, elastic_top_dirs: 3 }
+    const { argv } = await checker([{ rule: 'SZ-1', severity: 'review', message: 'elastic' }], 0, { lines: 230, files: 6, band: 'elastic', limits })
+    const { root, reviews } = await runWith(argv, { estimate: { lines: 150, files: 4 } })
+    expect(reviews).toBe(1)
+    expect((await loadState(root, Date.now())).tasks[0]?.overBudget).toBe('230 lines, 6 files, 1 top-level dirs; budget 200/5/2, elastic to 260/6/3')
+    expect((await readPrLog(root))[0]).toMatchObject({ kind: 'check', band: 'elastic', estimate: { lines: 150, files: 4 }, size: { lines: 230, files: 6 } })
+
+    // Within budget: no size on the task, and a task the planner gave no estimate logs none.
+    const plain = await runWith((await checker([], 0, { lines: 12, files: 1, band: 'normal' })).argv)
+    expect((await loadState(plain.root, Date.now())).tasks[0]?.overBudget).toBeUndefined()
+    expect((await readPrLog(plain.root))[0]).toMatchObject({ band: 'normal', estimate: null })
   })
 
   it.each([

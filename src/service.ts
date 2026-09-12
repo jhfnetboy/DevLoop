@@ -16,7 +16,7 @@ import {
 import { ConfigSchema, resolveConfig, type Config } from './config.js'
 import { ClaudeCliBackend, CodexCliBackend } from './cli.js'
 import { runAcceptanceChecks } from './acceptance.js'
-import { blockedOnlyBySize, runPreprCheck } from './prepr.js'
+import { blockedOnlyBySize, runPreprCheck, type PreprResult } from './prepr.js'
 import { appendPrLog, checkEntry } from './prlog.js'
 import { ForgePrBackend } from './forge.js'
 import { DshHeadlessBackend } from './dsh.js'
@@ -377,6 +377,7 @@ export class ProjectLoop {
               abort.signal,
             )
             let implementationSha: string | undefined
+            let overBudget: string | undefined
             let transitionAllowed = dispatched?.status === 'started' && dispatched.outcome !== undefined
             if (transitionAllowed && action.type === 'delegate' && dispatched?.outcome?.kind === 'implementation'
               && dispatched.outcome.outcome === 'completed' && outcome.value.worktreeRoot) {
@@ -407,13 +408,16 @@ export class ProjectLoop {
                     ? null
                     : await runPreprCheck(this.config.prePrCheck, this.config.prePrProfile, outcome.value.worktreeRoot, base, this.config.prePrTimeoutMinutes * 60_000)
                   // Logged whatever it said, before any hold: the budget is to be judged on these lines.
-                  if (check !== null) await appendPrLog(this.config.root, checkEntry(action.taskId, implementationSha ?? null, check, Date.now()), this.ctx.logger)
+                  const estimate = outcome.value.result.state.tasks.find(task => task.id === action.taskId)?.estimate ?? null
+                  if (check !== null) await appendPrLog(this.config.root, checkEntry(action.taskId, implementationSha ?? null, check, Date.now(), estimate), this.ctx.logger)
                   if (check === null || check.status === 'unavailable') throw new Error(`prepr_unavailable: ${check?.detail ?? 'the task has no base commit'}`)
                   if (check.status === 'blocked') {
                     const rules = [...new Set(check.findings.filter(f => f.severity === 'block').map(f => f.rule))].join(',')
                     if (!blockedOnlyBySize(check)) throw new Error(`prepr_blocked: ${rules}`)
                     throw new Error(`task_over_budget: ${check.size ? `${String(check.size.lines)} lines, ${String(check.size.files)} files` : rules}`)
                   }
+                  // Over the budget but inside its elastic band: reviewed, with the size named.
+                  if (check.band === 'elastic') overBudget = elasticSummary(check)
                 }
               } catch (error) {
                 transitionAllowed = false
@@ -450,7 +454,7 @@ export class ProjectLoop {
                   this.config.root,
                   action,
                   { ...dispatched, outcome: agentOutcome },
-                  implementationSha,
+                  implementationSha === undefined ? undefined : { sha: implementationSha, ...(overBudget === undefined ? {} : { overBudget }) },
                   this.ctx.logger,
                 )
                 if (action.type === 'review' && agentOutcome.kind === 'review') {
@@ -999,6 +1003,17 @@ async function persistParentCommitHold(
 export const RESULT_LOCK_DEADLINE_MS = 60_000
 const LOCK_RETRY_MS = 100
 
+/** What the reviewer is told about an elastic-band change: its size against the budget the checker applied. */
+export function elasticSummary(check: PreprResult): string {
+  const size = check.size
+  const parts = size ? [`${String(size.lines)} lines`, `${String(size.files)} files`, `${String(size.countedTopDirs.length)} top-level dirs`] : ['size unknown']
+  const l = check.limits ?? {}
+  const budget = [l.max_lines, l.max_files, l.max_top_dirs].every(n => n !== undefined)
+    ? `; budget ${String(l.max_lines)}/${String(l.max_files)}/${String(l.max_top_dirs)}${[l.elastic_lines, l.elastic_files, l.elastic_top_dirs].every(n => n !== undefined) ? `, elastic to ${String(l.elastic_lines)}/${String(l.elastic_files)}/${String(l.elastic_top_dirs)}` : ''}`
+    : ''
+  return `${parts.join(', ')}${budget}`.slice(0, 200)
+}
+
 /**
  * Fold a validated result into STATE. A busy lock used to drop the result after
  * one try, and the loop halted on no_progress 15 minutes later — a resume then
@@ -1009,7 +1024,7 @@ export async function persistAgentTransition(
   root: string,
   action: AgentAction,
   dispatched: AgentRunResult & { readonly outcome: NonNullable<AgentRunResult['outcome']> },
-  implementationSha: string | undefined,
+  commit: { readonly sha: string, readonly overBudget?: string } | undefined,
   log: { error(message: string, ...rest: unknown[]): void },
   deadlineMs = RESULT_LOCK_DEADLINE_MS,
 ): Promise<void> {
@@ -1020,7 +1035,7 @@ export async function persistAgentTransition(
     const next = {
       ...applyAgentResult(current, action, dispatched.outcome, {
         agent: dispatched.agent ?? 'unknown',
-        ...(implementationSha === undefined ? {} : { implementationSha }),
+        ...(commit === undefined ? {} : { implementationSha: commit.sha, overBudget: commit.overBudget }),
       }),
       updatedAt: new Date(now).toISOString(),
     }

@@ -2,6 +2,7 @@ import { constants, open } from 'node:fs/promises'
 import { join } from 'node:path'
 import { assertLocalDevloopDir, DEVLOOP_DIR } from './persist.js'
 import type { PreprResult } from './prepr.js'
+import { sizeEstimate, type SizeEstimate } from './result.js'
 
 /**
  * One line per task check and per review verdict, in `.devloop/PR-LOG.jsonl`.
@@ -22,6 +23,8 @@ export type PrLogEntry =
       readonly size: PreprResult['size']
       /** Absent on lines written before the band existed. */
       readonly band?: PreprResult['band']
+      /** The planner's estimate for the task, beside the count above; absent on older lines. */
+      readonly estimate?: SizeEstimate | null
       readonly rules: readonly string[]
       readonly blocking: readonly string[]
       readonly checker: PreprResult['checker']
@@ -38,7 +41,7 @@ export type PrLogEntry =
 export const PR_LOG_FILE = 'PR-LOG.jsonl'
 const TAIL_BYTES = 256 * 1024
 
-export function checkEntry(taskId: string, head: string | null, result: PreprResult, now: number): PrLogEntry {
+export function checkEntry(taskId: string, head: string | null, result: PreprResult, now: number, estimate: SizeEstimate | null = null): PrLogEntry {
   return {
     kind: 'check',
     at: new Date(now).toISOString(),
@@ -47,6 +50,7 @@ export function checkEntry(taskId: string, head: string | null, result: PreprRes
     status: result.status,
     size: result.size,
     band: result.band,
+    estimate,
     rules: [...new Set(result.findings.map(f => f.rule))],
     blocking: [...new Set(result.findings.filter(f => f.severity === 'block').map(f => f.rule))],
     checker: result.checker,
@@ -119,6 +123,7 @@ function asEntry(value: unknown): PrLogEntry | null {
   }
   if (v.kind !== 'check' || !text(v.status) || !STATUSES.has(v.status) || !texts(v.rules) || !texts(v.blocking)) return null
   if (v.band !== undefined && v.band !== null && !BANDS.has(v.band as string)) return null
+  if (v.estimate !== undefined && v.estimate !== null && sizeEstimate(v.estimate) === null) return null
   const size = v.size as Record<string, unknown> | null
   if (size !== null && (typeof size !== 'object' || typeof size.lines !== 'number' || typeof size.files !== 'number' || !texts(size.countedTopDirs))) return null
   const checker = v.checker as Record<string, unknown> | null
