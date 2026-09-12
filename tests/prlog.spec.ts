@@ -36,6 +36,28 @@ describe('the PR log', () => {
     expect(await readPrLog(root)).toEqual([])
   })
 
+  it('drops the partial line a long file\'s tail starts in, and never reads through a symlinked .devloop', async () => {
+    const root = await project()
+    const padded = { ...review('BIG'), reviewer: 'x'.repeat(300 * 1024) } // one line longer than the tail window
+    await appendPrLog(root, padded, { error() {} })
+    await appendPrLog(root, review('T1'), { error() {} })
+    expect((await readPrLog(root)).map(e => e.taskId)).toEqual(['T1'])
+
+    // A last line exactly as long as the window, so the window begins on a line boundary: it must survive.
+    const aligned = await project()
+    await appendPrLog(aligned, review('FIRST'), { error() {} })
+    const bare = `${JSON.stringify({ ...review('EDGE'), reviewer: '' })}\n`
+    await appendPrLog(aligned, { ...review('EDGE'), reviewer: 'y'.repeat(256 * 1024 - Buffer.byteLength(bare)) }, { error() {} })
+    expect((await readPrLog(aligned)).map(e => e.taskId)).toEqual(['EDGE'])
+
+    const elsewhere = await mkdtemp(join(tmpdir(), 'prlog-linked-'))
+    await mkdir(join(elsewhere, '.devloop'))
+    await appendPrLog(elsewhere, review('OUT'), { error() {} })
+    const linked = await mkdtemp(join(tmpdir(), 'prlog-root-'))
+    await symlink(join(elsewhere, '.devloop'), join(linked, '.devloop'))
+    expect(await readPrLog(linked)).toEqual([])
+  })
+
   it('keeps only the newest entries', async () => {
     const root = await project()
     for (let i = 0; i < 5; i += 1) await appendPrLog(root, review(`T${i}`), { error() {} })

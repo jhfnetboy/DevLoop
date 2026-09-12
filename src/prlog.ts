@@ -68,13 +68,17 @@ export async function appendPrLog(root: string, entry: PrLogEntry, log: { error(
 export async function readPrLog(root: string, limit = 100): Promise<PrLogEntry[]> {
   let handle
   try {
+    await assertLocalDevloopDir(root) // as on append: a symlinked .devloop is not followed
     handle = await open(join(root, DEVLOOP_DIR, PR_LOG_FILE), constants.O_RDONLY | constants.O_NOFOLLOW)
     const { size } = await handle.stat()
-    const start = Math.max(0, size - TAIL_BYTES)
+    // One byte before the window too: then the first piece is either empty (the
+    // window began exactly on a line) or a real fragment, and dropping it is right
+    // either way. Without it, a window that began on a line boundary lost that line.
+    const start = Math.max(0, size - TAIL_BYTES - 1)
     const buffer = Buffer.alloc(size - start)
     await handle.read(buffer, 0, buffer.length, start)
     const lines = buffer.toString('utf8').split('\n')
-    if (start > 0) lines.shift() // a tail that starts mid-file starts mid-line
+    if (start > 0) lines.shift()
     const entries: PrLogEntry[] = []
     for (const line of lines) {
       try {
