@@ -37,12 +37,17 @@ describe('readiness to start a loop', () => {
     expect(check(r, 'plan')?.message).not.toContain('roadmap.md')
     // Advice, not a refusal: no .pilot.yml.
     expect(check(r, 'pilot')).toMatchObject({ ok: false, blocking: false })
+    // The same findings as codes and values, for a page to say in its reader's language.
+    expect(r.checks.map(c => c.code)).toEqual(['branch.ok', 'trunk.ok', 'clean.ok', 'pilot.missing', 'plan.found'])
+    expect(check(r, 'plan')?.params).toEqual({ dir: 'docs/agent', files: 'tasks.md' })
+    expect(check(r, 'branch')?.params).toEqual({ branch: 'devloop/feature' })
   })
 
   it('refuses the trunk, because DevLoop would merge straight into it', async () => {
     const r = await inspectReadiness(await repoOn(null, 'ready-trunk-'))
     expect(r.ready).toBe(false)
-    expect(check(r, 'trunk')).toMatchObject({ ok: false, blocking: true })
+    expect(check(r, 'trunk')).toMatchObject({ ok: false, blocking: true, code: 'trunk.onTrunk', params: { branch: 'main', base: 'main' } })
+    expect(check(r, 'trunk')?.params.command).toMatch(/switch -c devloop\/<goal>$/)
     expect(readinessRefusal(r)).toMatch(/switch -c devloop/)
   })
 
@@ -54,6 +59,7 @@ describe('readiness to start a loop', () => {
     const r = await inspectReadiness(root)
     expect(r.ready).toBe(false)
     expect(check(r, 'clean')?.message).toMatch(/1 个/)
+    expect(check(r, 'clean')).toMatchObject({ code: 'clean.dirty', params: { n: '1' } })
   })
 
   it('still refuses the trunk when a tag has the same name as the branch', async () => {
@@ -77,7 +83,7 @@ describe('readiness to start a loop', () => {
     await git(root, 'switch', '-q', '--detach')
     const r = await inspectReadiness(root)
     expect(r.branch).toBeNull()
-    expect(check(r, 'branch')).toMatchObject({ ok: false, blocking: true })
+    expect(check(r, 'branch')).toMatchObject({ ok: false, blocking: true, code: 'branch.detached' })
     expect(r.ready).toBe(false)
   })
 
@@ -136,6 +142,7 @@ describe('readiness to start a loop', () => {
     const r = await inspectReadiness(root)
     expect(check(r, 'plan')).toMatchObject({ ok: true, blocking: false })
     expect(check(r, 'plan')?.message).toContain('仓库外')
+    expect(r.checks.filter(c => c.id === 'pilot' || c.id === 'plan').map(c => c.code)).toEqual(['pilot.okExternal', 'plan.external'])
   })
 
   it('never looks outside the repository through docs_dir', async () => {

@@ -329,6 +329,11 @@ describe('dashboard strings', () => {
     for (const step of ['prepare', 'branch', 'add', 'start', 'watch', 'finish']) asked.add(`guide.${step}`).add(`guide.${step}.text`)
     for (const key of ['passed', 'blocked', 'unavailable', 'elastic', 'over']) asked.add(`prlog.${key}`)
     for (const col of ['time', 'task', 'result', 'size', 'rules', 'version', 'commit']) asked.add(`prlog.col.${col}`)
+    // Every code src/readiness.ts sends (a test there pins which check sends which).
+    const readiness = await readFile(join(import.meta.dirname, '..', 'src', 'readiness.ts'), 'utf8')
+    const codes = [...readiness.matchAll(/'((?:repo|branch|trunk|clean|pilot|plan)\.[a-zA-Z]+)'/g)].map(m => m[1]!)
+    expect(codes.length).toBeGreaterThanOrEqual(12)
+    for (const code of codes) asked.add(`ready.${code}`)
     expect(asked.size).toBeGreaterThan(40)
     for (const key of asked) {
       expect(STRINGS[key], key).toHaveLength(3)
