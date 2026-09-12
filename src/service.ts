@@ -16,6 +16,7 @@ import {
 import { ConfigSchema, resolveConfig, type Config } from './config.js'
 import { ClaudeCliBackend, CodexCliBackend } from './cli.js'
 import { runAcceptanceChecks } from './acceptance.js'
+import { blockedOnlyBySize, runPreprCheck } from './prepr.js'
 import { ForgePrBackend } from './forge.js'
 import { DshHeadlessBackend } from './dsh.js'
 import { CordisHarnessHost, HarnessSubagentBackend } from './harness.js'
@@ -393,6 +394,20 @@ export class ProjectLoop {
                 if (failure) {
                   this.ctx.logger.error(`[dsh-devloop] acceptance failed: ${failure.argv.join(' ')} — ${failure.detail}`)
                   throw new Error(`acceptance_failed: ${failure.argv.join(' ')}`)
+                }
+                // PR-daemon's mechanical rules, the PR size budget among them, before any
+                // reviewer is paid. A checker that cannot say is a stop, never a pass.
+                if (this.config.prePrCheck.length > 0) {
+                  const base = input.contract.baseSha
+                  const check = typeof base !== 'string' || base === ''
+                    ? null
+                    : await runPreprCheck(this.config.prePrCheck, this.config.prePrProfile, outcome.value.worktreeRoot, base, this.config.prePrTimeoutMinutes * 60_000)
+                  if (check === null || check.status === 'unavailable') throw new Error(`prepr_unavailable: ${check?.detail ?? 'the task has no base commit'}`)
+                  if (check.status === 'blocked') {
+                    const rules = [...new Set(check.findings.filter(f => f.severity === 'block').map(f => f.rule))].join(',')
+                    if (!blockedOnlyBySize(check)) throw new Error(`prepr_blocked: ${rules}`)
+                    throw new Error(`task_over_budget: ${check.size ? `${String(check.size.lines)} lines, ${String(check.size.files)} files` : rules}`)
+                  }
                 }
               } catch (error) {
                 transitionAllowed = false
@@ -1108,6 +1123,9 @@ export async function persistAgentHold(
 function implementationFailureReason(error: unknown): HoldReason {
   const message = error instanceof Error ? error.message : ''
   if (message.startsWith('acceptance_failed:')) return `acceptance_failed:${message.slice('acceptance_failed:'.length).trim()}`
+  for (const kind of ['task_over_budget', 'prepr_blocked', 'prepr_unavailable'] as const) {
+    if (message.startsWith(`${kind}:`)) return `${kind}:${message.slice(kind.length + 1).trim()}`
+  }
   if (message.startsWith('scope_violation:')) return 'scope_violation'
   if (message.startsWith('scope_check:')) return 'scope_check_failed'
   if (message === 'empty_task') return 'empty_task'
