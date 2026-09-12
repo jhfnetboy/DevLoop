@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs'
 import { mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -45,6 +46,16 @@ describe('running the pre-PR checker', () => {
     expect(blockedOnlyBySize(mixed)).toBe(false)
   })
 
+  it('keeps a block found after hundreds of review notes, and never calls a block-free result size-only', async () => {
+    const many = [...Array.from({ length: 250 }, (_, i) => review(`R${i}`)), block('B2')]
+    const result = await runPreprCheck((await fakeChecker(json(many), 1)).argv, 'devloop', tmpdir(), 'b', 5_000)
+    expect(result.status).toBe('blocked')
+    expect(result.findings[0]).toEqual(block('B2'))
+    expect(result.findings).toHaveLength(200)
+    const clean = await runPreprCheck((await fakeChecker(json([review('B1')]), 0)).argv, 'devloop', tmpdir(), 'b', 5_000)
+    expect(blockedOnlyBySize(clean)).toBe(false)
+  })
+
   // Anything the checker cannot vouch for is unavailable, never a pass.
   it.each([
     ['exit 2 (usage or git error)', json([]), 2],
@@ -63,5 +74,31 @@ describe('running the pre-PR checker', () => {
     expect((await runPreprCheck([], 'devloop', tmpdir(), 'b', 5_000)).detail).toBe('no checker configured')
     const slow = await runPreprCheck((await fakeChecker(json([]), 0, 2_000)).argv, 'devloop', tmpdir(), 'b', 200)
     expect(slow).toMatchObject({ status: 'unavailable', detail: 'checker timed out' })
+  })
+})
+
+// The contract against the checker itself, where it is installed (not in CI).
+const REAL = join(process.env.HOME ?? '', 'Dev/tools/PR-daemon/scripts/pre-pr-check.sh')
+describe.skipIf(!existsSync(REAL))('against the installed PR-daemon checker', () => {
+  it('passes a small change and blocks an oversized one on size alone', async () => {
+    const { execFile } = await import('node:child_process')
+    const { promisify } = await import('node:util')
+    const git = (root: string, ...args: string[]) => promisify(execFile)('git', ['-C', root, '-c', 'user.email=t@t', '-c', 'user.name=t', ...args])
+    const root = await mkdtemp(join(tmpdir(), 'prepr-real-'))
+    await git(root, 'init', '-q', '-b', 'main')
+    await git(root, 'commit', '-q', '--allow-empty', '-m', 'base')
+    const base = (await git(root, 'rev-parse', 'HEAD')).stdout.trim()
+    await writeFile(join(root, 'small.ts'), 'export const one = 1\n', 'utf8')
+    await git(root, 'add', '.')
+    await git(root, 'commit', '-q', '-m', 'small')
+    expect((await runPreprCheck(['bash', REAL], 'devloop', root, base, 60_000)).status).toBe('passed')
+
+    await writeFile(join(root, 'big.ts'), Array.from({ length: 300 }, (_, i) => `export const v${i} = ${i}`).join('\n') + '\n', 'utf8')
+    await git(root, 'add', '.')
+    await git(root, 'commit', '-q', '-m', 'big')
+    const big = await runPreprCheck(['bash', REAL], 'devloop', root, base, 60_000)
+    expect(big.status).toBe('blocked')
+    expect(blockedOnlyBySize(big)).toBe(true)
+    expect(big.checker?.rulesVersion).toMatch(/^\d+\.\d+\.\d+$/)
   })
 })
