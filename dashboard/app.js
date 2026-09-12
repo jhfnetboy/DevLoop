@@ -429,7 +429,7 @@ function haltPanel(p) {
   return el('section', { class: 'panel' },
     el('h3', {}, p.paused ? t('badge.paused') : t('halt.title')),
     p.haltReasons && p.haltReasons.length
-      ? el('ul', { class: 'plain' }, p.haltReasons.map(r => el('li', {}, r)))
+      ? el('ul', { class: 'plain' }, p.haltReasons.map((r, i) => el('li', {}, haltText(p.haltDetails && p.haltDetails[i], r))))
       : el('p', { class: 'muted' }, '—'),
     p.supervisor ? el('p', { class: 'note' }, p.supervisor.taskId ? t('halt.holdTask', { reason: p.supervisor.reason, task: p.supervisor.taskId }) : t('halt.hold', { reason: p.supervisor.reason })) : null,
     p.acknowledged ? el('p', { class: 'note' }, t('halt.acknowledged', { at: time(p.acknowledged.at) })) : null,
@@ -439,6 +439,15 @@ function haltPanel(p) {
         () => postJson(`${API}/projects/${p.id}/resume`, { revision: p.revision }))),
     el('p', { class: 'note' }, t('halt.cliNote')),
   )
+}
+
+// One halt reason in the reader's language, when the server sent its code; the English otherwise.
+function haltText(detail, fallback) {
+  if (!detail) return fallback
+  const params = { ...detail.params }
+  if (params.at) params.at = time(params.at)
+  if (params.status) params.status = STATUS[params.status] ? STATUS[params.status][0] : params.status
+  return serverText('haltReason', detail.code, params, fallback)
 }
 
 // Who did what, as the route identities STATE records: the three-way split made visible.

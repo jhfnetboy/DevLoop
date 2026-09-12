@@ -345,11 +345,23 @@ describe('dashboard strings', () => {
     for (const code of [...reasons, 'current', 'trunk', 'pattern', 'worktree', 'active_task']) asked.add(`cleanup.${code}`)
     for (const code of ['glob', 'invalid']) asked.add(`protect.${code}`)
     for (const key of ['retry', 'review', 'accept', 'stop']) asked.add(`summary.${key}`)
+    // Every halt code src/resume.ts can send.
+    const resume = await readFile(join(import.meta.dirname, '..', 'src', 'resume.ts'), 'utf8')
+    const haltCodes = /readonly code: ([^\n]+)/.exec(resume)?.[1]?.match(/'([a-z_]+)'/g)?.map(c => c.slice(1, -1)) ?? []
+    expect(haltCodes.length).toBe(7)
+    for (const code of haltCodes) asked.add(`haltReason.${code}`)
     expect(asked.size).toBeGreaterThan(40)
     for (const key of asked) {
       expect(STRINGS[key], key).toHaveLength(3)
       for (const text of STRINGS[key]!) expect(text.trim(), key).not.toBe('')
     }
+  })
+
+  it('defines each key once: a second definition would silently replace the first', async () => {
+    const source = (await loadDashboardAssets(dashboardAssetsDir())).i18n
+    const keys = [...source.matchAll(/^ {2}'([^']+)':/gm)].map(m => m[1]!)
+    expect(keys.length).toBeGreaterThan(300)
+    expect(keys.filter((key, i) => keys.indexOf(key) !== i)).toEqual([])
   })
 
   it('defaults to English, and fills a template in the chosen language', async () => {
