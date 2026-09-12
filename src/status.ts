@@ -15,6 +15,8 @@ export interface WorktreeStatus {
   readonly path: string
   readonly branch: string | null // null when detached
   readonly dirty: boolean
+  /** The main checkout: the first `git worktree list` entry, whatever HEAD points at. */
+  readonly primary: boolean
 }
 
 export interface RepoStatus {
@@ -84,7 +86,7 @@ async function listWorktrees(root: string): Promise<WorktreeStatus[]> {
     if (path === null) return
     const status = await optional(path, ['status', '--porcelain'])
     // Unreadable counts as dirty: it is the answer that keeps a worktree's files.
-    out.push({ path, branch, dirty: status === null || status.trim() !== '' })
+    out.push({ path, branch, dirty: status === null || status.trim() !== '', primary: out.length === 0 })
     path = null
     branch = null
   }

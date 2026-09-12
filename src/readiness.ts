@@ -367,7 +367,17 @@ export async function git(root: string, args: readonly string[]): Promise<string
     encoding: 'utf8',
     timeout: 10_000,
     // A status for a web page must not take the index lock from a loop that is mid-merge.
-    env: { ...process.env, GIT_PAGER: 'cat', GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0' },
+    env: { ...repoNeutralEnv(), GIT_PAGER: 'cat', GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0' },
   })
   return stdout
+}
+
+/**
+ * The process environment without the variables that point git at a repository.
+ * `-C root` alone loses to them: an inherited GIT_DIR would make every read and
+ * the cleanup's `branch -d` act on some other repository.
+ */
+function repoNeutralEnv(): NodeJS.ProcessEnv {
+  const { GIT_DIR: _dir, GIT_WORK_TREE: _tree, GIT_INDEX_FILE: _index, ...rest } = process.env
+  return rest
 }
