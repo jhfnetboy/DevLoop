@@ -327,6 +327,8 @@ describe('dashboard strings', () => {
     for (const col of ['id', 'title', 'status', 'tier', 'attempts', 'reviews', 'verdict']) asked.add(`tasks.col.${col}`)
     for (const doc of ['roadmap', 'tasks', 'progress', 'acceptance', 'architecture', 'spec', 'research']) asked.add(`docs.${doc}.md`)
     for (const step of ['prepare', 'branch', 'add', 'start', 'watch', 'finish']) asked.add(`guide.${step}`).add(`guide.${step}.text`)
+    for (const key of ['passed', 'blocked', 'unavailable', 'elastic', 'over']) asked.add(`prlog.${key}`)
+    for (const col of ['time', 'task', 'result', 'size', 'rules', 'version', 'commit']) asked.add(`prlog.col.${col}`)
     expect(asked.size).toBeGreaterThan(40)
     for (const key of asked) {
       expect(STRINGS[key], key).toHaveLength(3)
