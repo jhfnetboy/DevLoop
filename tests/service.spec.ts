@@ -1400,6 +1400,17 @@ describe('saving a result while the state lock is busy', () => {
     await chmod(marker, 0o600)
   })
 
+  it('says nothing when there is no marker at all', async () => {
+    const root = await planned('devloop-pending-none-')
+    const service = new DevloopService(new Context(), resolveConfig({ root, tickIntervalMs: 60_000, enabled: false }), new RecordingBackend())
+    services.push(service)
+    const logged: string[] = []
+    service.ctx.logger.error = (message: unknown): void => { logged.push(String(message)) }
+    await service.tick()
+    await service.tick()
+    expect(logged.filter(line => line.includes('PENDING_HOLD'))).toEqual([])
+  })
+
   it('never treats a directory in the marker\'s place as a hold', async () => {
     const root = await planned('devloop-pending-dir-')
     await mkdir(join(root, '.devloop', 'PENDING_HOLD'))
@@ -1495,6 +1506,8 @@ process.exit(${code})
     expect(state.supervisor?.reason).toMatch(reason)
     expect(state.tasks[0]?.status).not.toBe('review_pending')
     // Held or not, what the checker said is logged; a checker with no verdict logs that too.
-    expect((await readPrLog(root)).map(e => e.kind === 'check' ? e.status : e.kind)).toEqual([code === 2 ? 'unavailable' : 'blocked'])
+    const log = await readPrLog(root)
+    expect(log.map(e => e.kind === 'check' ? e.status : e.kind)).toEqual([code === 2 ? 'unavailable' : 'blocked'])
+    expect(log[0]?.kind === 'check' ? log[0].blocking : null).toEqual(findings.filter(f => (f as { severity: string }).severity === 'block').map(f => (f as { rule: string }).rule))
   })
 })
