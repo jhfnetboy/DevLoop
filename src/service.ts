@@ -27,7 +27,7 @@ import { applyRunSignals, refundAction, rollCostWindows } from './budget.js'
 import { runTick, type TickResult } from './tick.js'
 import { mountDashboard, type LoopPresence } from './dashboard.js'
 import { browseRoot, dshHome, listProjects } from './projects.js'
-import { trunkBranches } from './readiness.js'
+import { currentBranch, trunkBranches } from './readiness.js'
 import type { BudgetUsage, HoldReason, LoopState } from './types.js'
 import { RUNNER_REAP_MS } from './spawn.js'
 import { applyAgentResult } from './transition.js'
@@ -232,6 +232,14 @@ export class ProjectLoop {
                 result = {
                   ...result,
                   state: stampTaskBaseSha(result.state, result.action.taskId, baseSha),
+                }
+              }
+              // Once, at the first delegate: the branch every later task pull request targets.
+              // A trunk or a detached HEAD is left unrecorded, and the merge guards say why.
+              if (result.state.workBranch === undefined) {
+                const branch = await currentBranch(this.config.root)
+                if (branch !== null && !(await trunkBranches(this.config.root)).has(branch.toLowerCase())) {
+                  result = { ...result, state: { ...result.state, workBranch: branch } }
                 }
               }
             } catch (error) {

@@ -187,6 +187,12 @@ export interface LoopState {
   readonly acknowledged?: Acknowledgement
   /** Set by `devloop pause` or the dashboard; cleared by resume. */
   readonly paused?: Pause
+  /**
+   * The branch the loop works on, as it was at the first delegate: what task
+   * pull requests target and what the release pull request brings to trunk.
+   * Absent until then, and on a loop that was started detached or on a trunk.
+   */
+  readonly workBranch?: string
   readonly updatedAt: string
 }
 
