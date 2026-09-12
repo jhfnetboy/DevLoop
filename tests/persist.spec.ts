@@ -194,6 +194,19 @@ describe('persist and tick', () => {
     }
   })
 
+  it('keeps the work branch across a save, and treats one that could pass as an option as invalid', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'devloop-'))
+    await mkdir(join(root, '.devloop'))
+    await saveState(root, { ...emptyState(0), workBranch: 'devloop/feature' })
+    expect((await loadState(root, 1)).workBranch).toBe('devloop/feature')
+    for (const workBranch of ['', '--base=main', 'a b', 'x'.repeat(256)]) {
+      const bad = await mkdtemp(join(tmpdir(), 'devloop-'))
+      await mkdir(join(bad, '.devloop'))
+      await writeFile(join(bad, '.devloop', 'STATE.json'), JSON.stringify({ ...emptyState(0), workBranch }), 'utf8')
+      expect((await loadState(bad, 1)).supervisor?.reason, workBranch).toBe('invalid_state')
+    }
+  })
+
   it('halts when persisted attempts are negative', async () => {
     const root = await mkdtemp(join(tmpdir(), 'devloop-'))
     await mkdir(join(root, '.devloop'))

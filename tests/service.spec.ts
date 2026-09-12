@@ -19,7 +19,7 @@ import type { Task } from '../src/types.ts'
 import DevloopService, { persistAgentHold, persistAgentTransition } from '../src/service.ts'
 import { readPrLog } from '../src/prlog.ts'
 import { planWorktreePath, prepareDelegateWorktree, readContractBaseSha, taskWorktreeHeadSha, worktreePath } from '../src/worktree.ts'
-import { initWorkRepo, makeTask, mkdtempInRepo } from './helpers.ts'
+import { initGitRepo, initWorkRepo, makeTask, mkdtempInRepo } from './helpers.ts'
 
 async function waitForAction(root: string, type: string, timeoutMs = 10_000): Promise<void> {
   const start = Date.now()
@@ -1450,11 +1450,12 @@ process.exit(${code})
     return { argv: ['node', join(dir, 'check.mjs')], seen }
   }
 
-  async function runWith(prePrCheck: string[], task: Partial<Task> = {}): Promise<{ root: string, reviews: number }> {
+  async function runWith(prePrCheck: string[], task: Partial<Task> = {}, onTrunk = false): Promise<{ root: string, reviews: number }> {
     const root = await mkdtempInRepo('devloop-prepr-svc-')
     await mkdir(join(root, '.devloop'))
     await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
-    await initWorkRepo(root)
+    if (onTrunk) await initGitRepo(root)
+    else await initWorkRepo(root)
     await saveState(root, { ...emptyState(Date.now()), tasks: [makeTask({ id: 'd1', status: 'ready', allowedPaths: ['src/**'], ...task })] })
     let reviews = 0
     const backend: AgentBackend = {
@@ -1489,6 +1490,8 @@ process.exit(${code})
     expect(args[args.indexOf('--base') + 1]).toBe(task?.baseSha)
     expect(task?.baseSha).not.toBe(task?.implementationSha)
     expect(args[args.indexOf('--profile') + 1]).toBe('devloop')
+    // The branch the loop works on is recorded at the first delegate: later task pull requests target it.
+    expect((await loadState(root, Date.now())).workBranch).toBe('work')
     // The PR log: the check, then the verdict, for the same commit.
     const log = await readPrLog(root)
     expect(log.map(e => e.kind)).toEqual(['check', 'review'])
@@ -1508,6 +1511,11 @@ process.exit(${code})
     const plain = await runWith((await checker([], 0, { lines: 12, files: 1, band: 'normal' })).argv)
     expect((await loadState(plain.root, Date.now())).tasks[0]?.overBudget).toBeUndefined()
     expect((await readPrLog(plain.root))[0]).toMatchObject({ band: 'normal', estimate: null })
+  })
+
+  it('leaves the work branch unrecorded on a trunk, where the merge guards will stop the loop', async () => {
+    const { root } = await runWith((await checker([], 0, { lines: 12, files: 1, band: 'normal' })).argv, {}, true)
+    expect((await loadState(root, Date.now())).workBranch).toBeUndefined()
   })
 
   it.each([
