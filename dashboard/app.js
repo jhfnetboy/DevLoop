@@ -8,21 +8,11 @@
 const API = '/devloop/api'
 const REFRESH_MS = 5000
 
-const STATUS = {
-  ready: ['待开始', ''],
-  running: ['进行中', 'accent'],
-  review_pending: ['待评审', 'accent'],
-  merge_ready: ['待合并', 'ok'],
-  rework: ['返工', 'warn'],
-  blocked: ['阻塞', 'bad'],
-  done: ['完成', 'ok'],
-  failed: ['失败', 'bad'],
-}
-const LOOP = {
-  running: ['循环运行中', 'ok'],
-  stopped: ['循环已停止', 'bad'],
-  elsewhere: ['未在本进程运行', ''],
-}
+// Labels are looked up when drawn, so a language switch reaches them (strings: i18n.js).
+const STATUS_TONE = { ready: '', running: 'accent', review_pending: 'accent', merge_ready: 'ok', rework: 'warn', blocked: 'bad', done: 'ok', failed: 'bad' }
+const STATUS = new Proxy({}, { get: (_, key) => (key in STATUS_TONE ? [t(`status.${String(key)}`), STATUS_TONE[key]] : undefined) })
+const LOOP_TONE = { running: 'ok', stopped: 'bad', elsewhere: '' }
+const LOOP = new Proxy({}, { get: (_, key) => (key in LOOP_TONE ? [t(`loop.${String(key)}`), LOOP_TONE[key]] : undefined) })
 const STATUS_ORDER = ['running', 'review_pending', 'merge_ready', 'rework', 'ready', 'blocked', 'failed', 'done']
 
 function el(tag, attrs, ...children) {
@@ -48,18 +38,24 @@ function time(iso) {
   if (!iso) return '—'
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return iso
-  return d.toLocaleString('zh-CN', { hour12: false })
+  return d.toLocaleString(locale(), { hour12: false })
+}
+
+// How long since `iso`, as a duration ("43 min"); empty when unknown.
+function since(iso) {
+  if (!iso) return ''
+  // Clamped: a clock a little ahead of this one would otherwise read as "-3 s".
+  const s = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000))
+  if (!Number.isFinite(s)) return ''
+  if (s < 60) return t('dur.s', { n: s })
+  if (s < 3600) return t('dur.m', { n: Math.round(s / 60) })
+  if (s < 86400) return t('dur.h', { n: Math.round(s / 3600) })
+  return t('dur.d', { n: Math.round(s / 86400) })
 }
 
 function ago(iso) {
-  if (!iso) return ''
-  // Clamped: a clock a little ahead of this one would otherwise read as "-3 秒前".
-  const s = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000))
-  if (!Number.isFinite(s)) return ''
-  if (s < 60) return `${s} 秒前`
-  if (s < 3600) return `${Math.round(s / 60)} 分钟前`
-  if (s < 86400) return `${Math.round(s / 3600)} 小时前`
-  return `${Math.round(s / 86400)} 天前`
+  const d = since(iso)
+  return d ? t('ago', { d }) : ''
 }
 
 function usd(n) {
@@ -78,7 +74,7 @@ async function postJson(path, body) {
     body: JSON.stringify(body),
   })
   const parsed = await res.json().catch(() => null)
-  if (res.status === 401) throw new Error('未登录 DSH')
+  if (res.status === 401) throw new Error(t('err.login'))
   if (!parsed || !parsed.ok) {
     const error = new Error((parsed && parsed.error && parsed.error.message) || `HTTP ${res.status}`)
     error.code = parsed && parsed.error && parsed.error.code
@@ -89,7 +85,7 @@ async function postJson(path, body) {
 
 async function getJson(path) {
   const res = await fetch(path, { credentials: 'same-origin', cache: 'no-store' })
-  if (res.status === 401) throw new Error('未登录 DSH：先用 dsh 打印的 ?token= 链接打开一次首页')
+  if (res.status === 401) throw new Error(t('err.loginHint'))
   const body = await res.json().catch(() => null)
   if (!body || !body.ok) throw new Error((body && body.error && body.error.message) || `HTTP ${res.status}`)
   return body.value
@@ -102,14 +98,14 @@ function loopBadges(p) {
   const [loopLabel, loopTone] = LOOP[p.loop] || [p.loop, '']
   // A halt outranks whatever the process timer is doing: "running" next to
   // "halted" would ask the reader to work out which one to believe.
-  if (!p.armed) out.push(badge('未启用（没有 GOAL.md）', ''))
-  else if (p.completed) out.push(badge('已完成', 'ok'))
-  else if (p.paused) out.push(badge('已暂停', 'warn'))
-  else if (p.halted) out.push(badge('已停机', 'bad'))
+  if (!p.armed) out.push(badge(t('badge.unarmed'), ''))
+  else if (p.completed) out.push(badge(t('badge.completed'), 'ok'))
+  else if (p.paused) out.push(badge(t('badge.paused'), 'warn'))
+  else if (p.halted) out.push(badge(t('badge.halted'), 'bad'))
   else out.push(badge(loopLabel, loopTone))
   if (p.armed && p.halted && p.loop === 'elsewhere') out.push(badge(loopLabel, '', true))
-  if (p.question) out.push(badge('等你回答', 'warn'))
-  if (p.error) out.push(badge('读取失败', 'bad'))
+  if (p.question) out.push(badge(t('badge.question'), 'warn'))
+  if (p.error) out.push(badge(t('badge.unreadable'), 'bad'))
   return out
 }
 
@@ -120,43 +116,38 @@ function countPills(counts) {
 }
 
 // The home page's columns, in the order a person should look at them.
-const LANES = [
-  ['needs_you', '等你处理', '卡住了，或者没人在跑它：要你看一眼才会动。'],
-  ['running', '进行中', '循环在自己跑，不用管。'],
-  ['idle', '闲置', '还没启动、已暂停，或你选择了先不处理。'],
-  ['done', '已完成', '目标做完了。'],
-]
+const LANES = ['needs_you', 'running', 'idle', 'done']
 
-const DOING = { plan: '正在规划任务', delegate: '正在实现', review: '正在评审', merge: '正在合并' }
+const DOING = new Set(['plan', 'delegate', 'review', 'merge'])
 
 // One sentence: what happens next, or what it is waiting for. The question itself, when there is one.
 function nextStep(p) {
   if (p.error) return null
-  if (p.lane === 'needs_you') return p.question ? null : '循环没在运行：重启 dsh web，或检查这个项目的配置。'
-  if (!p.armed) return '还没启动：进去写下目标，点启动。'
-  if (p.lane === 'done') return '目标已完成。新需求建议作为新项目添加。'
-  if (p.paused) return '已暂停：进去点「恢复循环」继续。'
-  if (p.lane === 'idle') return '你选择了先不处理这次停机：进去可以随时恢复。'
+  if (p.lane === 'needs_you') return p.question ? null : t('next.stopped')
+  if (!p.armed) return t('next.unarmed')
+  if (p.lane === 'done') return t('next.done')
+  if (p.paused) return t('next.paused', { resume: t('btn.resume') })
+  if (p.lane === 'idle') return t('next.left')
   const [verb, task] = String(p.lastAction || '').split(':')
-  return DOING[verb] ? `${DOING[verb]}${task ? ` ${task}` : ''}。` : '等下一轮。'
+  return DOING.has(verb) ? t(`doing.${verb}`, { task: task || '' }) : t('next.tick')
 }
 
 function projectCard(p) {
   const total = Object.values(p.taskCounts || {}).reduce((a, b) => a + b, 0)
   const next = nextStep(p)
   return el('a', { class: 'card', href: `#/p/${p.id}` },
-    el('h2', {}, p.name, p.own ? el('span', { class: 'muted' }, ' · 本进程') : null),
+    el('h2', {}, p.name, p.own ? el('span', { class: 'muted' }, t('card.own')) : null),
     el('div', { class: 'path' }, p.root),
     el('div', { class: 'row' }, loopBadges(p)),
     next ? el('div', { class: 'next' }, next) : null,
     p.question ? el('div', { class: 'question' }, p.question) : null,
-    p.since && p.lane !== 'running' && ago(p.since) ? el('div', { class: 'muted since' }, p.lane === 'done' ? `${ago(p.since)}完成` : `已等 ${ago(p.since).replace(/前$/, '')}`) : null,
+    p.since && p.lane !== 'running' && since(p.since) ? el('div', { class: 'muted since' }, p.lane === 'done' ? t('since.done', { ago: ago(p.since) }) : t('since.waiting', { d: since(p.since) })) : null,
     p.error ? el('div', { class: 'question' }, p.error) : null,
     total ? el('div', { class: 'row' }, countPills(p.taskCounts)) : null,
     p.armed ? el('div', { class: 'kv' },
-      el('span', {}, '最近动作 ', el('b', {}, p.lastAction || '—')),
-      el('span', {}, '今日花费 ', el('b', {}, usd(p.costUsdDay))),
-      el('span', {}, '更新 ', el('b', {}, ago(p.updatedAt) || '—')),
+      el('span', {}, t('card.lastAction'), el('b', {}, p.lastAction || '—')),
+      el('span', {}, t('card.costToday'), el('b', {}, usd(p.costUsdDay))),
+      el('span', {}, t('card.updated'), el('b', {}, ago(p.updatedAt) || '—')),
     ) : null,
   )
 }
@@ -166,28 +157,28 @@ function renderHome(value) {
   const g = value.global
   if (g && g.cap !== null && g.costUsdDay >= g.cap) {
     parts.push(el('div', { class: 'banner bad' },
-      `所有项目今日合计花费 ${usd(g.costUsdDay)}，已达到共享上限 ${usd(g.cap)}：各循环都在等待，UTC 零点后自动继续。`))
+      t('home.capReached', { spent: usd(g.costUsdDay), cap: usd(g.cap) })))
   }
-  if (value.registryError) parts.push(el('div', { class: 'banner' }, `项目注册表有问题：${value.registryError}`))
+  if (value.registryError) parts.push(el('div', { class: 'banner' }, t('home.registryError', { error: value.registryError })))
   // What needs the operator comes first; the guide and the picker move below once there is anything to show.
   const setup = [guidePanel(), addProjectPanel()]
   if (!value.projects.length) {
-    parts.push(...setup, el('div', { class: 'empty' }, '还没有项目。点上面的「浏览仓库…」选一个 git 仓库来添加。'))
+    parts.push(...setup, el('div', { class: 'empty' }, t('home.empty', { browse: t('btn.browse') })))
   }
-  for (const [lane, title, hint] of LANES) {
-    // A lane this page does not know (a newer server) is shown with the running ones rather than dropped.
-    const here = value.projects.filter(p => (LANES.some(([known]) => known === p.lane) ? p.lane : 'running') === lane)
+  for (const lane of LANES) {
+    // A lane this page does not know (a newer server) is shown as needing a look rather than dropped or called fine.
+    const here = value.projects.filter(p => (LANES.includes(p.lane) ? p.lane : 'needs_you') === lane)
     if (!here.length) continue
     parts.push(el('section', { class: `lane lane-${lane}` },
-      el('h2', {}, title, el('span', { class: 'count' }, String(here.length))),
-      el('p', { class: 'muted' }, hint),
+      el('h2', {}, t(`lane.${lane}`), el('span', { class: 'count' }, String(here.length))),
+      el('p', { class: 'muted' }, t(`lane.${lane}.hint`)),
       el('div', { class: 'grid' }, here.map(projectCard))))
   }
   if (value.projects.length) parts.push(...setup)
   if (g) {
-    parts.push(el('p', { class: 'note' }, `今日合计花费 ${usd(g.costUsdDay)}`,
-      g.cap !== null ? ` / 共享上限 ${usd(g.cap)}` : '（只有一个项目时，由它自己的每日上限管）',
-      '。只统计会报告花费的后端。'))
+    parts.push(el('p', { class: 'note' }, t('home.spent', { spent: usd(g.costUsdDay) }),
+      g.cap !== null ? t('home.cap', { cap: usd(g.cap) }) : t('home.noCap'),
+      t('home.costNote')))
   }
   return parts
 }
@@ -849,7 +840,7 @@ function editing() {
 async function load(force) {
   if (inflight) return
   if (!force && editing()) {
-    refresh.textContent = '编辑中，暂停自动刷新'
+    refresh.textContent = t('refresh.editing')
     return
   }
   inflight = true
@@ -862,10 +853,10 @@ async function load(force) {
     const y = window.scrollY
     app.replaceChildren(...nodes.filter(Boolean))
     window.scrollTo(0, y)
-    refresh.textContent = `每 ${REFRESH_MS / 1000} 秒刷新 · ${new Date().toLocaleTimeString('zh-CN', { hour12: false })}`
+    refresh.textContent = t('refresh.every', { s: REFRESH_MS / 1000, time: new Date().toLocaleTimeString(locale(), { hour12: false }) })
     refresh.classList.remove('stale')
   } catch (error) {
-    refresh.textContent = `刷新失败：${error.message}`
+    refresh.textContent = t('refresh.failed', { error: error.message })
     refresh.classList.add('stale')
     if (!app.querySelector('.card, .panel')) app.replaceChildren(el('div', { class: 'banner bad' }, error.message))
   } finally {
@@ -873,7 +864,22 @@ async function load(force) {
   }
 }
 
+// The frame index.html draws in English: its words, and the switch that changes them.
+function drawChrome() {
+  document.documentElement.lang = locale()
+  document.querySelector('.top .sub').textContent = t('chrome.sub')
+  document.querySelector('.top .version').title = t('chrome.version')
+  const box = document.getElementById('lang')
+  box.setAttribute('aria-label', t('chrome.lang'))
+  box.replaceChildren(...LANGS.map(([code, short, name]) => {
+    const button = el('button', { type: 'button', class: `btn lang-option${code === currentLang ? ' primary' : ''}`, title: name, 'aria-pressed': String(code === currentLang) }, short)
+    button.addEventListener('click', () => { setLang(code); drawChrome(); void load(true) })
+    return button
+  }))
+}
+
 function start() {
+  drawChrome()
   clearInterval(timer)
   void load()
   timer = setInterval(() => { if (!document.hidden) void load() }, REFRESH_MS)
