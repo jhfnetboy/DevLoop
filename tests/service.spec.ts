@@ -16,6 +16,7 @@ import { resumeLoop } from '../src/operator.ts'
 import { emptyState, loadState, saveState, statePath, withStateLock, workspaceArmed } from '../src/persist.ts'
 import { contractForTask } from '../src/router.ts'
 import DevloopService, { persistAgentHold, persistAgentTransition } from '../src/service.ts'
+import { readPrLog } from '../src/prlog.ts'
 import { planWorktreePath, prepareDelegateWorktree, readContractBaseSha, taskWorktreeHeadSha, worktreePath } from '../src/worktree.ts'
 import { initWorkRepo, makeTask, mkdtempInRepo } from './helpers.ts'
 
@@ -1469,6 +1470,11 @@ process.exit(${code})
     expect(args[args.indexOf('--repo') + 1]).toBe(join(root, '.devloop', 'worktrees', 'd1'))
     expect(args[args.indexOf('--base') + 1]).toMatch(/^[0-9a-f]{40}$/)
     expect(args[args.indexOf('--profile') + 1]).toBe('devloop')
+    // The PR log: the check, then the verdict, for the same commit.
+    const log = await readPrLog(root)
+    expect(log.map(e => e.kind)).toEqual(['check', 'review'])
+    expect(log[0]).toMatchObject({ taskId: 'd1', status: 'passed', size: { lines: 340, files: 7 }, rules: ['B1'], blocking: [], checker: { rulesVersion: '1.1.0' } })
+    expect(log[1]).toMatchObject({ taskId: 'd1', verdict: 'PASS', reviewer: 'test/reviewer', head: log[0]?.head })
   })
 
   it.each([
@@ -1481,5 +1487,7 @@ process.exit(${code})
     const state = await loadState(root, Date.now())
     expect(state.supervisor?.reason).toMatch(reason)
     expect(state.tasks[0]?.status).not.toBe('review_pending')
+    // Held or not, what the checker said is logged; a checker with no verdict logs that too.
+    expect((await readPrLog(root)).map(e => e.kind === 'check' ? e.status : e.kind)).toEqual([code === 2 ? 'unavailable' : 'blocked'])
   })
 })
