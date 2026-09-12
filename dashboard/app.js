@@ -394,16 +394,22 @@ function gateKey(g, part) {
   return null
 }
 
+// The gate's values as its sentences use them: a task named ("task A") or not ("the task").
+function gateVars(g) {
+  const v = g.vars || {}
+  return { ...v, task: v.task ? t('gate.taskLabel', { id: v.task }) : t('gate.theTask'), id: v.task || '<id>', verdict: v.verdict || t('gate.none') }
+}
+
 // A gate's sentence in the reader's language when the page has it; the server's English otherwise.
 function gateText(g, part, fallback) {
   const key = gateKey(g, part)
-  return key ? t(key, g.vars || {}) : fallback
+  return key ? t(key, gateVars(g)) : fallback
 }
 
 // Evidence is translated whole or not at all: a list half in one language would read as two lists.
 function gateEvidence(g) {
   if (!gateKey(g, 'e1')) return g.evidence || []
-  return ['e1', 'e2', 'e3'].map(part => gateKey(g, part)).filter(Boolean).map(key => t(key, g.vars || {}))
+  return ['e1', 'e2', 'e3'].map(part => gateKey(g, part)).filter(Boolean).map(key => t(key, gateVars(g)))
 }
 
 function haltPanel(p) {
