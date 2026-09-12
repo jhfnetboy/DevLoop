@@ -1364,6 +1364,17 @@ describe('saving a result while the state lock is busy', () => {
     await expect(readFile(join(root, '.devloop', 'PENDING_HOLD'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
+  it('removes a corrupt pending hold instead of reading it every tick, and changes nothing else', async () => {
+    const root = await planned('devloop-pending-corrupt-')
+    await writeFile(join(root, '.devloop', 'PENDING_HOLD'), '{ not json', 'utf8')
+    const before = await loadState(root, Date.now())
+    const service = new DevloopService(new Context(), resolveConfig({ root, tickIntervalMs: 60_000, enabled: false }), new RecordingBackend())
+    services.push(service)
+    await service.tick()
+    await expect(readFile(join(root, '.devloop', 'PENDING_HOLD'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+    expect((await loadState(root, Date.now())).supervisor).toBe(before.supervisor)
+  })
+
   it('drops a pending hold when the loop is already halted, so a resume cannot revive it', async () => {
     const root = await planned('devloop-pending-halted-')
     const current = await loadState(root, Date.now())
