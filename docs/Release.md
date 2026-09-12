@@ -1,8 +1,34 @@
-# Release 0.6.1
+# Release 0.6.2
 
-Bounded autonomous engineering loop: structured model results, deterministic state transitions, host-enforced write scope, SHA-bound independent review, durable recovery, and role/tier routing. Tag `v0.6.1` and the GitHub Release are created **after** this commit is on `main`; steps: [Deploy.md](./Deploy.md).
+Bounded autonomous engineering loop: structured model results, deterministic state transitions, host-enforced write scope, SHA-bound independent review, durable recovery, and role/tier routing. Tag `v0.6.2` and the GitHub Release are created **after** this commit is on `main`; steps: [Deploy.md](./Deploy.md).
 
-Package version: **0.6.1**. This document is the release note, not a second semver.
+Package version: **0.6.2**. This document is the release note, not a second semver.
+
+## New in 0.6.2
+
+The page answers "what needs me?" first, and says what an answer costs before
+it is given. Both ideas are borrowed from LoopX's control plane.
+
+- **The home page is grouped by attention** ([#71](https://github.com/jhfnetboy/DevLoop/pull/71), [#72](https://github.com/jhfnetboy/DevLoop/pull/72), [#74](https://github.com/jhfnetboy/DevLoop/pull/74)).
+  Four columns, in this order: 等你处理 (a halt asking a question, a project
+  the page cannot read, an armed loop whose process has stopped), 进行中, 闲置
+  (not started, paused, or a halt answered "leave it" while it is still that
+  halt), 已完成. Once there are projects they come before the guide and the
+  picker. Each card says in one sentence what happens next or what it waits
+  for, and how long it has waited. Each project's summary carries its `lane`
+  and `since`.
+- **A halt offers one answer, with its cost** ([#73](https://github.com/jhfnetboy/DevLoop/pull/73), [#75](https://github.com/jhfnetboy/DevLoop/pull/75)).
+  Every answer now says whether a model is paid again and whether existing work
+  is thrown away. The gate names a recommended answer, which is the page's one
+  primary button; the others are folded under 其他选项. A gate whose only
+  answer is to leave it leads with 要你做的事, the steps for the person.
+- **Fix: `retry` said "from a clean worktree"; it is not.** A retry runs the
+  worker again in the task's existing worktree and base. The summary, the docs
+  and the new impact say so. A redo from a clean base is still the manual
+  command in the over-budget and replan gates.
+
+A patch: new summary fields (`lane`, `since`) and gate fields (`recommended`,
+`impact`), no config change and no STATE change.
 
 ## New in 0.6.1
 
@@ -339,4 +365,4 @@ Host-side checks (`dsh plugin add`, `--dump-config`) are listed in [UserCaseTest
 - Token/cost melt the circuit only when the backend fills `AgentRunResult`; otherwise the loop uses wall-clock `lastProgressAt`. Session cost resets after the first successful STATE persist of this process; daily cost resets at UTC midnight.
 - The automated E2E uses a scripted provider, and the release candidate also completed a real-provider plan → implement → exact-SHA review → merge run without operator state edits.
 - The operator UI is the dashboard; it sees only the spend backends report, and cannot edit an existing goal.
-- npm registry: `@jhfnetboy/dsh-devloop@0.6.1` is published. GitHub and the Release tarball remain supported. See [Install.md](./Install.md).
+- npm registry: `@jhfnetboy/dsh-devloop@0.6.2` is published. GitHub and the Release tarball remain supported. See [Install.md](./Install.md).
