@@ -15,7 +15,7 @@ import { gateFor } from '../src/gate.ts'
 import { resumeLoop } from '../src/operator.ts'
 import { emptyState, loadState, saveState, statePath, withStateLock, workspaceArmed } from '../src/persist.ts'
 import { contractForTask } from '../src/router.ts'
-import DevloopService from '../src/service.ts'
+import DevloopService, { persistAgentHold, persistAgentTransition } from '../src/service.ts'
 import { planWorktreePath, prepareDelegateWorktree, readContractBaseSha, taskWorktreeHeadSha, worktreePath } from '../src/worktree.ts'
 import { initWorkRepo, makeTask, mkdtempInRepo } from './helpers.ts'
 
@@ -1310,3 +1310,69 @@ async function gitBranchesNamed(root: string, prefix: string): Promise<string[]>
   const { stdout } = await promisify(execFile)('git', ['branch', '--format=%(refname:short)'], { cwd: root })
   return stdout.split('\n').map(line => line.trim()).filter(name => name.startsWith(prefix)).sort()
 }
+
+describe('saving a result while the state lock is busy', () => {
+  const log = { error() {} }
+  const services: DevloopService[] = []
+  afterEach(() => { for (const service of services.splice(0)) service.stop() })
+  const planResult = {
+    status: 'started' as const,
+    agent: 'codex/gpt-6-astra',
+    outcome: { version: 1 as const, kind: 'plan' as const, tasks: [{ id: 'T1', title: 'x', tier: 'T1' as const, risk: 'low' as const, allowedPaths: ['src/**'], acceptance: ['a'] }] },
+  }
+  async function planned(prefix: string): Promise<string> {
+    const root = await mkdtemp(join(tmpdir(), prefix))
+    await mkdir(join(root, '.devloop'))
+    await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
+    await saveState(root, { ...emptyState(Date.now()), lastAction: { type: 'plan' } })
+    return root
+  }
+  const holdLock = (root: string, ms: number) => withStateLock(root, () => new Promise(resolve => setTimeout(resolve, ms)))
+
+  it('waits for the lock and saves the result instead of dropping it', async () => {
+    const root = await planned('devloop-result-wait-')
+    const holding = holdLock(root, 300)
+    await new Promise(resolve => setTimeout(resolve, 20))
+    await persistAgentTransition(root, { type: 'plan' }, planResult, undefined, log, 2_000)
+    await holding
+    const state = await loadState(root, Date.now())
+    expect(state.tasks.map(t => t.id)).toEqual(['T1'])
+    expect(await readFile(join(root, '.devloop', 'EVENTS.jsonl'), 'utf8')).toContain('"action":"result:plan"')
+  })
+
+  it('gives up at its deadline rather than waiting forever', async () => {
+    const root = await planned('devloop-result-deadline-')
+    const holding = holdLock(root, 500)
+    await new Promise(resolve => setTimeout(resolve, 20))
+    await expect(persistAgentTransition(root, { type: 'plan' }, planResult, undefined, log, 100)).rejects.toThrow('result_transition_lock_busy')
+    await holding
+  })
+
+  it('leaves a hold it could not write for the next tick, which applies it once', async () => {
+    const root = await planned('devloop-pending-hold-')
+    await saveState(root, { ...(await loadState(root, Date.now())), tasks: [makeTask({ id: 'T1', status: 'review_pending' })] }, { expectedRevision: 1 })
+    const holding = holdLock(root, 400)
+    await new Promise(resolve => setTimeout(resolve, 20))
+    expect(await persistAgentHold(root, 'T1', 'result_transition_failed', log)).toBe(false)
+    await holding
+    await expect(readFile(join(root, '.devloop', 'PENDING_HOLD'), 'utf8')).resolves.toContain('result_transition_failed')
+
+    const service = new DevloopService(new Context(), resolveConfig({ root, tickIntervalMs: 60_000, enabled: false }), new RecordingBackend())
+    services.push(service)
+    await service.tick()
+    expect((await loadState(root, Date.now())).supervisor).toEqual({ taskId: 'T1', reason: 'result_transition_failed' })
+    await expect(readFile(join(root, '.devloop', 'PENDING_HOLD'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('drops a pending hold when the loop is already halted, so a resume cannot revive it', async () => {
+    const root = await planned('devloop-pending-halted-')
+    const current = await loadState(root, Date.now())
+    await saveState(root, { ...current, supervisor: { taskId: null, reason: 'backend_failed' }, killSwitch: true }, { expectedRevision: current.revision })
+    await writeFile(join(root, '.devloop', 'PENDING_HOLD'), '{"taskId":null,"reason":"result_transition_failed"}\n', 'utf8')
+    const service = new DevloopService(new Context(), resolveConfig({ root, tickIntervalMs: 60_000, enabled: false }), new RecordingBackend())
+    services.push(service)
+    await service.tick()
+    expect((await loadState(root, Date.now())).supervisor?.reason).toBe('backend_failed')
+    await expect(readFile(join(root, '.devloop', 'PENDING_HOLD'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+})
