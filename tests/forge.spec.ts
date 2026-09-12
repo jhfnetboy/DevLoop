@@ -101,6 +101,7 @@ interface StubOptions {
   headRef?: string
   /** Successive answers to `pr list`, the last one repeating. */
   prLists?: unknown[][]
+  checks?: unknown[] | ((count: number) => unknown[])
   prList?: unknown
   prView?: unknown
   rewrittenUrl?: string
@@ -130,6 +131,7 @@ function commentLines(comments: readonly unknown[]): string {
 function stubRunner(stub: StubOptions): HeadlessRunner {
   let views = 0
   let lists = 0
+  let checkViews = 0
   let added = ''
   return async (request: HeadlessRun) => {
     const call: Recorded = {
@@ -181,6 +183,11 @@ function stubRunner(stub: StubOptions): HeadlessRunner {
       const listed = stub.prList ?? [pr()]
       // A raw string models gh printing something that is not JSON at all.
       return { stdout: typeof listed === 'string' ? listed : JSON.stringify(listed), stderr: '' }
+    }
+    if (joined.includes('statusCheckRollup')) {
+      checkViews += 1
+      const checks = typeof stub.checks === 'function' ? stub.checks(checkViews) : (stub.checks ?? [])
+      return { stdout: JSON.stringify({ statusCheckRollup: checks }), stderr: '' }
     }
     if (joined.startsWith('pr view')) {
       const body = stub.prView ?? pr()
@@ -1243,6 +1250,21 @@ describe('ForgePrBackend verdicts from GitHub reviews', () => {
     expect((await onReviews([{ author: REVIEWER, state: 'APPROVED' }])).detail).toMatch(/missing an author, state or commit/)
     const flood = Array.from({ length: MAX_REVIEW_COMMENTS + 1 }, () => review(REVIEWER, 'COMMENTED'))
     expect((await onReviews(flood)).detail).toMatch(/more than \d+ reviews/)
+  })
+
+  it('passes an approval only once the commit\'s checks have passed, waits while they run, and reworks a red one', async () => {
+    const approved = [review(REVIEWER, 'APPROVED')]
+    const green = [{ name: 'test', status: 'COMPLETED', conclusion: 'SUCCESS' }, { context: 'lint', state: 'SUCCESS' }, { name: 'docs', conclusion: 'SKIPPED' }]
+    expect((await backend({ verdictSource: 'reviews' }, { reviews: approved, checks: green }).run(reviewInput())).outcome).toMatchObject({ verdict: 'PASS' })
+    // Running, then green: the approval waits for it.
+    const waits = await backend({ verdictSource: 'reviews', maxWaitMs: 5_000 }, { reviews: approved, checks: n => n < 3 ? [{ name: 'test', status: 'IN_PROGRESS', conclusion: null }] : green }).run(reviewInput())
+    expect(waits.outcome).toMatchObject({ verdict: 'PASS' })
+    const stillRunning = await backend({ verdictSource: 'reviews' }, { reviews: approved, checks: [{ context: 'ci', state: 'PENDING' }] }).run(reviewInput())
+    expect(stillRunning.detail).toMatch(/^forge_timeout:/)
+    const red = await backend({ verdictSource: 'reviews' }, { reviews: approved, checks: [...green, { name: 'test', conclusion: 'FAILURE' }, { context: 'deploy', state: 'ERROR' }] }).run(reviewInput())
+    expect(red.outcome).toMatchObject({ verdict: 'REWORK', notes: 'Approved, but these checks failed: test, deploy' })
+    // A request for changes needs no checks to be rework.
+    expect((await backend({ verdictSource: 'reviews' }, { reviews: [review(REVIEWER, 'CHANGES_REQUESTED')], checks: [{ context: 'ci', state: 'PENDING' }] }).run(reviewInput())).outcome).toMatchObject({ verdict: 'REWORK' })
   })
 
   it('reads reviews unless configured otherwise', () => {
