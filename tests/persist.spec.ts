@@ -179,6 +179,14 @@ describe('persist and tick', () => {
     await saveState(root, { ...emptyState(0), tasks: [{ ...sampleTask(), overBudget: '230 lines, 6 files' }] })
     expect((await loadState(root, 1)).tasks[0]?.overBudget).toBe('230 lines, 6 files')
 
+    await saveState(root, { ...emptyState(0), tasks: [{ ...sampleTask(), reviewNotes: 'Split the parser out.' }] })
+    expect((await loadState(root, 1)).tasks[0]?.reviewNotes).toBe('Split the parser out.')
+    for (const reviewNotes of ['', 'x'.repeat(8_193), 'a\0b']) {
+      const bad = await mkdtemp(join(tmpdir(), 'devloop-'))
+      await mkdir(join(bad, '.devloop'))
+      await writeFile(join(bad, '.devloop', 'STATE.json'), JSON.stringify({ ...emptyState(0), tasks: [{ ...sampleTask(), reviewNotes }] }), 'utf8')
+      expect((await loadState(bad, 1)).supervisor?.reason).toBe('invalid_state')
+    }
     await saveState(root, { ...emptyState(0), tasks: [{ ...sampleTask(), estimate: { lines: 120, files: 3 } }] })
     expect((await loadState(root, 1)).tasks[0]?.estimate).toEqual({ lines: 120, files: 3 })
     const odd = await mkdtemp(join(tmpdir(), 'devloop-'))

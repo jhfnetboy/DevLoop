@@ -505,6 +505,8 @@ const REVIEW_VERDICTS = new Set<ReviewVerdict>([
 
 /** Room for the checker's size summary ("230 lines, 6 files"); anything longer was not written by us. */
 const MAX_OVER_BUDGET = 200
+/** A review's notes as a result may carry them. */
+const MAX_REVIEW_NOTES = 8_192
 
 function isTaskShape(value: unknown): boolean {
   if (typeof value !== 'object' || value === null) return false
@@ -524,6 +526,7 @@ function isTaskShape(value: unknown): boolean {
     && (task.implementationSha === undefined || (typeof task.implementationSha === 'string' && /^[0-9a-f]{40}$/i.test(task.implementationSha)))
     && (task.overBudget === undefined || (typeof task.overBudget === 'string' && task.overBudget.length > 0 && task.overBudget.length <= MAX_OVER_BUDGET))
     && (task.estimate === undefined || sizeEstimate(task.estimate) !== null)
+    && (task.reviewNotes === undefined || (typeof task.reviewNotes === 'string' && task.reviewNotes.length > 0 && task.reviewNotes.length <= MAX_REVIEW_NOTES && !task.reviewNotes.includes('\0')))
     && (task.planner === undefined || (typeof task.planner === 'string' && task.planner.length > 0))
     && (task.implementer === undefined || (typeof task.implementer === 'string' && task.implementer.length > 0))
     && (task.reviewer === undefined || (typeof task.reviewer === 'string' && task.reviewer.length > 0))
