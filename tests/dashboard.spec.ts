@@ -206,6 +206,10 @@ describe('dashboard projects', () => {
     expect(detail.loop).toBe('stopped')
     // A halt asks for the operator: the home page's first column, aged from when it stopped.
     expect(detail).toMatchObject({ lane: 'needs_you', since: held.updatedAt })
+    // The halt reasons reach the page twice: the English list, and the same list as codes.
+    const reasons = detail as unknown as { haltReasons: string[], haltDetails: Array<{ code: string }> }
+    expect(reasons.haltDetails.map(d => d.code)).toEqual(['kill_switch', 'last_stop', 'hold'])
+    expect(reasons.haltDetails).toHaveLength(reasons.haltReasons.length)
 
     // Answered "leave it": idle. A different halt since is a new question, and back in the first column.
     const lane = async () => ((JSON.parse((await call(handler, 'GET', `/devloop/api/projects/${projectId(root)}`)).body) as { value: { lane: string } }).value.lane)

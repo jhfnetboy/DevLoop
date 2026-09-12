@@ -26,7 +26,7 @@ import {
   type Project,
 } from './projects.js'
 import { inspectReadiness, readinessRefusal, readPlanningDocuments, type PlanningDocument, type Readiness } from './readiness.js'
-import { diagnoseHalt } from './resume.js'
+import { diagnoseHalt, type HaltDetail } from './resume.js'
 import { confirmedBranches, runCleanup, statusView, UnreadableStateError } from './status-routes.js'
 import type { LoopState, Task } from './types.js'
 
@@ -107,6 +107,8 @@ export interface ProjectSummary {
   /** The goal is done: a halt that is the loop finishing, not failing. */
   readonly completed: boolean
   readonly haltReasons: readonly string[]
+  /** The same reasons as codes and values, for the page to say in its reader's language. */
+  readonly haltDetails: readonly HaltDetail[]
   readonly question: string | null
   readonly taskCounts: Readonly<Record<string, number>>
   readonly costUsdSession: number | null
@@ -198,6 +200,7 @@ async function readProject(
     paused: false,
     completed: false,
     haltReasons: [],
+    haltDetails: [],
     question: null,
     taskCounts: {},
     costUsdSession: null,
@@ -236,6 +239,7 @@ async function readProject(
       paused: state.paused !== undefined,
       completed: state.goalCompleted,
       haltReasons: diagnosis.reasons,
+      haltDetails: diagnosis.details,
       question: gate?.question ?? null,
       taskCounts: countByStatus(state.tasks),
       costUsdSession: state.usage.costUsdSession,
