@@ -506,8 +506,8 @@ describe('ForgePrBackend publishing', () => {
       if (joined.startsWith('api')) return { stdout: `${SELF}\n`, stderr: '' }
       if (joined.startsWith('pr list')) {
         listed += 1
-        // The stray check and the lookup both come before the create.
-        return { stdout: JSON.stringify(listed <= 2 ? [] : [pr({ number: 11, baseRefName: 'develop' })]), stderr: '' }
+        // Without a work branch there is no stray check: the lookup is the one list before the create.
+        return { stdout: JSON.stringify(listed === 1 ? [] : [pr({ number: 11, baseRefName: 'develop' })]), stderr: '' }
       }
       if (joined.startsWith('pr view')) {
         return { stdout: JSON.stringify(pr({ number: 11, baseRefName: 'develop' })), stderr: '' }
@@ -1335,6 +1335,21 @@ describe('ForgePrBackend against the loop\'s work branch', () => {
     const edits = calls.filter(call => call.argv[0] === 'pr' && call.argv[1] === 'edit' && call.argv.includes('--base'))
     expect(edits.map(call => call.argv[call.argv.indexOf('--base') + 1])).toEqual([WORK])
     expect(calls.some(call => call.argv[0] === 'pr' && call.argv[1] === 'create')).toBe(false)
+  })
+
+  it('reuses the one already on the work branch, leaving a trunk sibling alone rather than retargeting it into a duplicate', async () => {
+    const both = [pr({ number: 5, baseRefName: 'main' }), pr({ number: 7, baseRefName: WORK })]
+    const { run, calls } = onWork({ prList: both, prLists: [both] })
+    expect(await run).toMatchObject({ status: 'started' })
+    expect(calls.some(call => call.argv[0] === 'pr' && call.argv[1] === 'edit' && call.argv.includes('--base'))).toBe(false)
+    expect(calls.some(call => call.argv[0] === 'pr' && call.argv[1] === 'create')).toBe(false)
+    expect(calls.some(call => call.argv[0] === 'pr' && call.argv[1] === 'edit' && call.argv[2] === '7')).toBe(true)
+  })
+
+  it('moves nothing without a work branch, where the only place to move a pull request to is trunk', async () => {
+    const calls: Recorded[] = []
+    await backend({ verdictSource: 'reviews' }, { calls, prList: [pr({ baseRefName: WORK })], reviews: [] }).run(reviewInput())
+    expect(calls.some(call => call.argv[0] === 'pr' && call.argv[1] === 'edit' && call.argv.includes('--base'))).toBe(false)
   })
 
   it('opens nothing while the checkout is off the work branch', async () => {

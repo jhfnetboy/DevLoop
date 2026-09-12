@@ -271,6 +271,8 @@ interface RunCtx {
   readonly signal?: AbortSignal
   /** This pull request's base: the loop's work branch, or the configured base without one. */
   readonly base?: string
+  /** Set when `base` is the loop's work branch rather than the configured fallback. */
+  readonly onWorkBranch?: boolean
 }
 
 export interface ForgeVerdict {
@@ -363,7 +365,7 @@ export class ForgePrBackend implements AgentBackend {
       MAX_TIMER_MS,
     )
     const deadline = Date.now() + budgetMs
-    const ctx: RunCtx = { deadline, budgetMs, base, ...(input.signal === undefined ? {} : { signal: input.signal }) }
+    const ctx: RunCtx = { deadline, budgetMs, base, onWorkBranch: input.workBranch !== undefined, ...(input.signal === undefined ? {} : { signal: input.signal }) }
     try {
       // Trusted configuration, not the checkout, decides where this goes.
       const url = this.options.pushUrl
@@ -552,11 +554,16 @@ export class ForgePrBackend implements AgentBackend {
    * beside a second one, still pointing at trunk. It is moved to this base.
    */
   private async retargetStray(root: string, repo: ForgeRepo, branch: string, sha: string, ctx: RunCtx): Promise<void> {
-    const base = ctx.base ?? this.options.base
+    // Only toward a work branch: without one there is nothing to move a pull request to but trunk.
+    const base = ctx.base
+    if (base === undefined || !ctx.onWorkBranch) return
     const raw = await this.forge(root, ['pr', 'list', '--repo', repoSlug(repo), '--head', branch, '--state', 'open', '--json', PR_FIELDS, '--limit', '10'], ctx)
     const listed: unknown = parseJson(raw, 'forge_pr: pr list')
     if (!Array.isArray(listed)) throw new Error('forge_pr: pr list did not return an array')
-    for (const stray of listed.map(entry => readPullRequest(entry)).filter(pr => !pr.isCrossRepository && pr.headRefName === branch && pr.headRefOid.toLowerCase() === sha && pr.baseRefName !== base)) {
+    const ours = listed.map(entry => readPullRequest(entry)).filter(pr => !pr.isCrossRepository && pr.headRefName === branch && pr.headRefOid.toLowerCase() === sha)
+    // One already on the work branch is the one to reuse: GitHub refuses a second pull request for the same head and base.
+    if (ours.some(pr => pr.baseRefName === base)) return
+    for (const stray of ours.filter(pr => pr.baseRefName !== base)) {
       await this.forge(root, ['pr', 'edit', String(stray.number), '--repo', repoSlug(repo), '--base', base], ctx)
     }
   }
