@@ -1,6 +1,7 @@
 import { constants, link, lstat, mkdir, open, readFile, realpath, rename, rm, unlink, utimes, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { emptyUsage } from './budget.js'
+import { sizeEstimate } from './result.js'
 import type { LoopState, ModelTier, ReviewVerdict, Risk, TaskStatus } from './types.js'
 import { STATE_VERSION } from './types.js'
 
@@ -520,6 +521,7 @@ function isTaskShape(value: unknown): boolean {
     && (task.baseSha === undefined || (typeof task.baseSha === 'string' && /^[0-9a-f]{40}$/i.test(task.baseSha)))
     && (task.implementationSha === undefined || (typeof task.implementationSha === 'string' && /^[0-9a-f]{40}$/i.test(task.implementationSha)))
     && (task.overBudget === undefined || (typeof task.overBudget === 'string' && task.overBudget.length > 0 && task.overBudget.length <= MAX_OVER_BUDGET))
+    && (task.estimate === undefined || sizeEstimate(task.estimate) !== null)
     && (task.planner === undefined || (typeof task.planner === 'string' && task.planner.length > 0))
     && (task.implementer === undefined || (typeof task.implementer === 'string' && task.implementer.length > 0))
     && (task.reviewer === undefined || (typeof task.reviewer === 'string' && task.reviewer.length > 0))
