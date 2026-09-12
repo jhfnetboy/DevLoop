@@ -165,8 +165,8 @@ const STRINGS = {
   'halt.completedText': ['Every task was reviewed, passed and merged. This loop has nothing more to do.', '所有任务都已评审通过并合并到主分支。这个循环不会再做别的事。', 'ทุกงานผ่านการรีวิวและรวมโค้ดแล้ว ลูปนี้ไม่มีอะไรต้องทำอีก'],
   'halt.completedNote': ['Add new work as a new project. To reopen a task here, run devloop resume --task <task id> on the machine.', '新需求建议作为新项目添加。确实要在这里重开某个任务，在本机用 devloop resume --task <任务ID>。', 'งานใหม่ควรเพิ่มเป็นโปรเจกต์ใหม่ หากต้องการเปิดงานใหม่ที่นี่ ให้รัน devloop resume --task <รหัสงาน> บนเครื่อง'],
   'halt.title': ['Why it stopped', '停机原因', 'สาเหตุที่หยุด'],
-  'halt.hold': ['supervisor hold: {reason}', 'supervisor hold：{reason}', 'supervisor hold: {reason}'],
-  'halt.holdTask': ['supervisor hold: {reason} (task {task})', 'supervisor hold：{reason}（任务 {task}）', 'supervisor hold: {reason} (งาน {task})'],
+  'halt.hold': ['supervisor hold: {reason}', '监管挂起：{reason}', 'การระงับโดยผู้ควบคุม: {reason}'],
+  'halt.holdTask': ['supervisor hold: {reason} (task {task})', '监管挂起：{reason}（任务 {task}）', 'การระงับโดยผู้ควบคุม: {reason} (งาน {task})'],
   'halt.acknowledged': ['Left alone at {at} (answer stop)', '已于 {at} 选择暂不处理（answer stop）', 'เลือกปล่อยไว้ก่อนเมื่อ {at} (answer stop)'],
   'halt.resumePaused': ['Resume this loop?', '恢复这个循环？', 'ให้ลูปนี้ทำงานต่อ?'],
   'halt.resumeHalted': ['Lift the halt and clear the breakers built on old history? If the cause is still there, the next tick stops again. Continue?', '解除停机并清掉基于旧历史的熔断。如果停机原因还在，下一轮会再次停下。继续？', 'ยกเลิกการหยุดและล้างตัวตัดวงจรจากประวัติเก่า? ถ้าสาเหตุยังอยู่ รอบถัดไปจะหยุดอีก ดำเนินการต่อ?'],
@@ -427,4 +427,13 @@ const STRINGS = {
   'gate.task_timeout.q': ['The task used its whole lifetime without finishing. Spend more, or leave it?', '任务用完了全部时限还没完成。再花钱，还是先不管？', 'งานใช้เวลาทั้งหมดที่มีแล้วแต่ยังไม่เสร็จ จ่ายเพิ่ม หรือปล่อยไว้ก่อน?'],
   'gate.task_timeout.e1': ['{task} ran past the lifetime the profile allows', '{task} 超过了 profile 允许的时限', '{task} ทำงานเกินเวลาที่ profile อนุญาต'],
   'gate.task_timeout.e2': ['retrying clears its counters and starts the budget again', '重试会清零计数，预算重新开始算', 'การลองใหม่จะล้างตัวนับและเริ่มงบใหม่'],
+
+  // Why a loop is halted, by the code the server sends with each reason (src/resume.ts).
+  'haltReason.integrity': ['state integrity hold: {reason}', '状态完整性保护：{reason}', 'การป้องกันความสมบูรณ์ของสถานะ: {reason}'],
+  'haltReason.paused': ['paused by an operator ({via}) at {at}', '由操作者在 {at} 暂停（{via}）', 'ผู้ดูแลหยุดชั่วคราว ({via}) เมื่อ {at}'],
+  'haltReason.kill_switch': ['the kill switch is set', '急停开关已打开', 'สวิตช์หยุดฉุกเฉินถูกเปิดอยู่'],
+  'haltReason.last_stop': ['the last action was stop:{reason}', '最近一个动作是 stop:{reason}', 'การกระทำล่าสุดคือ stop:{reason}'],
+  'haltReason.hold': ['supervisor hold: {reason}', '监管挂起：{reason}', 'การระงับโดยผู้ควบคุม: {reason}'],
+  'haltReason.goal_complete': ['the goal is marked complete', '目标已标记为完成', 'เป้าหมายถูกทำเครื่องหมายว่าเสร็จแล้ว'],
+  'haltReason.task_stuck': ['task {task} is {status}', '任务 {task} 状态为{status}', 'งาน {task} อยู่ในสถานะ{status}'],
 }
