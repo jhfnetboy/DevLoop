@@ -397,7 +397,13 @@ function gateKey(g, part) {
 // The gate's values as its sentences use them: a task named ("task A") or not ("the task").
 function gateVars(g) {
   const v = g.vars || {}
-  return { ...v, task: v.task ? t('gate.taskLabel', { id: v.task }) : t('gate.theTask'), id: v.task || '<id>', verdict: v.verdict || t('gate.none') }
+  return {
+    ...v,
+    task: v.task ? t('gate.taskLabel', { id: v.task }) : t('gate.theTask'),
+    id: v.task || '<id>',
+    verdict: v.verdict || t('gate.none'),
+    lastTask: v.task ? t('gate.lastTask', { id: v.task }) : t('gate.noTaskNamed'),
+  }
 }
 
 // A gate's sentence in the reader's language when the page has it; the server's English otherwise.

@@ -371,6 +371,15 @@ describe('dashboard strings', () => {
       expect(STRINGS[`gate.${family}.q`] ?? STRINGS[`gate.${alias[family]}.q`], family).toBeDefined()
       expect(STRINGS[`gate.${family}.e1`] ?? STRINGS[`gate.${alias[family]}.e1`], family).toBeDefined()
     }
+    // Every family src/gate.ts asks about has one, so no gate falls back to English.
+    const source = await readFile(join(import.meta.dirname, '..', 'src', 'gate.ts'), 'utf8')
+    const known = /const KNOWN_GATES[^{]*\{\n([\s\S]*?)\n\}/.exec(source)?.[1] ?? ''
+    const every = [...known.matchAll(/^ {2}([a-z_]+):/gm)].map(m => m[1]!)
+    expect(every.length).toBeGreaterThanOrEqual(30)
+    for (const family of [...every, 'generic', 'integrity']) {
+      expect(STRINGS[`gate.${family}.q`] ?? STRINGS[`gate.${alias[family]}.q`], family).toBeDefined()
+      expect(STRINGS[`gate.${family}.e1`] ?? STRINGS[`gate.${alias[family]}.e1`], family).toBeDefined()
+    }
     setLang('zh')
     expect(t('gate.generic.e1', { reason: 'escalate:x' })).toBe('记录的原因是 escalate:x')
   })
