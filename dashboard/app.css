@@ -25,6 +25,14 @@ code, pre, .mono { font-family: var(--mono); font-size: 12.5px; }
 .spacer { flex: 1; }
 .refresh { color: var(--muted); font-size: 12px; }
 .refresh.stale { color: var(--bad); }
+.lang { display: inline-flex; gap: 4px; align-self: center; }
+.lang .btn { padding: 2px 8px; font-size: 12px; }
+/* On a phone the header wraps: brand and switch on the first line, the refresh note under them. */
+@media (max-width: 560px) {
+  .top { flex-wrap: wrap; row-gap: 4px; padding: 12px 16px; }
+  .top .sub { display: none; }
+  .top .refresh { order: 5; flex-basis: 100%; }
+}
 
 .app { max-width: 1120px; margin: 0 auto; padding: 22px 24px 60px; }
 .muted { color: var(--muted); }

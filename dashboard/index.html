@@ -1,21 +1,23 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>DevLoop</title>
 <link rel="stylesheet" href="/devloop/app.css">
+<script src="/devloop/i18n.js" defer></script>
 <script src="/devloop/app.js" defer></script>
 </head>
 <body>
 <header class="top">
   <a class="brand" href="#/">DevLoop</a>
-  <span class="sub">项目与循环</span>
-  <span class="version" title="已安装的 @jhfnetboy/dsh-devloop 版本">%DEVLOOP_VERSION%</span>
+  <span class="sub">Projects and loops</span>
+  <span class="version" title="Installed @jhfnetboy/dsh-devloop version">%DEVLOOP_VERSION%</span>
   <span class="spacer"></span>
   <span class="refresh" id="refresh" aria-live="polite"></span>
+  <span class="lang" id="lang" role="group"></span>
 </header>
-<main id="app" class="app"><p class="muted">加载中…</p></main>
-<noscript><p class="app">这个页面需要 JavaScript。</p></noscript>
+<main id="app" class="app"><p class="muted">Loading…</p></main>
+<noscript><p class="app">This page needs JavaScript. 这个页面需要 JavaScript。 หน้านี้ต้องใช้ JavaScript</p></noscript>
 </body>
 </html>

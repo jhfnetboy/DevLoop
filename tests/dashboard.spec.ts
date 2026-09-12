@@ -280,6 +280,9 @@ describe('dashboard assets', () => {
     // stops being true.
     expect(assets.js).not.toMatch(/innerHTML|outerHTML|insertAdjacentHTML|document\.write/)
     expect(assets.i18n).not.toMatch(/innerHTML|outerHTML|insertAdjacentHTML|document\.write/)
+    // The strings load first: app.js looks every label up in them.
+    expect(assets.html.indexOf('/devloop/i18n.js')).toBeGreaterThan(-1)
+    expect(assets.html.indexOf('/devloop/i18n.js')).toBeLessThan(assets.html.indexOf('/devloop/app.js'))
     // And nothing inline that the CSP would have to allow.
     expect(assets.html).not.toMatch(/<script>(?!<)|\sstyle=|\son[a-z]+=/)
     const pkg = JSON.parse(await readFile(join(import.meta.dirname, '..', 'package.json'), 'utf8')) as { files: string[], version: string }
@@ -310,6 +313,22 @@ describe('dashboard strings', () => {
     runInNewContext(`${assets.i18n}\n;globalThis.out = { STRINGS, t, setLang }`, context)
     return (context as unknown as { out: Awaited<ReturnType<typeof strings>> }).out
   }
+
+  it('has every key the page asks for, in all three languages', async () => {
+    const { STRINGS } = await strings()
+    const js = (await loadDashboardAssets(dashboardAssetsDir())).js
+    const asked = new Set([...js.matchAll(/\bt\('([a-zA-Z_.]+)'/g)].map(m => m[1]!))
+    // Keys built from a value: every value the page can pass.
+    for (const s of ['ready', 'running', 'review_pending', 'merge_ready', 'rework', 'blocked', 'done', 'failed']) asked.add(`status.${s}`)
+    for (const l of ['running', 'stopped', 'elsewhere']) asked.add(`loop.${l}`)
+    for (const lane of ['needs_you', 'running', 'idle', 'done']) asked.add(`lane.${lane}`).add(`lane.${lane}.hint`)
+    for (const verb of ['plan', 'delegate', 'review', 'merge']) asked.add(`doing.${verb}`)
+    expect(asked.size).toBeGreaterThan(40)
+    for (const key of asked) {
+      expect(STRINGS[key], key).toHaveLength(3)
+      for (const text of STRINGS[key]!) expect(text.trim(), key).not.toBe('')
+    }
+  })
 
   it('defaults to English, and fills a template in the chosen language', async () => {
     const { t, setLang } = await strings()
