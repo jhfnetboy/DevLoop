@@ -8,6 +8,7 @@ import { effectiveBudget } from './command.js'
 import { gateFor, type Gate, type GateOption } from './gate.js'
 import { answerGate, OperatorError, pauseLoop, resumeLoop, type OperatorFailure } from './operator.js'
 import { actionKey } from './loop.js'
+import { attentionFor, type AttentionLane } from './attention.js'
 import { devloopDir, eventsPath, goalPath, loadState, workspaceArmed } from './persist.js'
 import { PROGRESS_FILE } from './progress.js'
 import { readPrLog, type PrLogEntry } from './prlog.js'
@@ -111,6 +112,9 @@ export interface ProjectSummary {
   readonly updatedAt: string | null
   /** Why the page could not read this project; the rest is then null. */
   readonly error: string | null
+  /** The home page's column for it, and since when. */
+  readonly lane: AttentionLane
+  readonly since: string | null
 }
 
 export interface ProjectDetail extends ProjectSummary {
@@ -198,24 +202,30 @@ async function readProject(
     costUsdDay: null,
     updatedAt: null,
     error: null,
+    lane: 'idle',
+    since: null,
   }
+  const placed = (summary: ProjectSummary, state: LoopState | null): ProjectSummary => ({
+    ...summary,
+    ...attentionFor({ ...summary, error: summary.error !== null, state }),
+  })
 
   try {
     await lstat(project.root)
   } catch {
-    return { summary: { ...blank, error: 'directory not found' }, extra: null }
+    return { summary: placed({ ...blank, error: 'directory not found' }, null), extra: null }
   }
   // Everything below reads inside `.devloop/`, and only once `workspaceArmed`
   // has refused a symlinked directory or GOAL.md: a registered project must not
   // be a way to serve a file from somewhere else.
-  if (!await workspaceArmed(project.root)) return { summary: blank, extra: null }
+  if (!await workspaceArmed(project.root)) return { summary: placed(blank, null), extra: null }
 
   try {
     const state = await loadState(project.root, now)
     const budget = await effectiveBudget(project.root)
     const diagnosis = diagnoseHalt(state, budget.limits, now)
     const gate = gateFor(state, budget.limits, now)
-    const summary: ProjectSummary = {
+    const summary: ProjectSummary = placed({
       ...blank,
       armed: true,
       revision: state.revision,
@@ -229,7 +239,7 @@ async function readProject(
       costUsdSession: state.usage.costUsdSession,
       costUsdDay: state.usage.costUsdDay,
       updatedAt: state.updatedAt,
-    }
+    }, state)
     if (!full) return { summary, extra: null }
     return {
       summary,
@@ -254,7 +264,7 @@ async function readProject(
       },
     }
   } catch (error) {
-    return { summary: { ...blank, armed: true, error: messageOf(error) }, extra: null }
+    return { summary: placed({ ...blank, armed: true, error: messageOf(error) }, null), extra: null }
   }
 }
 
