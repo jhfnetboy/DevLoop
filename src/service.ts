@@ -33,7 +33,7 @@ import { currentBranch, trunkBranches } from './readiness.js'
 import type { BudgetUsage, HoldReason, LoopState } from './types.js'
 import { RUNNER_REAP_MS } from './spawn.js'
 import { applyAgentResult } from './transition.js'
-import { prepareDelegateWorktree, preparePlanWorktree, removePlanWorktree, mergeTaskWorktree, deleteMergedTaskBranch, worktreePath, worktreeTaskToken, readContractBaseSha, commitDirtyTaskWorktree, assertTaskChangesAllowed, taskWorktreeHeadSha } from './worktree.js'
+import { prepareDelegateWorktree, preparePlanWorktree, removePlanWorktree, mergeTaskWorktree, fastForwardWorkBranch, deleteMergedTaskBranch, worktreePath, worktreeTaskToken, readContractBaseSha, commitDirtyTaskWorktree, assertTaskChangesAllowed, taskWorktreeHeadSha } from './worktree.js'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -275,22 +275,29 @@ export class ProjectLoop {
         } else if (!result.skipped && result.action.type === 'merge') {
           const mergeTaskId = result.action.taskId
           try {
-            await mergeTaskWorktree(
-              this.config.root,
-              mergeTaskId,
-              result.state.tasks.find(task => task.id === mergeTaskId)?.baseSha ?? null,
-              result.state.tasks.find(task => task.id === mergeTaskId)?.implementationSha ?? null,
-              // The same trunks the page refuses to start on, asked again here:
-              // the checkout can be switched back after the start was checked.
-              { trunks: await trunkBranches(this.config.root) },
-            )
+            // The same trunks the page refuses to start on, asked again here:
+            // the checkout can be switched back after the start was checked.
+            const trunks = await trunkBranches(this.config.root)
+            const task = result.state.tasks.find(entry => entry.id === mergeTaskId)
+            if (mergesOnForge(this.config)) {
+              // The forge merges the reviewed pull request; the checkout only follows it.
+              const workBranch = result.state.workBranch
+              if (workBranch === undefined) throw new Error('merge_wedged: no work branch is recorded to merge into')
+              if (!task?.implementationSha) throw new Error('unknown_review_sha')
+              const merged = await forgeMergers.create(this.config).mergeTask({ workspaceRoot: this.config.root, taskId: mergeTaskId, sha: task.implementationSha, workBranch })
+              await fastForwardWorkBranch(this.config.root, workBranch, merged.mergeCommit, this.config.forge.pushUrl, { trunks })
+            } else {
+              await mergeTaskWorktree(this.config.root, mergeTaskId, task?.baseSha ?? null, task?.implementationSha ?? null, { trunks })
+            }
             result = {
               ...result,
               state: markTaskDone(result.state, mergeTaskId),
             }
           } catch (error) {
             this.ctx.logger.error('[dsh-devloop] merge failed', error)
-            const reason = mergeHoldReason(error)
+            // On the forge an error nothing here names (gh exiting, timing out, missing) holds too:
+            // retried blindly, an expired login or a refusing forge would spin without an operator ever asked.
+            const reason = mergeHoldReason(error) ?? (mergesOnForge(this.config) ? 'merge_wedged' : null)
             if (reason) {
               result = {
                 ...result,
@@ -1231,8 +1238,17 @@ function mergesOnForge(config: Config): boolean {
   return config.agentBackend === 'routed' && config.reviewerRoute.backend === 'forge'
 }
 
-function mergeHoldReason(error: unknown): 'empty_task' | 'merge_wedged' | 'unknown_base' | 'unknown_review_sha' | 'stale_review_sha' | 'merge_onto_trunk' | 'merge_detached_head' | null {
+/** The forge that merges; a seam, so a test can merge without a real forge. */
+export const forgeMergers = {
+  create: (config: Config): { mergeTask: ForgePrBackend['mergeTask'] } => new ForgePrBackend(config.forge),
+}
+
+function mergeHoldReason(error: unknown): 'empty_task' | 'merge_wedged' | 'unknown_base' | 'unknown_review_sha' | 'stale_review_sha' | 'merge_onto_trunk' | 'merge_detached_head' | 'no_review_pass' | null {
   const message = error instanceof Error ? error.message : ''
+  // Approved when it was reviewed, not any more: the question is the review's, not the merge's.
+  if (message.startsWith('forge_review_gone')) return 'no_review_pass'
+  // Every other forge refusal is a merge that could not be completed safely.
+  if (message.startsWith('forge_')) return 'merge_wedged'
   if (message.startsWith('empty_task')) return 'empty_task'
   if (message.startsWith('merge_onto_trunk')) return 'merge_onto_trunk'
   if (message.startsWith('merge_detached_head')) return 'merge_detached_head'
