@@ -1,10 +1,7 @@
-import { baseBranch, git, isToplevel, PROTECT_FLOOR, readPilotConfig, trunkBranches } from './readiness.js'
+import { baseBranch, git, isToplevel, protectedPrefixes, readPilotConfig, trunkBranches, type ProtectDrop } from './readiness.js'
 
-/**
- * What a repository looks like right now, for the page's 仓库状态 panel: the
- * read-only half of pilot's `status`. Every git call goes through readiness's
- * helper, so none of them takes the index lock from a loop mid-merge.
- */
+/** The read-only half of pilot's `status`, for the 仓库状态 panel. Git runs through
+ * readiness's helper, so no call takes the index lock from a loop mid-merge. */
 export interface BranchStatus {
   readonly name: string
   /** Fully merged into HEAD: exactly the branches `git branch -d` would accept. */
@@ -15,8 +12,7 @@ export interface BranchStatus {
 
 export interface WorktreeStatus {
   readonly path: string
-  /** Null for a detached worktree. */
-  readonly branch: string | null
+  readonly branch: string | null // null when detached
   readonly dirty: boolean
 }
 
@@ -29,6 +25,8 @@ export interface RepoStatus {
   readonly behind: number | null
   readonly branches: readonly BranchStatus[]
   readonly worktrees: readonly WorktreeStatus[]
+  /** protect_patterns entries that protect nothing, so the page can say so. */
+  readonly protectDropped: readonly ProtectDrop[]
 }
 
 export interface ScanOptions {
@@ -39,10 +37,9 @@ export interface ScanOptions {
 export async function scanRepo(root: string, options: ScanOptions = {}): Promise<RepoStatus> {
   // Otherwise git answers for an enclosing repository, and cleanup acts on its branches.
   if (!await isToplevel(root)) throw new Error('not a git toplevel')
-  const pilot = await readPilotConfig(root)
-  const base = await baseBranch(root, pilot)
+  const base = await baseBranch(root, await readPilotConfig(root))
   const trunks = await trunkBranches(root)
-  const patterns = pilot?.protectPatterns ?? PROTECT_FLOOR
+  const { patterns, dropped } = await protectedPrefixes(root)
   const branch = await optional(root, ['symbolic-ref', '--quiet', '--short', 'HEAD'])
   const worktrees = await listWorktrees(root)
   // Case-folded: on APFS `git switch Feature` over a loose `feature` ref makes
@@ -74,6 +71,7 @@ export async function scanRepo(root: string, options: ScanOptions = {}): Promise
     behind: behind ?? null,
     branches,
     worktrees,
+    protectDropped: dropped,
   }
 }
 

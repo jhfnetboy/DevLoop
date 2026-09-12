@@ -44,6 +44,7 @@ describe('scanning a repository', () => {
     expect(s.worktrees.find(w => w.branch === 'parked')?.dirty).toBe(true)
     expect(s.ahead).toBe(1) // the feature commit, fast-forwarded into work
     expect(s.behind).toBe(0)
+    expect(s.protectDropped).toEqual([]) // no .pilot.yml: the floor, nothing dropped
   })
 
   it('never offers the current branch when HEAD names it in another case', async (context) => {
