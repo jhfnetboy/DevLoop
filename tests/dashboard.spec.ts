@@ -334,6 +334,11 @@ describe('dashboard strings', () => {
     const codes = [...readiness.matchAll(/'((?:repo|branch|trunk|clean|pilot|plan)\.[a-zA-Z]+)'/g)].map(m => m[1]!)
     expect(codes.length).toBeGreaterThanOrEqual(12)
     for (const code of codes) asked.add(`ready.${code}`)
+    // Every reason code src/cleanup.ts sends: the protections it keeps a branch for, and the rest by literal.
+    const cleanup = await readFile(join(import.meta.dirname, '..', 'src', 'cleanup.ts'), 'utf8')
+    const reasons = [...cleanup.matchAll(/code: '([a-zA-Z_]+)'/g)].map(m => m[1]!)
+    expect(reasons.length).toBeGreaterThanOrEqual(8)
+    for (const code of [...reasons, 'current', 'trunk', 'pattern', 'worktree', 'active_task']) asked.add(`cleanup.${code}`)
     expect(asked.size).toBeGreaterThan(40)
     for (const key of asked) {
       expect(STRINGS[key], key).toHaveLength(3)
