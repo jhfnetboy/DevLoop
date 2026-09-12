@@ -35,6 +35,20 @@ describe('agent result transitions', () => {
     })
   })
 
+  it('records an elastic-band size with its commit, and drops it when the next attempt is back within budget', () => {
+    const state = {
+      ...emptyState(0),
+      tasks: [makeTask({ id: 'T-1', status: 'ready' })],
+      lastAction: { type: 'delegate' as const, taskId: 'T-1' },
+    }
+    const done = { version: 1, kind: 'implementation', taskId: 'T-1', outcome: 'completed', summary: 'done' } as const
+    const big = applyAgentResult(state, state.lastAction, done, { agent: 'dsh/flash', implementationSha: 'a'.repeat(40), overBudget: '230 lines, 6 files' })
+    expect(big.tasks[0]?.overBudget).toBe('230 lines, 6 files')
+    const again = { ...big, tasks: [{ ...big.tasks[0]!, status: 'rework' as const }] }
+    const small = applyAgentResult(again, state.lastAction, done, { agent: 'dsh/flash', implementationSha: 'b'.repeat(40) })
+    expect(small.tasks[0]?.overBudget).toBeUndefined()
+  })
+
   it('rejects stale and same-identity review results', () => {
     const sha = 'a'.repeat(40)
     const state = {
