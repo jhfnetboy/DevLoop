@@ -340,6 +340,7 @@ describe('dashboard strings', () => {
     expect(reasons.length).toBeGreaterThanOrEqual(8)
     for (const code of [...reasons, 'current', 'trunk', 'pattern', 'worktree', 'active_task']) asked.add(`cleanup.${code}`)
     for (const code of ['glob', 'invalid']) asked.add(`protect.${code}`)
+    for (const key of ['retry', 'review', 'accept', 'stop']) asked.add(`summary.${key}`)
     expect(asked.size).toBeGreaterThan(40)
     for (const key of asked) {
       expect(STRINGS[key], key).toHaveLength(3)
@@ -356,6 +357,18 @@ describe('dashboard strings', () => {
     setLang('th')
     expect(t('doing.review', { task: 'T-2' })).toBe('กำลังรีวิว T-2')
     expect(t('no.such.key')).toBe('no.such.key')
+  })
+
+  it('gives every gate family it translates a question, and fills it from the gate\'s values', async () => {
+    const { STRINGS, t, setLang } = await strings()
+    const families = new Set(Object.keys(STRINGS).filter(k => k.startsWith('gate.') && /\.(q|e\d|m)$/.test(k)).map(k => k.split('.')[1]))
+    expect(families.size).toBeGreaterThanOrEqual(2)
+    for (const family of families) {
+      expect(STRINGS[`gate.${family}.q`], family).toBeDefined()
+      expect(STRINGS[`gate.${family}.e1`], family).toBeDefined()
+    }
+    setLang('zh')
+    expect(t('gate.generic.e1', { reason: 'escalate:x' })).toBe('记录的原因是 escalate:x')
   })
 
   it('takes a saved choice only when it is one of the three languages', async () => {

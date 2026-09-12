@@ -58,6 +58,16 @@ describe('gateFor', () => {
     expect(gateFor({ ...baseState(), killSwitch: true, supervisor: { taskId: null, reason: 'invalid_state' } }, limits, NOW)?.recommended).toBeNull()
   })
 
+  it('names its family and the values its sentences use, for a page to ask it in another language', () => {
+    expect(gateFor(held('task_over_budget:300 lines, 7 files'), limits, NOW)).toMatchObject({
+      key: 'task_over_budget', vars: { task: 'A', detail: '300 lines, 7 files', reason: 'task_over_budget:300 lines, 7 files' },
+    })
+    expect(gateFor(held('no_review_pass', { lastReviewVerdict: 'REWORK' }), limits, NOW)).toMatchObject({ key: 'no_review_pass', vars: { verdict: 'REWORK', detail: '' } })
+    expect(gateFor(held('max_review_cycles:A'), limits, NOW)?.vars.cycles).toBe(String(limits.maxReviewCycles))
+    expect(gateFor(held('escalate:something_new'), limits, NOW)?.key).toBe('generic')
+    expect(gateFor({ ...baseState(), killSwitch: true, supervisor: { taskId: null, reason: 'invalid_state' } }, limits, NOW)).toMatchObject({ key: 'integrity', vars: { reason: 'invalid_state' } })
+  })
+
   it('offers a re-review, not a redo, when the verdict is the problem', () => {
     for (const reason of ['no_review_pass', 'stale_review_sha', 'reviewer_identity_conflict']) {
       const keys = gateFor(held(reason), limits, NOW)?.options.map(o => o.key)

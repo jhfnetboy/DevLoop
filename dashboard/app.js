@@ -357,7 +357,7 @@ function answerRow(p, o, tone) {
   return el('div', { class: 'option' },
     actionButton(label, tone, t('answer.confirm', { label, impact: impact || o.summary }),
       () => postJson(`${API}/projects/${p.id}/answer`, { revision: p.revision, choice: o.key })),
-    el('span', {}, impact ? el('b', {}, impact) : null, impact ? el('br') : null, el('span', { class: 'muted' }, el('code', {}, o.key), ' ', o.summary)))
+    el('span', {}, impact ? el('b', {}, impact) : null, impact ? el('br') : null, el('span', { class: 'muted' }, el('code', {}, o.key), ' ', serverText('summary', o.key, {}, o.summary))))
 }
 
 // One primary answer, with its cost said up front; the rest folded away. A gate
@@ -370,15 +370,40 @@ function gatePanel(p) {
   const rest = options.filter(o => o !== primary)
   return el('section', { class: 'panel gate' },
     el('h3', {}, t('badge.question')),
-    el('p', { class: 'q' }, g.question),
-    g.evidence && g.evidence.length ? el('ul', { class: 'plain' }, g.evidence.map(e => el('li', {}, e))) : null,
-    !primary && g.manual ? el('div', { class: 'manual' }, el('b', {}, t('gate.manual')), g.manual) : null,
+    el('p', { class: 'q' }, gateText(g, 'q', g.question)),
+    gateEvidence(g).length ? el('ul', { class: 'plain' }, gateEvidence(g).map(e => el('li', {}, e))) : null,
+    !primary && g.manual ? el('div', { class: 'manual' }, el('b', {}, t('gate.manual')), gateText(g, 'm', g.manual)) : null,
     primary ? el('div', { class: 'options' }, answerRow(p, primary, 'primary')) : null,
     rest.length ? (primary
       ? el('details', { class: 'more' }, el('summary', {}, t('gate.more', { n: rest.length })), el('div', { class: 'options' }, rest.map(o => answerRow(p, o, ''))))
       : el('div', { class: 'options' }, rest.map(o => answerRow(p, o, '')))) : null,
-    primary && g.manual ? el('p', { class: 'note' }, g.manual) : null,
+    primary && g.manual ? el('p', { class: 'note' }, gateText(g, 'm', g.manual)) : null,
   )
+}
+
+// Reasons that share a question share its translation; their own key, when it has one, still wins.
+const GATE_ALIAS = {
+  scope_check_failed: 'scope_violation', unknown_review_sha: 'stale_review_sha', repeated_test_failure: 'max_task_attempts',
+  unknown_base: 'merge_wedged', session_cost_cap: 'daily_cost_cap', max_tokens_per_task: 'daily_cost_cap',
+}
+
+function gateKey(g, part) {
+  for (const family of [g.key, GATE_ALIAS[g.key]]) {
+    if (family && Object.hasOwn(STRINGS, `gate.${family}.${part}`)) return `gate.${family}.${part}`
+  }
+  return null
+}
+
+// A gate's sentence in the reader's language when the page has it; the server's English otherwise.
+function gateText(g, part, fallback) {
+  const key = gateKey(g, part)
+  return key ? t(key, g.vars || {}) : fallback
+}
+
+// Evidence is translated whole or not at all: a list half in one language would read as two lists.
+function gateEvidence(g) {
+  if (!gateKey(g, 'e1')) return g.evidence || []
+  return ['e1', 'e2', 'e3'].map(part => gateKey(g, part)).filter(Boolean).map(key => t(key, g.vars || {}))
 }
 
 function haltPanel(p) {
