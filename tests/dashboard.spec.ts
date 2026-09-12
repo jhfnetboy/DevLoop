@@ -19,7 +19,7 @@ interface Captured {
   body: string
 }
 
-const ASSETS = { html: '<!doctype html><title>page</title>', js: 'void 0', css: 'body{}' }
+const ASSETS = { html: '<!doctype html><title>page</title>', js: 'void 0', i18n: 'void 1', css: 'body{}' }
 
 function deps(overrides: Partial<DashboardDeps> & Pick<DashboardDeps, 'ownRoot' | 'home'>): DashboardDeps {
   return {
@@ -68,12 +68,15 @@ describe('dashboard access', () => {
   it('serves nothing — not even its script — to a request DSH would not authenticate', async () => {
     const root = await armedProject('dash-auth-')
     const handler = createDashboardHandler(deps({ ownRoot: root, home: root, requestRejection: () => 401 }))
-    for (const path of ['/devloop/', '/devloop/app.js', '/devloop/api/projects']) {
+    for (const path of ['/devloop/', '/devloop/app.js', '/devloop/i18n.js', '/devloop/api/projects']) {
       const res = await call(handler, 'GET', path)
       expect(res.status).toBe(401)
       expect(res.body).not.toContain(root)
       expect(res.body).not.toBe(ASSETS.js)
+      expect(res.body).not.toBe(ASSETS.i18n)
     }
+    const open = createDashboardHandler(deps({ ownRoot: root, home: root }))
+    expect((await call(open, 'GET', '/devloop/i18n.js')).body).toBe(ASSETS.i18n)
   })
 
   it('refuses a host or origin DSH refuses', async () => {
@@ -276,6 +279,7 @@ describe('dashboard assets', () => {
     // them as text; a single innerHTML/outerHTML/insertAdjacentHTML is how that
     // stops being true.
     expect(assets.js).not.toMatch(/innerHTML|outerHTML|insertAdjacentHTML|document\.write/)
+    expect(assets.i18n).not.toMatch(/innerHTML|outerHTML|insertAdjacentHTML|document\.write/)
     // And nothing inline that the CSP would have to allow.
     expect(assets.html).not.toMatch(/<script>(?!<)|\sstyle=|\son[a-z]+=/)
     const pkg = JSON.parse(await readFile(join(import.meta.dirname, '..', 'package.json'), 'utf8')) as { files: string[], version: string }
@@ -291,9 +295,31 @@ describe('dashboard assets', () => {
     await mkdir(page)
     await writeFile(join(page, 'index.html'), '<span>%DEVLOOP_VERSION%</span>', 'utf8')
     await writeFile(join(page, 'app.js'), '', 'utf8')
+    await writeFile(join(page, 'i18n.js'), '', 'utf8')
     await writeFile(join(page, 'app.css'), '', 'utf8')
     await writeFile(join(dir, 'package.json'), '{"version":"<b>1</b>"}', 'utf8')
     expect((await loadDashboardAssets(page)).html).toBe('<span>v?</span>')
+  })
+})
+
+describe('dashboard strings', () => {
+  async function strings(): Promise<{ STRINGS: Record<string, string[]>, t: (key: string, vars?: object) => string, setLang: (l: string) => void }> {
+    const { runInNewContext } = await import('node:vm')
+    const assets = await loadDashboardAssets(dashboardAssetsDir())
+    const context = { localStorage: { getItem: () => null, setItem() {} }, document: { documentElement: {} } }
+    runInNewContext(`${assets.i18n}\n;globalThis.out = { STRINGS, t, setLang }`, context)
+    return (context as unknown as { out: Awaited<ReturnType<typeof strings>> }).out
+  }
+
+  it('defaults to English, and fills a template in the chosen language', async () => {
+    const { t, setLang } = await strings()
+    expect(t('lane.needs_you')).toBe('Needs you')
+    expect(t('since.waiting', { d: '43 min' })).toBe('Waiting 43 min')
+    setLang('zh')
+    expect(t('lane.needs_you')).toBe('等你处理')
+    setLang('th')
+    expect(t('doing.review', { task: 'T-2' })).toBe('กำลังรีวิว T-2')
+    expect(t('no.such.key')).toBe('no.such.key')
   })
 })
 
