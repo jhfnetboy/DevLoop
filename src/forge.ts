@@ -9,6 +9,8 @@ import { WORKTREE_BRANCH_PREFIX, worktreeTaskToken } from './worktree.js'
 const GIT_TIMEOUT_MS = 60_000
 const FORGE_TIMEOUT_MS = 60_000
 const PUSH_TIMEOUT_MS = 10 * 60_000
+/** A merge only re-reads and merges; it never waits for a person. */
+const MERGE_BUDGET_MS = 5 * 60_000
 const DEFAULT_POLL_INTERVAL_MS = 30_000
 /** Node clamps a longer delay to 1ms, so a larger wait would silently busy-poll. */
 const MAX_TIMER_MS = 2_147_483_647
@@ -410,6 +412,73 @@ export class ForgePrBackend implements AgentBackend {
     } catch (error) {
       return { status: 'failed', detail: error instanceof Error ? error.message : 'forge failed' }
     }
+  }
+
+  /**
+   * Merge a task's approved pull request into the loop's work branch, as the
+   * account this host authenticates as, and return the merge commit.
+   *
+   * Everything the review established is established again first, because time
+   * has passed: the pull request is still same-repo, still based on the work
+   * branch and still headed at the reviewed commit, its reviews still pass
+   * that commit and its checks are still green. `--match-head-commit` makes
+   * GitHub refuse if the head moves in between. `gh` runs from an empty
+   * directory, so it never touches the checkout. A pull request already merged
+   * at the reviewed commit is not merged again: a host that merged it and then
+   * failed before recording that picks up the merge commit it made.
+   */
+  async mergeTask(request: { workspaceRoot: string, taskId: string, sha: string, workBranch: string, signal?: AbortSignal }): Promise<{ number: number, mergeCommit: string }> {
+    const token = worktreeTaskToken(request.taskId)
+    const sha = request.sha.toLowerCase()
+    if (!token || !SHA.test(sha)) throw new Error('forge_merge: needs a safe task id and the reviewed commit')
+    if (!isValidBranchName(request.workBranch) || request.workBranch.toLowerCase() === this.options.base.toLowerCase()) {
+      throw new Error('forge_merge: the work branch is missing, invalid or the trunk')
+    }
+    if (this.options.reviewers.length === 0 || this.options.pushUrl.length === 0) throw new Error('forge_merge: forge is not configured to decide or merge')
+    const branch = `${WORKTREE_BRANCH_PREFIX}${token}`
+    const root = resolve(request.workspaceRoot)
+    const ctx: RunCtx = { deadline: Date.now() + MERGE_BUDGET_MS, budgetMs: MERGE_BUDGET_MS, base: request.workBranch, ...(request.signal === undefined ? {} : { signal: request.signal }) }
+    const repo = parseRemoteUrl(this.options.pushUrl)
+    const self = await this.authenticatedLogin(root, repo, ctx)
+    const found = await this.pullRequestOf(root, repo, branch, request.workBranch, sha, ctx)
+    if (found.state === 'MERGED') return { number: found.number, mergeCommit: found.mergeCommit }
+    // The same reading the review made, binding included, from whichever source is configured.
+    const verdict = await this.readVerdict(root, repo, found.number, branch, request.taskId, sha, self, ctx)
+    if (verdict === null || verdict.result.kind !== 'review' || !isApproval(verdict.result.verdict)) {
+      throw new Error(`forge_review_gone: pull request ${found.number} is no longer approved with green checks at ${sha}`)
+    }
+    // A review verdict already waited for green checks; a comment verdict never looked, so look now.
+    if (this.options.verdictSource === 'comments' && await this.readChecks(root, repo, found.number, ctx) !== 'passed') {
+      throw new Error(`forge_review_gone: pull request ${found.number} is approved, but its checks at ${sha} are not green`)
+    }
+    const neutral = await mkdtemp(join(tmpdir(), 'devloop-merge-'))
+    try {
+      await this.forge(neutral, ['pr', 'merge', String(found.number), '--repo', repoSlug(repo), '--merge', '--match-head-commit', sha], ctx)
+    } finally {
+      await rm(neutral, { recursive: true, force: true })
+    }
+    const merged = await this.pullRequestOf(root, repo, branch, request.workBranch, sha, ctx)
+    if (merged.state !== 'MERGED') throw new Error(`forge_merge: pull request ${found.number} is not merged after merging it`)
+    return { number: merged.number, mergeCommit: merged.mergeCommit }
+  }
+
+  /** The one pull request for this task against the work branch at the reviewed commit: open, or merged at it. */
+  private async pullRequestOf(root: string, repo: ForgeRepo, branch: string, base: string, sha: string, ctx: RunCtx): Promise<{ number: number, state: 'OPEN' | 'MERGED', mergeCommit: string }> {
+    const raw = await this.forge(root, [
+      'pr', 'list', '--repo', repoSlug(repo), '--head', branch, '--state', 'all',
+      '--json', `${PR_FIELDS},state,mergeCommit`, '--limit', '20',
+    ], ctx)
+    const listed: unknown = parseJson(raw, 'forge_pr: pr list')
+    if (!Array.isArray(listed)) throw new Error('forge_pr: pr list did not return an array')
+    const matching = listed.filter(entry => isRecord(entry) && (entry.state === 'OPEN' || entry.state === 'MERGED'))
+      .filter(entry => matchesReviewTarget(readPullRequest(entry), base, branch, sha))
+    if (matching.length !== 1) throw new Error(`forge_merge: ${matching.length} pull requests for ${branch} into ${base} at ${sha}`)
+    const entry = matching[0] as Record<string, unknown>
+    const number = readPullRequest(entry).number
+    if (entry.state === 'OPEN') return { number, state: 'OPEN', mergeCommit: '' }
+    const oid = isRecord(entry.mergeCommit) ? entry.mergeCommit.oid : undefined
+    if (typeof oid !== 'string' || !SHA.test(oid)) throw new Error(`forge_merge: pull request ${number} is merged but names no merge commit`)
+    return { number, state: 'MERGED', mergeCommit: oid.toLowerCase() }
   }
 
   async cancel(_taskId: string): Promise<void> {}
