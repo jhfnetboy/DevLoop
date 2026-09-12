@@ -645,7 +645,7 @@ function repoPanel(p) {
       el('ul', { class: 'plain' }, plan.manual.map(m => el('li', {}, m.reason, '：', el('code', {}, m.command))))) : null,
     el('details', {}, el('summary', {}, `保留的分支（${plan.keep.length}）`),
       el('ul', { class: 'plain' }, plan.keep.map(k => el('li', {}, el('span', { class: 'mono' }, k.name), ' — ', k.reason)))),
-    el('p', { class: 'note' }, '只会执行 git branch -d。强制删除、删远程分支、删 worktree 都只列出命令，由你决定。'))
+    el('p', { class: 'note' }, '只会执行 git branch -d，只处理本地分支。强制删除、删 worktree 只列出命令，由你决定；远程分支不在这里处理（建议在 GitHub 开启合并后自动删除分支）。'))
 }
 
 function renderProject(p) {

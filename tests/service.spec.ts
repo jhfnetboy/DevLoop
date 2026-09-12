@@ -1375,6 +1375,35 @@ describe('saving a result while the state lock is busy', () => {
     expect((await loadState(root, Date.now())).supervisor).toBe(before.supervisor)
   })
 
+  it('removes a symlinked marker without touching its target, and keeps one it merely cannot read', async () => {
+    const root = await planned('devloop-pending-kinds-')
+    const target = join(await mkdtemp(join(tmpdir(), 'devloop-pending-target-')), 'hold')
+    await writeFile(target, '{"taskId":null,"reason":"result_transition_failed"}\n', 'utf8')
+    await symlink(target, join(root, '.devloop', 'PENDING_HOLD'))
+    const service = new DevloopService(new Context(), resolveConfig({ root, tickIntervalMs: 60_000, enabled: false }), new RecordingBackend())
+    services.push(service)
+    await service.tick()
+    await expect(lstat(join(root, '.devloop', 'PENDING_HOLD'))).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(readFile(target, 'utf8')).resolves.toContain('result_transition_failed')
+    expect((await loadState(root, Date.now())).supervisor).toBeNull()
+
+    // Unreadable is not corrupt: a transient failure must not delete a real hold.
+    const marker = join(root, '.devloop', 'PENDING_HOLD')
+    await writeFile(marker, '{"taskId":null,"reason":"result_transition_failed"}\n', { mode: 0o000 })
+    await service.tick()
+    await expect(lstat(marker)).resolves.toBeTruthy()
+    await chmod(marker, 0o600)
+  })
+
+  it('never treats a directory in the marker\'s place as a hold', async () => {
+    const root = await planned('devloop-pending-dir-')
+    await mkdir(join(root, '.devloop', 'PENDING_HOLD'))
+    const service = new DevloopService(new Context(), resolveConfig({ root, tickIntervalMs: 60_000, enabled: false }), new RecordingBackend())
+    services.push(service)
+    await service.tick()
+    expect((await loadState(root, Date.now())).supervisor).toBeNull()
+  })
+
   it('drops a pending hold when the loop is already halted, so a resume cannot revive it', async () => {
     const root = await planned('devloop-pending-halted-')
     const current = await loadState(root, Date.now())

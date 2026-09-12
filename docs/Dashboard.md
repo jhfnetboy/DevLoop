@@ -233,9 +233,10 @@ both and wrote neither.
   out, not the branch of an unfinished task. Applying a cleanup rescans at that
   moment and runs `git branch -d --` only for names the operator ticked **and**
   the fresh plan still offers, so `-d`'s own refusals are the last guard; the
-  repository's hooks stay on. `-D`, remote branches and `git worktree remove`
-  are only listed with a command — never for the main checkout or the
-  project's own checkout. The state lock is held just to read which task
+  repository's hooks stay on. `-D` and `git worktree remove` are only listed
+  with a command — never for the main checkout or the project's own checkout.
+  Remote branches are not touched: the scan reads local branches only (GitHub's
+  auto-delete-on-merge is the place for those). The state lock is held just to read which task
   branches are live, not through the deletes, because a loop that finds it busy
   would otherwise have to wait to save a result. An unreadable STATE refuses the
   cleanup rather than treating every task branch as finished.
