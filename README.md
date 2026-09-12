@@ -97,7 +97,7 @@ this way.
 - `delegate` creates `.devloop/worktrees/<taskId>` and writes `.devloop/CONTRACT.json` inside it
 - With `agentBackend: routed`, plan uses `plannerRoute`, delegate uses `routing[contract.tier]`, and review uses the independent `reviewerRoute`
 - `reviewerRoute` may name the `forge` backend: one GitHub pull request per task into the work branch, reviewed there and merged by DevLoop, then one release pull request to trunk
-- `merge` is mechanical git: `merge_ready` plus Review `PASS` / `PASS_WITH_NOTES` merges `devloop/<taskId>` into workspace HEAD, deletes the worktree, marks the task `done`. No PASS → escalate. Does not push. Does not call AgentBackend.
+- `merge` is mechanical git: `merge_ready` plus Review `PASS` / `PASS_WITH_NOTES` merges `devloop/<taskId>` into workspace HEAD, deletes the worktree, marks the task `done`. No PASS → escalate. In local mode it does not push; with the `forge` review route the merge happens on GitHub and the checkout fast-forwards to it. Does not call AgentBackend.
 
 Install: [`docs/Install.md`](./docs/Install.md). This cut: [`docs/Release.md`](./docs/Release.md).
 Multi-model architecture choices and the recommended Harness-native path: [`docs/OrchestrationOptions.md`](./docs/OrchestrationOptions.md).
@@ -217,7 +217,7 @@ flowchart TB
     Progress --> SM
 ```
 
-In routed mode, plan / delegate / review use independent configured routes. Merge lands git locally and does not push.
+In routed mode, plan / delegate / review use independent configured routes. Merge lands git locally and does not push, unless the review route is `forge` (one pull request per task, merged on GitHub).
 
 ## Can 0.3 meet the product goal?
 

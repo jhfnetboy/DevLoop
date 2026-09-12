@@ -20,7 +20,7 @@ pnpm build
 
 `lib/` is gitignored. `prepare` rebuilds it on git installs. `pnpm pack` also runs `prepare`, so the tarball contains `lib/`.
 
-Pack and inspect (this repo’s pnpm `10.6.4` has no `pack --dry-run`; `*.tgz` is gitignored):
+Pack and inspect (this repo’s pnpm `10.6.3` has no `pack --dry-run`; `*.tgz` is gitignored):
 
 ```bash
 pnpm pack
@@ -54,7 +54,7 @@ Only when `npm whoami` succeeds, `HEAD` **is** the release tag (`git rev-parse H
 
 Check `npm whoami --registry=https://registry.npmjs.org/`, not bare `npm whoami`: a machine configured against a mirror answers for the mirror, which reports "not logged in" for an account that is, and cannot accept a publish either way. `publishConfig` in `package.json` pins the publish registry, so the flags below are belt and braces rather than the thing that makes it work.
 
-Publish the **inspected tarball** from `main` while it still points at the tag commit (do not `git checkout v0.6.4`: detached HEAD makes pnpm 10.6.4 fail with `ERR_PNPM_GIT_UNKNOWN_BRANCH`):
+Publish the **inspected tarball** from `main` while it still points at the tag commit (do not `git checkout v0.6.4`: detached HEAD makes pnpm 10.6.3 fail with `ERR_PNPM_GIT_UNKNOWN_BRANCH`):
 
 ```bash
 git checkout main

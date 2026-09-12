@@ -11,7 +11,7 @@ dsh plugin --profile web add github:jhfnetboy/DevLoop
 ## Requirements
 
 - Node `^22.19.0 || >=24.0.0` (Node 23 is not in the DSH engines range)
-- pnpm (the copy `dsh plugin` forwards to; this repo pins `10.6.4`)
+- pnpm (the copy `dsh plugin` forwards to; this repo pins `10.6.3`)
 - DeepSeek Harness CLI (`npm i -g @deepseek-ai/dsh`, or `pnpm dsh` from a harness checkout)
 - A profile you already boot (`dsh web`, or another named profile)
 
