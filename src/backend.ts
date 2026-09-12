@@ -107,7 +107,7 @@ export class RoutedBackend implements AgentBackend {
   }
 }
 
-function sameAgentRoute(left: Route, right: Route): boolean {
+export function sameAgentRoute(left: Route, right: Route): boolean {
   if (left.backend.startsWith('subagent:') && left.backend === right.backend) return true
   return left.backend === right.backend && left.model === right.model
 }

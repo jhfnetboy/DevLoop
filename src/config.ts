@@ -37,6 +37,8 @@ export interface ForgeConfig {
   readonly maxWaitMs: number
   /** Where a verdict is read: GitHub reviews (default), or a `<devloop_result>` comment. Never both. */
   readonly verdictSource: 'reviews' | 'comments'
+  /** A local reviewer to pass the change before the forge opens its pull request; null opens it straight away. */
+  readonly localReview: Route | null
 }
 
 export interface Config {
@@ -136,7 +138,8 @@ export const ConfigSchema: s<Config> = s.object({
     pollIntervalMs: s.number().step(1).min(1_000).max(2_147_483_647).default(30_000),
     maxWaitMs: s.number().step(1).min(0).max(2_147_483_647).default(0),
     verdictSource: s.union([s.const('reviews'), s.const('comments')]).default('reviews'),
-  }).default({ pushUrl: '', base: 'main', command: 'gh', reviewers: [], pollIntervalMs: 30_000, maxWaitMs: 0, verdictSource: 'reviews' }),
+    localReview: s.union([s.const(null), routeSchema('T3', 'claude', 'opus')]).default(null),
+  }).default({ pushUrl: '', base: 'main', command: 'gh', reviewers: [], pollIntervalMs: 30_000, maxWaitMs: 0, verdictSource: 'reviews', localReview: null }),
   routing: s.object({
     T0: routeSchema('T0', 'local', 'qwen-coder-7b').default({
       tier: 'T0', backend: 'local', model: 'qwen-coder-7b',

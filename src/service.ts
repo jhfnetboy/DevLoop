@@ -9,10 +9,12 @@ import {
   dispatchTick,
   isAgentAction,
   runInputFor,
+  sameAgentRoute,
   type AgentBackend,
   type AgentAction,
   type AgentRunResult,
 } from './backend.js'
+import { LocalThenForgeReview } from './review-chain.js'
 import { ConfigSchema, resolveConfig, type Config } from './config.js'
 import { ClaudeCliBackend, CodexCliBackend } from './cli.js'
 import { runAcceptanceChecks } from './acceptance.js'
@@ -565,23 +567,42 @@ export class ProjectLoop {
  * `codex`. The default stays NoopBackend so tests without the third
  * constructor arg do not spawn. RecordingBackend is tests-only.
  */
+/**
+ * The forge, behind the local reviewer when one is configured. That reviewer
+ * must be neither the forge nor a route that implements: a change reviewed
+ * locally by its own author would reach the pull request as if checked.
+ */
+export function forgeReview(config: Config, registry: Readonly<Record<string, AgentBackend>>): AgentBackend {
+  const forge = new ForgePrBackend(config.forge)
+  const local = config.forge.localReview
+  if (local === null) return forge
+  if (local.backend === 'forge') throw new Error('forge_config: localReview must be a local reviewer, not the forge')
+  if (Object.values(config.routing).some(worker => sameAgentRoute(worker, local))) {
+    throw new Error(`forge_config: localReview ${local.backend}/${local.model} also implements tasks`)
+  }
+  const backend = registry[local.backend] ?? (local.backend.startsWith('subagent:') ? registry.subagent : undefined)
+  if (backend === undefined) throw new Error(`forge_config: no backend adapter registered for localReview ${local.backend}`)
+  return new LocalThenForgeReview(backend, local, forge)
+}
+
 export function createBackend(ctx: Context, config: Config): AgentBackend {
   if (config.agentBackend === 'routed') {
     const routes = [config.plannerRoute, config.reviewerRoute, ...Object.values(config.routing)]
     // Only register what a route actually names: RoutedBackend.health() probes
     // every registered adapter, so an unused one would demand its CLI be installed.
     const usesForge = routes.some(route => route.backend === 'forge')
+    const registry: Record<string, AgentBackend> = {
+      dsh: new DshHeadlessBackend(),
+      claude: new ClaudeCliBackend(),
+      codex: new CodexCliBackend(),
+      subagent: new HarnessSubagentBackend(new CordisHarnessHost(ctx)),
+    }
+    if (usesForge) registry.forge = forgeReview(config, registry)
     return new RoutedBackend({
       planner: config.plannerRoute,
       reviewer: config.reviewerRoute,
       workers: config.routing,
-    }, {
-      dsh: new DshHeadlessBackend(),
-      claude: new ClaudeCliBackend(),
-      codex: new CodexCliBackend(),
-      ...(usesForge ? { forge: new ForgePrBackend(config.forge) } : {}),
-      subagent: new HarnessSubagentBackend(new CordisHarnessHost(ctx)),
-    })
+    }, registry)
   }
   if (config.agentBackend === 'dsh') return new DshHeadlessBackend()
   if (config.agentBackend === 'claude') return new ClaudeCliBackend()
