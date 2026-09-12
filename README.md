@@ -45,7 +45,7 @@ resuming would let the loop continue
 The task branch has no commits, but review passed it. Did it need any change?
   - task t1 is still at the commit it started from
   - a review verdict of PASS is recorded against it
-  node <plugin>/lib/bin/devloop.js answer retry  /path/to/project   give the task another attempt from a clean worktree
+  node <plugin>/lib/bin/devloop.js answer retry  /path/to/project   run the worker on the task again, in its existing worktree
   node <plugin>/lib/bin/devloop.js answer accept /path/to/project   agree the task needed no change and mark it done
   node <plugin>/lib/bin/devloop.js answer stop   /path/to/project   leave the loop halted; nothing changes
 ```
@@ -610,7 +610,7 @@ loop can act on:
 The task branch has no commits, but review passed it. Did it need any change?
   - task AUTH-001 is still at the commit it started from
   - a review verdict of PASS is recorded against it
-  devloop answer retry   give the task another attempt from a clean worktree
+  devloop answer retry   run the worker on the task again, in its existing worktree
   devloop answer accept  agree the task needed no change and mark it done
   devloop answer stop    leave the loop halted; nothing changes
 ```
