@@ -1513,6 +1513,18 @@ process.exit(${code})
     expect((await readPrLog(plain.root))[0]).toMatchObject({ band: 'normal', estimate: null })
   })
 
+  it('keeps the work branch it recorded when the checkout later moves to another branch', async () => {
+    const root = await mkdtempInRepo('devloop-prepr-svc-')
+    await mkdir(join(root, '.devloop'))
+    await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
+    await initWorkRepo(root, 'other')
+    await saveState(root, { ...emptyState(Date.now()), workBranch: 'work', tasks: [makeTask({ id: 'd1', status: 'ready', allowedPaths: ['src/**'] })] })
+    const service = new DevloopService(new Context(), resolveConfig({ root, enabled: false }), new RecordingBackend())
+    services.push(service)
+    await service.tick()
+    expect((await loadState(root, Date.now())).workBranch).toBe('work')
+  })
+
   it('leaves the work branch unrecorded on a trunk, where the merge guards will stop the loop', async () => {
     const { root } = await runWith((await checker([], 0, { lines: 12, files: 1, band: 'normal' })).argv, {}, true)
     expect((await loadState(root, Date.now())).workBranch).toBeUndefined()

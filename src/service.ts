@@ -234,7 +234,7 @@ export class ProjectLoop {
                   state: stampTaskBaseSha(result.state, result.action.taskId, baseSha),
                 }
               }
-              // Once, at the first delegate: the branch every later task pull request targets.
+              // At the first delegate that finds it unset, and never again: the branch every later task pull request targets.
               // A trunk or a detached HEAD is left unrecorded, and the merge guards say why.
               if (result.state.workBranch === undefined) {
                 const branch = await currentBranch(this.config.root)

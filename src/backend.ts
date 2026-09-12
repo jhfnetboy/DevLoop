@@ -13,6 +13,8 @@ export interface AgentRunInput {
   /** Concrete provider/model selected by RoutedBackend. */
   readonly route?: Route
   readonly signal?: AbortSignal
+  /** The branch the loop works on (STATE.workBranch), which a forge targets with a task's pull request. */
+  readonly workBranch?: string
 }
 
 export interface AgentRunResult {
@@ -140,6 +142,7 @@ export function runInputFor(
   )
   return {
     action,
+    ...(state.workBranch === undefined ? {} : { workBranch: state.workBranch }),
     // Only the review is told: the worker's prompt already states the budget.
     contract: action.type === 'review' && task.overBudget !== undefined ? { ...contract, overBudget: task.overBudget } : contract,
     workspaceRoot,

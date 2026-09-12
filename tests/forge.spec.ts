@@ -9,6 +9,7 @@ import { resolveConfig } from '../src/config.ts'
 import {
   assertForgeOptions,
   ForgePrBackend,
+  DEVLOOP_LABEL,
   MAX_REVIEW_COMMENTS,
   parseRemoteUrl,
   pullRequestBody,
@@ -93,6 +94,9 @@ interface Recorded {
 interface StubOptions {
   comments?: unknown[]
   reviews?: unknown[]
+  lsRemote?: string
+  diverged?: boolean
+  headRef?: string
   prList?: unknown
   prView?: unknown
   rewrittenUrl?: string
@@ -144,6 +148,9 @@ function stubRunner(stub: StubOptions): HeadlessRunner {
         return { stdout: `${stub.rewrittenUrl ?? added}\n`, stderr: '' }
       }
       if (joined.includes('rev-parse')) return { stdout: `${stub.stagedSha ?? HEAD_SHA}\n`, stderr: '' }
+      if (joined.includes('ls-remote')) return { stdout: stub.lsRemote ?? '', stderr: '' }
+      if (joined.includes('symbolic-ref')) return { stdout: `${stub.headRef ?? 'refs/heads/devloop/feature'}\n`, stderr: '' }
+      if (joined.includes('merge-base') && stub.diverged) throw new Error('exit 1')
       return { stdout: '', stderr: '' }
     }
     if (joined.includes('/reviews')) return { stdout: commentLines(stub.reviews ?? []), stderr: '' }
@@ -1248,5 +1255,61 @@ describe('ForgePrBackend verdicts from GitHub reviews', () => {
     const notes = (long.outcome as { notes?: string }).notes ?? ''
     expect(notes.length).toBe(8_000)
     expect(notes.endsWith('\n[truncated]')).toBe(true)
+  })
+})
+
+describe('ForgePrBackend against the loop\'s work branch', () => {
+  const WORK = 'devloop/feature'
+  const onWork = (stub: StubOptions = {}, workBranch = WORK) => {
+    const calls: Recorded[] = stub.calls ?? []
+    const run = backend({ verdictSource: 'reviews' }, {
+      reviews: [{ author: REVIEWER, state: 'APPROVED', commit: HEAD_SHA, body: '' }],
+      prList: [pr({ baseRefName: workBranch })], prView: pr({ baseRefName: workBranch }), ...stub, calls,
+    }).run({ ...reviewInput(), workBranch })
+    return { run, calls }
+  }
+  const pushes = (calls: Recorded[]) => calls.filter(call => call.command === 'git' && call.argv.includes('push')).map(call => call.argv[call.argv.length - 1])
+
+  it('targets the work branch, labels the pull request, and creates the work branch where the forge lacks it', async () => {
+    const { run, calls } = onWork({ prList: [] })
+    await run
+    const create = calls.find(call => call.argv[0] === 'pr' && call.argv[1] === 'create')?.argv ?? []
+    expect(create[create.indexOf('--base') + 1]).toBe(WORK)
+    expect(create[create.indexOf('--label') + 1]).toBe(DEVLOOP_LABEL)
+    expect(calls.some(call => call.argv.join(' ').startsWith(`label create ${DEVLOOP_LABEL}`) && call.argv.includes('--force'))).toBe(true)
+    expect(pushes(calls)).toEqual([`refs/heads/${BRANCH}:refs/heads/${BRANCH}`, `refs/heads/${WORK}:refs/heads/${WORK}`])
+    expect(calls.some(call => call.argv.includes('update-ref') && call.argv.includes(`refs/heads/${WORK}`) && call.argv.includes(BASE_SHA))).toBe(true)
+  })
+
+  it('leaves a work branch already at the task\'s base, fast-forwards one behind it, and refuses one that moved away', async () => {
+    const same = onWork({ lsRemote: `${BASE_SHA}\trefs/heads/${WORK}\n` })
+    expect(await same.run).toMatchObject({ status: 'started' })
+    expect(pushes(same.calls)).toHaveLength(1)
+    const behind = onWork({ lsRemote: `${OTHER_SHA}\trefs/heads/${WORK}\n` })
+    expect(await behind.run).toMatchObject({ status: 'started' })
+    expect(pushes(behind.calls)).toHaveLength(2)
+    const moved = onWork({ lsRemote: `${OTHER_SHA}\trefs/heads/${WORK}\n`, diverged: true })
+    expect((await moved.run).detail).toMatch(/^forge_work_branch: .* has moved away/)
+    expect(pushes(moved.calls)).toHaveLength(1)
+  })
+
+  it('refuses a work branch that is the trunk, is not a branch name, or has no base commit to hold it to', async () => {
+    expect((await onWork({}, 'main').run).detail).toBe('forge_input: the work branch is the trunk')
+    for (const name of ['-x', 'a..b', 'x.lock', 'a@{1}', 'a b']) {
+      expect((await onWork({}, name).run).detail, name).toBe('forge_input: the work branch is not a valid branch name')
+    }
+    const noBase = { ...reviewInput(), workBranch: WORK, contract: { ...reviewInput().contract!, baseSha: undefined } }
+    expect((await backend({ verdictSource: 'reviews' }).run(noBase)).detail).toMatch(/needs the task's base commit/)
+  })
+
+  it('opens nothing while the checkout is off the work branch', async () => {
+    const { run, calls } = onWork({ headRef: 'refs/heads/elsewhere' })
+    expect((await run).detail).toBe(`forge_input: the checkout is on refs/heads/elsewhere, not the work branch ${WORK}`)
+    expect(calls.some(call => call.argv.includes('push') || call.argv[1] === 'create')).toBe(false)
+  })
+
+  it('hands the forge the recorded work branch, from STATE', () => {
+    const state = { ...withTasks(baseState(), [makeTask({ id: 'TASK-1', status: 'review_pending' })]), workBranch: WORK }
+    expect(runInputFor('/repo', { type: 'review', taskId: 'TASK-1' }, state, resolveConfig({}).budget).workBranch).toBe(WORK)
   })
 })
