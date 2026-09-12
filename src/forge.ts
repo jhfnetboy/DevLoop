@@ -518,6 +518,7 @@ export class ForgePrBackend implements AgentBackend {
     ctx: RunCtx,
   ): Promise<number> {
     await this.ensureLabel(root, repo, ctx)
+    await this.retargetStray(root, repo, branch, sha, ctx)
     const existing = await this.findPullRequest(root, repo, branch, sha, ctx)
     if (existing !== null) {
       // A reused pull request still carries the previous attempt's instructions.
@@ -543,6 +544,21 @@ export class ForgePrBackend implements AgentBackend {
     const created = await this.findPullRequest(root, repo, branch, sha, ctx)
     if (created === null) throw new Error('forge_pr: pull request was created but cannot be found')
     return created.number
+  }
+
+  /**
+   * An open pull request from this task's branch against another base — one
+   * opened before the work branch was recorded, say — would otherwise sit
+   * beside a second one, still pointing at trunk. It is moved to this base.
+   */
+  private async retargetStray(root: string, repo: ForgeRepo, branch: string, sha: string, ctx: RunCtx): Promise<void> {
+    const base = ctx.base ?? this.options.base
+    const raw = await this.forge(root, ['pr', 'list', '--repo', repoSlug(repo), '--head', branch, '--state', 'open', '--json', PR_FIELDS, '--limit', '10'], ctx)
+    const listed: unknown = parseJson(raw, 'forge_pr: pr list')
+    if (!Array.isArray(listed)) throw new Error('forge_pr: pr list did not return an array')
+    for (const stray of listed.map(entry => readPullRequest(entry)).filter(pr => !pr.isCrossRepository && pr.headRefName === branch && pr.headRefOid.toLowerCase() === sha && pr.baseRefName !== base)) {
+      await this.forge(root, ['pr', 'edit', String(stray.number), '--repo', repoSlug(repo), '--base', base], ctx)
+    }
   }
 
   /** The `devloop` label, created or refreshed; `--force` makes this safe to repeat. */
