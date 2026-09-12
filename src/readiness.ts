@@ -119,7 +119,7 @@ function trunkSet(base: string): ReadonlySet<string> {
   return new Set([base, ...TRUNKS].map(name => name.toLowerCase()))
 }
 
-async function baseBranch(root: string, pilot: PilotConfig | null): Promise<string> {
+export async function baseBranch(root: string, pilot: PilotConfig | null): Promise<string> {
   return pilot?.baseBranch ?? await remoteDefaultBranch(root) ?? 'main'
 }
 
@@ -233,7 +233,7 @@ function safeRelative(path: string): boolean {
   return normal !== '..' && !normal.startsWith(`..${sep}`) && !normal.split(sep).includes('..')
 }
 
-async function readPilotConfig(root: string): Promise<PilotConfig | null> {
+export async function readPilotConfig(root: string): Promise<PilotConfig | null> {
   const text = await readPlain(join(root, PILOT_FILE), PILOT_MAX_BYTES)
   return text === null ? null : parsePilotConfig(text)
 }
@@ -362,7 +362,7 @@ function shellQuote(value: string): string {
 
 const execFileAsync = promisify(execFile)
 
-async function git(root: string, args: readonly string[]): Promise<string> {
+export async function git(root: string, args: readonly string[]): Promise<string> {
   const { stdout } = await execFileAsync('git', ['-C', root, ...args], {
     encoding: 'utf8',
     timeout: 10_000,
