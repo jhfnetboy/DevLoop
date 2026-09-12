@@ -1,8 +1,41 @@
-# Release 0.5.6
+# Release 0.6.0
 
-Bounded autonomous engineering loop: structured model results, deterministic state transitions, host-enforced write scope, SHA-bound independent review, durable recovery, and role/tier routing. Tag `v0.5.6` and the GitHub Release are created **after** this commit is on `main`; steps: [Deploy.md](./Deploy.md).
+Bounded autonomous engineering loop: structured model results, deterministic state transitions, host-enforced write scope, SHA-bound independent review, durable recovery, and role/tier routing. Tag `v0.6.0` and the GitHub Release are created **after** this commit is on `main`; steps: [Deploy.md](./Deploy.md).
 
-Package version: **0.5.6**. This document is the release note, not a second semver.
+Package version: **0.6.0**. This document is the release note, not a second semver.
+
+## New in 0.6.0
+
+The first step of the 0.6 plan (design: draft PR [#42](https://github.com/jhfnetboy/DevLoop/pull/42)): DevLoop does
+the status half of pilot's work itself — see a repository's branches and
+worktrees, and clean up merged branches — from the page, without a skill.
+Shipped as eleven reviewed PRs, each inside the per-PR budget and each through
+PR-daemon's mechanical pre-PR rules, a local review and PR-daemon's review.
+
+- **仓库状态 panel** ([#43](https://github.com/jhfnetboy/DevLoop/pull/43)–[#47](https://github.com/jhfnetboy/DevLoop/pull/47), [#49](https://github.com/jhfnetboy/DevLoop/pull/49), [#50](https://github.com/jhfnetboy/DevLoop/pull/50)).
+  On every project page, before and after a start: current branch, trunk,
+  ahead/behind, uncommitted changes; the merged branches that can go, as ticked
+  checkboxes; every kept branch with its reason; the steps left to a person
+  with their commands. 删除选中的分支 runs `git branch -d` for the ticked
+  branches the plan still offers at that moment, and says which were deleted
+  and why any were not. The rules it keeps are in
+  [Dashboard.md](./Dashboard.md) ("Branch cleanup deletes only what git itself calls safe").
+- **`.pilot.yml` protect_patterns are honoured**, read as a superset of pilot's
+  own ref hook (both list forms, CRLF, blank and comment lines, non-ASCII
+  names) and never below release/hotfix/deploy; entries that protect nothing,
+  such as globs, are shown as a warning.
+- **A finished dispatch waits for the state lock to save its result**
+  ([#51](https://github.com/jhfnetboy/DevLoop/pull/51)) instead of dropping it
+  after one try, and a hold that cannot get the lock is kept in
+  `.devloop/PENDING_HOLD` for the next tick.
+- **Fix: a tag named like the trunk no longer hides it**
+  ([#48](https://github.com/jhfnetboy/DevLoop/pull/48)). With a tag `main`, git
+  shortened the branch to `heads/main` and the start check let a loop start on
+  main; branches are now read by full ref.
+
+A minor: new operator surface and a new endpoint pair
+(`GET …/projects/<id>/status`, `POST …/projects/<id>/cleanup`), no config
+change and no new STATE field.
 
 ## New in 0.5.6
 
@@ -260,4 +293,4 @@ Host-side checks (`dsh plugin add`, `--dump-config`) are listed in [UserCaseTest
 - Token/cost melt the circuit only when the backend fills `AgentRunResult`; otherwise the loop uses wall-clock `lastProgressAt`. Session cost resets after the first successful STATE persist of this process; daily cost resets at UTC midnight.
 - The automated E2E uses a scripted provider, and the release candidate also completed a real-provider plan → implement → exact-SHA review → merge run without operator state edits.
 - The operator UI is the dashboard; it sees only the spend backends report, and cannot edit an existing goal.
-- npm registry: `@jhfnetboy/dsh-devloop@0.5.6` is published. GitHub and the Release tarball remain supported. See [Install.md](./Install.md).
+- npm registry: `@jhfnetboy/dsh-devloop@0.6.0` is published. GitHub and the Release tarball remain supported. See [Install.md](./Install.md).
