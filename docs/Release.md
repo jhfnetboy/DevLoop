@@ -1,8 +1,54 @@
-# Release 0.6.0
+# Release 0.6.1
 
-Bounded autonomous engineering loop: structured model results, deterministic state transitions, host-enforced write scope, SHA-bound independent review, durable recovery, and role/tier routing. Tag `v0.6.0` and the GitHub Release are created **after** this commit is on `main`; steps: [Deploy.md](./Deploy.md).
+Bounded autonomous engineering loop: structured model results, deterministic state transitions, host-enforced write scope, SHA-bound independent review, durable recovery, and role/tier routing. Tag `v0.6.1` and the GitHub Release are created **after** this commit is on `main`; steps: [Deploy.md](./Deploy.md).
 
-Package version: **0.6.0**. This document is the release note, not a second semver.
+Package version: **0.6.1**. This document is the release note, not a second semver.
+
+## New in 0.6.1
+
+The per-PR budget, enforced by PR-daemon's own rules and recorded so it can
+be judged on data. Each task's change goes through PR-daemon's mechanical
+pre-PR checker before any reviewer is paid; the rules live in the PR-daemon
+repository and are only called from here, so a rule change there reaches the
+loop with a `git pull`, without a DevLoop release.
+
+- **The checker gates the review** ([#55](https://github.com/jhfnetboy/DevLoop/pull/55)–[#57](https://github.com/jhfnetboy/DevLoop/pull/57), [#65](https://github.com/jhfnetboy/DevLoop/pull/65)).
+  Off by default; set `prePrCheck` to the checker's argv
+  (`['bash', '~/Dev/tools/PR-daemon/scripts/pre-pr-check.sh']`), with
+  `prePrProfile` (`devloop`) and `prePrTimeoutMinutes` (5). DevLoop knows only
+  the checker's contract — argv, exit codes, JSON — and never a rule. Exit 0
+  passes; exit 1 with a blocking finding holds the task, as
+  `task_over_budget` when only size rules blocked (redo it smaller) or
+  `prepr_blocked` otherwise (SZ-4, high-risk content mixed in, is not a size); anything else, a timeout, or a result that
+  disagrees with itself holds as `prepr_unavailable`, never a pass.
+- **The budget has an elastic band** ([#64](https://github.com/jhfnetboy/DevLoop/pull/64)–[#69](https://github.com/jhfnetboy/DevLoop/pull/69)). Up to 200 lines, 5 files and
+  2 counted top-level directories is normal; up to 260 / 6 / 3 is elastic —
+  reviewed, with the size put in front of the reviewer, who is asked to judge
+  whether it should have been split (REWORK or REPLAN); beyond that the task
+  is refused as over budget. The thresholds are PR-daemon's (`size.band`,
+  `size.limits`, rules 1.2.0); an older checker's result is read as normal or
+  over from its blocks.
+- **The planner is told the budget and estimates each task's size**
+  ([#59](https://github.com/jhfnetboy/DevLoop/pull/59), [#66](https://github.com/jhfnetboy/DevLoop/pull/66), [#67](https://github.com/jhfnetboy/DevLoop/pull/67)). The estimate is
+  never enforced — a malformed one is dropped, not the plan — and is logged
+  beside the checker's count, the data the estimate rules will be tuned on.
+- **`.devloop/PR-LOG.jsonl` and the PR 记录 panel**
+  ([#58](https://github.com/jhfnetboy/DevLoop/pull/58), [#61](https://github.com/jhfnetboy/DevLoop/pull/61)–[#63](https://github.com/jhfnetboy/DevLoop/pull/63), [#65](https://github.com/jhfnetboy/DevLoop/pull/65)).
+  One line per check — size, band, estimate, rules hit, rules version — and
+  per review verdict. Best-effort (a lost line costs only that line), never
+  through a symlink, and a malformed line is dropped rather than taking the
+  page down. The project page shows the latest 50, marking 弹性 and 超限.
+- **Redoing a task smaller is real** ([#60](https://github.com/jhfnetboy/DevLoop/pull/60)).
+  The over-budget and replan gates used to suggest editing PLAN.md, which the
+  loop never reads back; they now give the commands that redo the task from
+  its base, and the worker's prompt states the budget.
+- **A pending hold that cannot be read says so on every tick**
+  ([#59](https://github.com/jhfnetboy/DevLoop/pull/59)). One kept through a
+  read error (EACCES and the like) used to wait in silence until it read.
+
+A minor: three new optional config keys, new optional task fields
+(`overBudget`, `estimate`), a new file under `.devloop/`, no change to
+existing behaviour while `prePrCheck` is unset.
 
 ## New in 0.6.0
 
@@ -293,4 +339,4 @@ Host-side checks (`dsh plugin add`, `--dump-config`) are listed in [UserCaseTest
 - Token/cost melt the circuit only when the backend fills `AgentRunResult`; otherwise the loop uses wall-clock `lastProgressAt`. Session cost resets after the first successful STATE persist of this process; daily cost resets at UTC midnight.
 - The automated E2E uses a scripted provider, and the release candidate also completed a real-provider plan → implement → exact-SHA review → merge run without operator state edits.
 - The operator UI is the dashboard; it sees only the spend backends report, and cannot edit an existing goal.
-- npm registry: `@jhfnetboy/dsh-devloop@0.6.0` is published. GitHub and the Release tarball remain supported. See [Install.md](./Install.md).
+- npm registry: `@jhfnetboy/dsh-devloop@0.6.1` is published. GitHub and the Release tarball remain supported. See [Install.md](./Install.md).
