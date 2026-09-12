@@ -27,7 +27,9 @@ describe('scanning a repository', () => {
     await git(root, 'branch', 'release/1.0')
     await git(root, 'branch', 'devloop/T1')
     await git(root, 'branch', 'parked')
-    await git(root, 'tag', 'main') // a tag named like the trunk must not rename branches to heads/main
+    // Tags named like the trunk and the current branch: none of the three git reads may see heads/<x>.
+    await git(root, 'tag', 'main')
+    await git(root, 'tag', 'work')
     await git(root, 'worktree', 'add', '-q', join(root, '.devloop-wt'), 'parked')
     await writeFile(join(root, '.devloop-wt', 'scratch.txt'), 'x\n', 'utf8')
 
@@ -38,7 +40,7 @@ describe('scanning a repository', () => {
     expect(by['feature/done']).toEqual({ name: 'feature/done', merged: true, protectedBy: null })
     expect(by['feature/open']).toMatchObject({ merged: false, protectedBy: null })
     expect(by.work?.protectedBy).toBe('current')
-    expect(by.main?.protectedBy).toBe('trunk')
+    expect(by.main).toEqual({ name: 'main', merged: true, protectedBy: 'trunk' })
     expect(by['release/1.0']?.protectedBy).toBe('pattern')
     expect(by.parked?.protectedBy).toBe('worktree')
     expect(by['devloop/T1']?.protectedBy).toBe('active_task')
