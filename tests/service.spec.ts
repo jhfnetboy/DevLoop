@@ -1662,3 +1662,79 @@ describe('merging on the forge', () => {
     }
   })
 })
+
+describe('releasing a finished goal on the forge', () => {
+  const services: DevloopService[] = []
+  const realCreate = forgeMergers.create
+  afterEach(() => {
+    for (const service of services.splice(0)) service.stop()
+    forgeMergers.create = realCreate
+  })
+
+  async function finished(extra: Record<string, unknown> = {}): Promise<string> {
+    const root = await mkdtempInRepo('devloop-release-')
+    await mkdir(join(root, '.devloop'))
+    await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
+    await initWorkRepo(root)
+    await saveState(root, {
+      ...emptyState(Date.now()),
+      goalCompleted: true,
+      workBranch: 'work',
+      lastAction: { type: 'stop', reason: 'goal_complete' },
+      tasks: [makeTask({ id: 'd1', status: 'done', title: 'Add a parser', implementationSha: 'a'.repeat(40), lastReviewVerdict: 'PASS' })],
+      ...extra,
+    })
+    return root
+  }
+
+  function service(root: string, forge = true): DevloopService {
+    const made = new DevloopService(new Context(), resolveConfig({
+      root, enabled: false, agentBackend: 'routed',
+      reviewerRoute: forge ? { tier: 'T3', backend: 'forge', model: 'pr' } : { tier: 'T3', backend: 'claude', model: 'opus' },
+      forge: { pushUrl: 'git@github.com:acme/widgets.git', reviewers: ['clestons'] },
+    } as never), new RecordingBackend())
+    services.push(made)
+    return made
+  }
+
+  it('opens the release once, waits without writing, keeps a request for changes, and records the merge', async () => {
+    const root = await finished()
+    const opened: Array<{ title: string, body: string }> = []
+    const steps = [{ state: 'waiting' as const, number: 9 }, { state: 'changes' as const, number: 9, notes: 'T2 skipped review' }, { state: 'merged' as const, number: 9, mergeCommit: 'b'.repeat(40) }]
+    let advanced = 0
+    forgeMergers.create = () => ({
+      async mergeTask() { throw new Error('not a task merge') },
+      async openRelease(request) { opened.push(request); return { number: 9 } },
+      async advanceRelease() { return steps[Math.min(advanced++, steps.length - 1)]! },
+    })
+    const loop = service(root)
+    await loop.tick()
+    expect((await loadState(root, Date.now())).release).toEqual({ number: 9, merged: false })
+    expect(opened).toHaveLength(1)
+    expect(opened[0]?.title).toBe('DevLoop release: work')
+    expect(opened[0]?.body).toContain('`d1` Add a parser: head `' + 'a'.repeat(40) + '`, from `devloop/d1`, verdict PASS')
+    const before = (await loadState(root, Date.now())).revision
+    await loop.tick()
+    expect((await loadState(root, Date.now())).revision).toBe(before)
+    await loop.tick()
+    expect((await loadState(root, Date.now())).release).toEqual({ number: 9, merged: false, changes: 'T2 skipped review' })
+    await loop.tick()
+    expect((await loadState(root, Date.now())).release).toEqual({ number: 9, merged: true, mergeCommit: 'b'.repeat(40) })
+    await loop.tick()
+    expect(advanced).toBe(3)
+    expect(opened).toHaveLength(1)
+  })
+
+  it('leaves a local loop, a goal not finished, and a held one alone', async () => {
+    let asked = 0
+    forgeMergers.create = () => ({
+      async mergeTask() { throw new Error('no') },
+      async openRelease() { asked += 1; return { number: 9 } },
+      async advanceRelease() { asked += 1; return { state: 'waiting' as const, number: 9 } },
+    })
+    await service(await finished(), false).tick()
+    await service(await finished({ goalCompleted: false })).tick()
+    await service(await finished({ supervisor: { taskId: null, reason: 'no_progress' }, killSwitch: true })).tick()
+    expect(asked).toBe(0)
+  })
+})

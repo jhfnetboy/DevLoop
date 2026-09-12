@@ -141,6 +141,13 @@ export interface Acknowledgement {
  * hold reason, and `killSwitch` is set beside it so every existing halted path
  * (tick short-circuit, stale-result refusal, `stop` decision) applies unchanged.
  */
+export interface Release {
+  readonly number: number
+  readonly merged: boolean
+  readonly mergeCommit?: string
+  readonly changes?: string
+}
+
 export interface Pause {
   readonly at: string
   /** Which surface did it: the audit trail for a loop paused from another device. */
@@ -198,6 +205,12 @@ export interface LoopState {
    * Absent until then, and on a loop that was started detached or on a trunk.
    */
   readonly workBranch?: string
+  /**
+   * The release pull request that takes the work branch to trunk once every
+   * task is merged, when the forge merges: its number, whether it is merged,
+   * and a reviewer's request for changes, if one stands.
+   */
+  readonly release?: Release
   readonly updatedAt: string
 }
 

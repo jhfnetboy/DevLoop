@@ -215,6 +215,19 @@ describe('persist and tick', () => {
     }
   })
 
+  it('keeps the release record across a save, and refuses one it did not write', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'devloop-'))
+    await mkdir(join(root, '.devloop'))
+    await saveState(root, { ...emptyState(0), release: { number: 9, merged: true, mergeCommit: 'b'.repeat(40) } })
+    expect((await loadState(root, 1)).release).toEqual({ number: 9, merged: true, mergeCommit: 'b'.repeat(40) })
+    for (const release of [{ number: 0, merged: false }, { number: 9 }, { number: 9, merged: true, mergeCommit: 'nope' }, { number: 9, merged: false, changes: '' }]) {
+      const bad = await mkdtemp(join(tmpdir(), 'devloop-'))
+      await mkdir(join(bad, '.devloop'))
+      await writeFile(join(bad, '.devloop', 'STATE.json'), JSON.stringify({ ...emptyState(0), release }), 'utf8')
+      expect((await loadState(bad, 1)).supervisor?.reason, JSON.stringify(release)).toBe('invalid_state')
+    }
+  })
+
   it('halts when persisted attempts are negative', async () => {
     const root = await mkdtemp(join(tmpdir(), 'devloop-'))
     await mkdir(join(root, '.devloop'))
