@@ -74,7 +74,7 @@ browser, including from another device.
 Everything above this line is how to run it. Everything below is why it is built
 this way.
 
-## What 0.6.3 does
+## What 0.6.4 does
 
 - Advances the bounded plan → delegate → review → local merge pipeline from validated, versioned model results
 - Adds a human snapshot at `.devloop/PROGRESS.md` after each tick (including latched idle, killSwitch, and unreadable STATE)
@@ -97,7 +97,7 @@ this way.
 - `delegate` creates `.devloop/worktrees/<taskId>` and writes `.devloop/CONTRACT.json` inside it
 - With `agentBackend: routed`, plan uses `plannerRoute`, delegate uses `routing[contract.tier]`, and review uses the independent `reviewerRoute`
 - `reviewerRoute` may name the `forge` backend: one GitHub pull request per task into the work branch, reviewed there and merged by DevLoop, then one release pull request to trunk
-- `merge` is mechanical git: `merge_ready` plus Review `PASS` / `PASS_WITH_NOTES` merges `devloop/<taskId>` into workspace HEAD, deletes the worktree, marks the task `done`. No PASS → escalate. Does not push. Does not call AgentBackend.
+- `merge` is mechanical git: `merge_ready` plus Review `PASS` / `PASS_WITH_NOTES` merges `devloop/<taskId>` into workspace HEAD, deletes the worktree, marks the task `done`. No PASS → escalate. In local mode it does not push; with the `forge` review route the merge happens on GitHub and the checkout fast-forwards to it. Does not call AgentBackend.
 
 Install: [`docs/Install.md`](./docs/Install.md). This cut: [`docs/Release.md`](./docs/Release.md).
 Multi-model architecture choices and the recommended Harness-native path: [`docs/OrchestrationOptions.md`](./docs/OrchestrationOptions.md).
@@ -120,7 +120,7 @@ Routing is opt-in. The safe default remains `noop`; fixed `dsh` / `claude` / `co
 
 ## Progress vs that target
 
-**0.6.3 is the current release.** The page speaks English, Chinese and Thai (switch at the top right; English by default). 0.6.2 put what needs you first on the home page, and made a halt offer one answer with its cost said. 0.6.1 held each task's change to a per-PR budget, judged by PR-daemon's own pre-PR rules, and logged every check for tuning. 0.6.0 added the operator surface: a dashboard over one loop per project. Before it, 0.3 combined the unattended scheduler,
+**0.6.4 is the current release.** With the `forge` review route, each task is a GitHub pull request reviewed there and merged by DevLoop, then one release pull request to trunk. 0.6.3 made the page speak English, Chinese and Thai (switch at the top right; English by default). 0.6.2 put what needs you first on the home page, and made a halt offer one answer with its cost said. 0.6.1 held each task's change to a per-PR budget, judged by PR-daemon's own pre-PR rules, and logged every check for tuning. 0.6.0 added the operator surface: a dashboard over one loop per project. Before it, 0.3 combined the unattended scheduler,
 role-aware one-shot dispatch, host-enforced task boundaries, SHA-bound review,
 durable recovery, and human-readable progress snapshots; 0.4 makes a halt
 answerable, runs the operator's own checks before a reviewer is paid, and stops
@@ -217,13 +217,13 @@ flowchart TB
     Progress --> SM
 ```
 
-In routed mode, plan / delegate / review use independent configured routes. Merge lands git locally and does not push.
+In routed mode, plan / delegate / review use independent configured routes. Merge lands git locally and does not push, unless the review route is `forge` (one pull request per task, merged on GitHub).
 
 ## Can 0.3 meet the product goal?
 
 The goal is: expensive models plan and review, cheap models implement, a program loop keeps the factory inside budget.
 
-| Goal slice | 0.6.3 |
+| Goal slice | 0.6.4 |
 |---|---|
 | DSH plugin, not a new runtime | Yes. Bundle + Cordis Service. |
 | Program loop, one transition per tick | Yes. Pure `decideNextAction` plus `runTick`, driven by `setInterval`. |
@@ -318,12 +318,12 @@ Git installs run `prepare` → `pnpm build`, so the published entry is `lib/`.
 
 ## Install into DSH
 
-Pinned GitHub tag (needs git tag `v0.6.3`; until then `github:jhfnetboy/DevLoop`). Git install runs `prepare` → `pnpm build`. pnpm ≥10 may ignore that build and still exit 0 — if it prints `Ignored build scripts`, approve `@jhfnetboy/dsh-devloop` (`onlyBuiltDependencies` on pnpm 10.1–10.25, `allowBuilds` on ≥10.26, or `pnpm approve-builds`) and re-run `add` (not `pnpm rebuild`), even when `add` succeeded:
+Pinned GitHub tag (needs git tag `v0.6.4`; until then `github:jhfnetboy/DevLoop`). Git install runs `prepare` → `pnpm build`. pnpm ≥10 may ignore that build and still exit 0 — if it prints `Ignored build scripts`, approve `@jhfnetboy/dsh-devloop` (`onlyBuiltDependencies` on pnpm 10.1–10.25, `allowBuilds` on ≥10.26, or `pnpm approve-builds`) and re-run `add` (not `pnpm rebuild`), even when `add` succeeded:
 
 Quote the spec: zsh treats `#` as a glob (`no matches found`).
 
 ```bash
-dsh plugin --profile web add 'github:jhfnetboy/DevLoop#v0.6.3'
+dsh plugin --profile web add 'github:jhfnetboy/DevLoop#v0.6.4'
 ```
 
 From this checkout (after `pnpm build`):

@@ -1,8 +1,58 @@
-# Release 0.6.3
+# Release 0.6.4
 
-Bounded autonomous engineering loop: structured model results, deterministic state transitions, host-enforced write scope, SHA-bound independent review, durable recovery, and role/tier routing. Tag `v0.6.3` and the GitHub Release are created **after** this commit is on `main`; steps: [Deploy.md](./Deploy.md).
+Bounded autonomous engineering loop: structured model results, deterministic state transitions, host-enforced write scope, SHA-bound independent review, durable recovery, and role/tier routing. Tag `v0.6.4` and the GitHub Release are created **after** this commit is on `main`; steps: [Deploy.md](./Deploy.md).
 
-Package version: **0.6.3**. This document is the release note, not a second semver.
+Package version: **0.6.4**. This document is the release note, not a second semver.
+
+## New in 0.6.4
+
+One GitHub pull request per task, reviewed there and merged by DevLoop, then
+one release pull request to trunk: the per-task review the 0.6 design set
+out, run end to end in a sandbox repository before release. Off unless
+`reviewerRoute` names the `forge` backend; without it tasks merge locally as
+before. How to turn it on: README, "One pull request per task".
+
+- **Verdicts from GitHub reviews** ([#93](https://github.com/jhfnetboy/DevLoop/pull/93), [#98](https://github.com/jhfnetboy/DevLoop/pull/98)).
+  Only allowlisted reviewers who are not this host, only reviews of exactly the
+  reviewed commit, each reviewer's latest word; any request for changes
+  outranks every approval and is rework. An approval passes only once the
+  commit's checks are green. `forge.verdictSource: comments` keeps the old
+  envelope path; exactly one source is read.
+- **Rework carries the review** ([#95](https://github.com/jhfnetboy/DevLoop/pull/95), [#96](https://github.com/jhfnetboy/DevLoop/pull/96), [#105](https://github.com/jhfnetboy/DevLoop/pull/105), [#106](https://github.com/jhfnetboy/DevLoop/pull/106)).
+  A request for changes' body — PR-daemon's, or the local reviewer's — reaches
+  the worker's next attempt, as one quoted string, and survives a failed or
+  blocked attempt; it is dropped once an attempt is handed in or the task is
+  accepted.
+- **The work branch** ([#94](https://github.com/jhfnetboy/DevLoop/pull/94), [#97](https://github.com/jhfnetboy/DevLoop/pull/97), [#107](https://github.com/jhfnetboy/DevLoop/pull/107)).
+  Recorded at the first delegate; task pull requests target it, labelled
+  `devloop`, never trunk. It is created on the forge at the task's base,
+  fast-forwarded when behind, left alone when ahead, refused when moved away;
+  a review with no work branch holds on trunk or detached instead of opening a
+  pull request.
+- **A local review first** ([#99](https://github.com/jhfnetboy/DevLoop/pull/99)).
+  `forge.localReview` runs a local reviewer before the pull request opens, and
+  its usage counts toward the caps.
+- **DevLoop merges** ([#100](https://github.com/jhfnetboy/DevLoop/pull/100)–[#102](https://github.com/jhfnetboy/DevLoop/pull/102)).
+  The verdict and checks are read again, then `gh pr merge --match-head-commit`
+  from an empty directory; the checkout fetches the merge commit by id and
+  fast-forwards to it before the task is done. Already merged is not merged
+  twice; anything that cannot be completed holds.
+- **The release pull request** ([#103](https://github.com/jhfnetboy/DevLoop/pull/103), [#104](https://github.com/jhfnetboy/DevLoop/pull/104)).
+  Opened once every task is done, looked at each tick outside the state lock,
+  merged once approved with green checks, on the forge only.
+- **Security fix: a worker could run a program as the host through git**
+  ([#108](https://github.com/jhfnetboy/DevLoop/pull/108)). Found by PR-daemon's
+  review. The Codex delegate was granted its worktree's gitdir, and any worker
+  could rewrite its worktree's `.git` pointer; either could point the host's
+  next git call — committing the task, the pre-PR checker, the repository
+  status scan — at a repository whose config runs a program. Codex no longer
+  gets the gitdir, and every host git call in a task worktree pins its git
+  directories to the host's own paths with fsmonitor and hooks off. This
+  predates 0.6.4 and affects local mode too.
+
+Carried to 0.6.5 (from the reviews): workers still inherit this host's `gh`
+login; an empty set of checks counts as green; a few messages and gate texts
+to tighten. 0.6.x numbers follow the release plan rather than strict semver.
 
 ## New in 0.6.3
 
@@ -400,4 +450,4 @@ Host-side checks (`dsh plugin add`, `--dump-config`) are listed in [UserCaseTest
 - Token/cost melt the circuit only when the backend fills `AgentRunResult`; otherwise the loop uses wall-clock `lastProgressAt`. Session cost resets after the first successful STATE persist of this process; daily cost resets at UTC midnight.
 - The automated E2E uses a scripted provider, and the release candidate also completed a real-provider plan → implement → exact-SHA review → merge run without operator state edits.
 - The operator UI is the dashboard; it sees only the spend backends report, and cannot edit an existing goal.
-- npm registry: `@jhfnetboy/dsh-devloop@0.6.3` is published. GitHub and the Release tarball remain supported. See [Install.md](./Install.md).
+- npm registry: `@jhfnetboy/dsh-devloop@0.6.4` is published. GitHub and the Release tarball remain supported. See [Install.md](./Install.md).
