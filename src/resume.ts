@@ -192,6 +192,11 @@ export function resumeState(state: LoopState, options: ResumeOptions, now: numbe
 /** A retried task goes back to the worker, never forward to a merge. */
 function retry(task: Task): Task {
   const { lastReviewVerdict: _verdict, reviewer: _reviewer, ...rest } = task
+  // A done task reopened starts fresh: notes it still carries were written for an attempt long since finished.
+  if (task.status === 'done') {
+    const { reviewNotes: _notes, ...reopened } = rest
+    return { ...reopened, status: 'rework', attempts: 0, reviewCycles: 0 }
+  }
   return { ...rest, status: 'rework', attempts: 0, reviewCycles: 0 }
 }
 
