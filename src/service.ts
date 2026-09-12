@@ -173,7 +173,10 @@ export class ProjectLoop {
           await clearCommitHoldMarker(this.config.root)
         }
         const pendingHold = await readPendingHold(this.config.root)
-        if (pendingHold === 'invalid') {
+        if (pendingHold === 'unreadable') {
+          // Kept — it may hold a real hold — but never silently: say so every tick until it reads.
+          this.ctx.logger.error('[dsh-devloop] PENDING_HOLD marker unreadable; kept for the next tick')
+        } else if (pendingHold === 'invalid') {
           // Corrupt, or not a plain file: say so and remove it, rather than read it every tick.
           this.ctx.logger.error('[dsh-devloop] unusable PENDING_HOLD marker removed')
           await unlink(join(this.config.root, DEVLOOP_DIR, PENDING_HOLD_FILE)).catch(() => undefined)
@@ -943,8 +946,11 @@ async function writePendingHold(root: string, taskId: string | null, reason: Hol
   }
 }
 
-/** The marker's hold; null when there is none; 'invalid' when one is there but unusable. */
-async function readPendingHold(root: string): Promise<{ taskId: string | null, reason: HoldReason } | 'invalid' | null> {
+/**
+ * The marker's hold; null when there is none; 'invalid' when one is there but
+ * unusable; 'unreadable' when reading it failed for another reason (kept).
+ */
+async function readPendingHold(root: string): Promise<{ taskId: string | null, reason: HoldReason } | 'invalid' | 'unreadable' | null> {
   let handle
   try {
     handle = await open(pendingHoldPath(root), constants.O_RDONLY | constants.O_NOFOLLOW)
@@ -958,7 +964,7 @@ async function readPendingHold(root: string): Promise<{ taskId: string | null, r
     // O_NOFOLLOW). A transient error (EMFILE, EIO) must not delete a real hold —
     // it is read again next tick.
     if (error instanceof SyntaxError || (error as NodeJS.ErrnoException).code === 'ELOOP') return 'invalid'
-    return null
+    return (error as NodeJS.ErrnoException).code === 'ENOENT' ? null : 'unreadable'
   } finally {
     await handle?.close().catch(() => undefined)
   }

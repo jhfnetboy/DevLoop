@@ -22,6 +22,12 @@ export const PLAN_CONTEXT = [
   'Where tasks.md already defines a task, reuse its id and its acceptance commands rather than inventing new ones,',
   'and do not plan work those documents mark DONE or out of scope.',
   'If GOAL.md and those documents disagree, GOAL.md wins.',
+  // Said here, at planning time: the pre-PR checker refuses a bigger change after
+  // the worker has been paid, and the only answer then is to split the task.
+  'Size every task to fit one reviewable pull request: at most 200 changed lines (additions plus deletions,',
+  'not counting lockfiles or generated files), at most 5 files, at most 2 top-level directories (tests and docs',
+  'do not count toward directories). Give CI, git hooks, dependency manifests, migrations and money or security',
+  'code tasks of their own. A larger change is refused before review, so split it into tasks now.',
 ].join(' ')
 
 export function headlessPrompt(input: AgentRunInput): string {

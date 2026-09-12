@@ -92,6 +92,9 @@ describe.skipIf(!existsSync(REAL))('against the installed PR-daemon checker', ()
     await git(root, 'add', '.')
     await git(root, 'commit', '-q', '-m', 'small')
     expect((await runPreprCheck(['bash', REAL], 'devloop', root, base, 60_000)).status).toBe('passed')
+    // Why --base must be the task's base: its head gives an empty diff, which passes anything.
+    const head = (await git(root, 'rev-parse', 'HEAD')).stdout.trim()
+    expect((await runPreprCheck(['bash', REAL], 'devloop', root, head, 60_000)).size?.lines).toBe(0)
 
     await writeFile(join(root, 'big.ts'), Array.from({ length: 300 }, (_, i) => `export const v${i} = ${i}`).join('\n') + '\n', 'utf8')
     await git(root, 'add', '.')
