@@ -169,7 +169,8 @@ describe('applyAnswer', () => {
     const g = gate('review_requested_replan')
     expect(g.options.map(o => o.key)).toEqual(['stop'])
     expect(g.question).toMatch(/plan/i)
-    expect(g.manual).toContain('PLAN.md')
+    // Not PLAN.md: nothing reads it back. A redo from the base is what changes something.
+    expect(g.manual).toContain('git worktree remove --force')
   })
 
   // The complaint was never about typos at the write sites; it was that a hold
@@ -431,3 +432,15 @@ async function journalLines(root: string): Promise<{ revision: number; action: s
   const text = await readFile(join(root, '.devloop', 'EVENTS.jsonl'), 'utf8')
   return text.split('\n').filter(Boolean).map(line => JSON.parse(line) as { revision: number; action: string; state: LoopState })
 }
+
+describe('gates that ask for a redo from the base', () => {
+  // Nothing reads PLAN.md back, and a plain resume reuses the task's worktree
+  // and base, so either instruction alone would change nothing.
+  it.each([['task_over_budget:340 lines, 7 files'], ['review_requested_replan']])('%s tells the operator a redo that actually starts over', (reason) => {
+    const gate = gateFor(held(reason), limits, NOW)
+    expect(gate?.options.map(o => o.key)).toEqual(['stop'])
+    expect(gate?.manual).toContain('git worktree remove --force .devloop/worktrees/A && git branch -D devloop/A')
+    expect(gate?.manual).toContain('devloop resume --task A')
+    expect(gate?.manual).not.toContain('PLAN.md')
+  })
+})

@@ -178,7 +178,7 @@ const KNOWN_GATES: Record<KnownReasonBase, (ctx: GateContext) => Gate> = {
     gate(reason, taskId, 'The reviewer asked for the plan to change, not for the task to run again. Replan, or leave it?', [
       `review of ${label(taskId)} returned REPLAN`,
       'the work is untouched; it is the plan that was rejected',
-    ], [STOP], `Edit the task in .devloop/PLAN.md to reflect the review, then: devloop resume --task ${taskId ?? '<id>'}`),
+    ], [STOP], redoFromBase(taskId, 'Re-planning one task is not supported yet (planning comes in 0.6.4).')),
 
   // Size alone: a bigger diff is not fixed by running the same task again; it is
   // split. No `review` answer — an over-budget change is never handed to review.
@@ -187,7 +187,7 @@ const KNOWN_GATES: Record<KnownReasonBase, (ctx: GateContext) => Gate> = {
     gate(reason, taskId, 'This change is too big for one reviewable PR. Split the task?', [
       `${label(taskId)} is over the PR budget: ${reason.slice('task_over_budget:'.length).trim()}`,
       'the budget is the configured pre-PR profile\'s (devloop: 200 changed lines, 5 files, 2 top-level directories)',
-    ], [STOP], `Split it into smaller tasks in .devloop/PLAN.md, then: devloop resume --task ${taskId ?? '<id>'}`),
+    ], [STOP], redoFromBase(taskId, 'DevLoop cannot split a task yet (planning comes in 0.6.4).')),
 
   prepr_blocked: ({ reason, taskId }) =>
     gate(reason, taskId, 'PR-daemon\'s pre-PR rules refused this change. Redo it, or leave it?', [
@@ -281,6 +281,16 @@ function attemptsGate({ reason, taskId, limits }: GateContext): Gate {
     `${label(taskId)} reached ${String(limits.maxTaskAttempts)} attempts`,
     'retrying clears its counters and starts the budget again',
   ], [RETRY, STOP])
+}
+
+/**
+ * The honest way to redo a task from its base. PLAN.md is only a copy of the
+ * planner's output — nothing reads it back — and a plain resume reuses the task
+ * worktree with its commits on the old base, so both would change nothing.
+ */
+function redoFromBase(taskId: string | null, why: string): string {
+  const id = taskId ?? '<id>'
+  return `${why} To redo it smaller from its base: git worktree remove --force .devloop/worktrees/${id} && git branch -D devloop/${id}, then devloop resume --task ${id}. The worker is told the PR budget.`
 }
 
 function mergeGate({ reason, taskId }: GateContext): Gate {

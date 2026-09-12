@@ -183,6 +183,12 @@ describe('the planner prompt', () => {
     // The PR budget, so tasks are split when planned rather than refused after they are paid for.
     for (const limit of ['200 changed lines', '5 files', '2 top-level directories', 'tasks of their own']) expect(prompt).toContain(limit)
   })
+
+  it('tells the worker the PR budget, so a redo aims small', () => {
+    const contract = { taskId: 'T1', title: 't', tier: 'T1', allowedPaths: ['src/**'], forbidden: [], acceptance: ['a'], timeoutMinutes: 45, maxAttempts: 3 }
+    const prompt = headlessPrompt({ action: { type: 'delegate', taskId: 'T1' }, contract: contract as never, workspaceRoot: '/repo', worktreeRoot: '/wt' })
+    expect(prompt).toContain('at most 200 changed lines, 5 files and 2 top-level directories')
+  })
 })
 
 describe('protect_patterns', () => {
