@@ -930,7 +930,11 @@ async function readPendingHold(root: string): Promise<{ taskId: string | null, r
     if (taskId === undefined || typeof value.reason !== 'string' || !HOLD_REASON.test(value.reason)) return 'invalid'
     return { taskId, reason: value.reason as HoldReason }
   } catch (error) {
-    return (error as NodeJS.ErrnoException).code === 'ENOENT' ? null : 'invalid'
+    // Only content can make a marker unusable: bad JSON, or a symlink (ELOOP under
+    // O_NOFOLLOW). A transient error (EMFILE, EIO) must not delete a real hold —
+    // it is read again next tick.
+    if (error instanceof SyntaxError || (error as NodeJS.ErrnoException).code === 'ELOOP') return 'invalid'
+    return null
   } finally {
     await handle?.close().catch(() => undefined)
   }

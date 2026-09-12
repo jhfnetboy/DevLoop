@@ -5,8 +5,9 @@ import { scanRepo, type RepoStatus, type ScanOptions } from './status.js'
  * The acting half of pilot's status, with the same edges as its
  * safe-cleanup.sh: the only thing ever executed is `git branch -d`, which git
  * itself refuses for an unmerged branch or one a worktree has checked out.
- * `-D`, remote branches and `git worktree remove` are listed with a command for
- * a person to run, never run here.
+ * `-D` and `git worktree remove` are listed with a command for a person to run,
+ * never run here. Remote branches are not touched at all: the scan reads only
+ * refs/heads, so none is ever offered or listed.
  */
 export interface CleanupPlan {
   /** Merged into HEAD and protected by nothing: what `apply` may delete. */
