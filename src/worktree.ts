@@ -159,6 +159,58 @@ export async function removePlanWorktree(root: string): Promise<void> {
  * fail closed; an unchanged branch is `empty_task`. Throws without mutating STATE.
  * Idempotent if a previous attempt already merged and removed the worktree.
  */
+/**
+ * Bring the checkout up to a merge the forge made: fetch that merge commit by
+ * its id and fast-forward the work branch to it. Never a local merge.
+ *
+ * The same guards as a local merge hold (no detached HEAD, no trunk, no
+ * tracked changes, no merge in progress), and the checkout must be on the work
+ * branch itself. The fetch goes through the checkout's own git configuration,
+ * which a model could have edited; that can make it fail but not substitute
+ * anything, because only the commit with exactly this id is accepted. The
+ * work branch must be its ancestor: anything else was not a fast-forward and
+ * is left for a person.
+ */
+export async function fastForwardWorkBranch(
+  root: string,
+  workBranch: string,
+  mergeCommit: string,
+  fetchUrl: string,
+  options: MergeOptions = {},
+): Promise<void> {
+  const target = normalizeSha(mergeCommit)
+  if (target === null) throw new Error('merge_wedged: the forge named no merge commit')
+  const resolvedRoot = await realpath(root)
+  const toplevel = (await git(resolvedRoot, ['rev-parse', '--show-toplevel'])).trim()
+  if (await realpath(toplevel) !== resolvedRoot) throw new Error('merge_wedged: workspace root must be the git toplevel')
+  if (await mergeHeadExists(resolvedRoot)) throw new Error('merge_wedged: a merge is already in progress')
+  const headRef = await symbolicHead(resolvedRoot)
+  if (!headRef) throw new Error('merge_detached_head: refusing to fast-forward a detached HEAD')
+  const headBranch = headRef.startsWith('refs/heads/') ? headRef.slice('refs/heads/'.length) : headRef
+  if (options.trunks && [...options.trunks].some(trunk => trunk.toLowerCase() === headBranch.toLowerCase())) {
+    throw new Error(`merge_onto_trunk: the workspace is on ${headBranch}; refusing to move a trunk`)
+  }
+  if (headRef !== `refs/heads/${workBranch}`) {
+    throw new Error(`merge_wedged: the checkout is on ${headBranch}, not the work branch ${workBranch}`)
+  }
+  if ((await git(resolvedRoot, ['status', '--porcelain', '--untracked-files=no'])).trim().length > 0) {
+    throw new Error('merge_wedged: the workspace has tracked changes; commit or stash them first')
+  }
+  const head = (await git(resolvedRoot, ['rev-parse', 'HEAD'])).trim().toLowerCase()
+  if (head === target) return
+  const present = () => gitOk(resolvedRoot, ['cat-file', '-e', `${target}^{commit}`])
+  if (!await present()) {
+    await git(resolvedRoot, ['fetch', '--no-tags', '--no-recurse-submodules', '--', fetchUrl, target]).catch(() => undefined)
+    if (!await present()) throw new Error(`merge_wedged: could not fetch the merge commit ${target}`)
+  }
+  if (!await gitOk(resolvedRoot, ['merge-base', '--is-ancestor', head, target])) {
+    throw new Error(`merge_wedged: ${workBranch} at ${head} is not behind the merge commit ${target}`)
+  }
+  await git(resolvedRoot, ['merge', '--ff-only', target])
+  const moved = (await git(resolvedRoot, ['rev-parse', 'HEAD'])).trim().toLowerCase()
+  if (moved !== target) throw new Error(`merge_wedged: ${workBranch} did not reach ${target}`)
+}
+
 export interface MergeOptions {
   /**
    * Branches the workspace must not be on when the merge lands: the loop merges

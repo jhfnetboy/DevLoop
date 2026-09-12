@@ -20,6 +20,7 @@ import {
   worktreeTaskToken,
   assertTaskChangesAllowed,
   taskWorktreeHeadSha,
+  fastForwardWorkBranch,
 } from '../src/worktree.ts'
 import { initGitRepo, makeTask, mkdtempInRepo } from './helpers.ts'
 
@@ -546,5 +547,65 @@ describe('host-enforced task write scope', () => {
     await symlink('/tmp/outside', join(dest, 'src', 'persist.ts'))
     await expect(assertTaskChangesAllowed(dest, { ...contract, baseSha: baseSha! }))
       .rejects.toThrow('symlink change')
+  })
+})
+
+describe('fastForwardWorkBranch', () => {
+  const g = (root: string, ...args: string[]) => execFileAsync('git', ['-C', root, '-c', 'user.email=t@t', '-c', 'user.name=t', ...args]).then(r => r.stdout.trim())
+  const TRUNKS = new Set(['main', 'master'])
+
+  /** A checkout on `work`, a bare forge, and a merge commit on the forge's `work` the checkout does not have. */
+  async function forgeMerged(): Promise<{ root: string, forge: string, merge: string }> {
+    const root = await gitWorkspace()
+    await g(root, 'switch', '-q', '-c', 'work')
+    const forge = await mkdtempInRepo('devloop-forge-')
+    scratch.push(forge)
+    await execFileAsync('git', ['clone', '-q', '--bare', root, forge])
+    const side = await mkdtempInRepo('devloop-side-')
+    scratch.push(side)
+    await execFileAsync('git', ['clone', '-q', '-b', 'work', forge, side])
+    await g(side, 'switch', '-q', '-c', 'devloop/T1')
+    await writeFile(join(side, 'task.txt'), 'done\n', 'utf8')
+    await g(side, 'add', '.')
+    await g(side, 'commit', '-q', '-m', 'task')
+    await g(side, 'switch', '-q', 'work')
+    await g(side, 'merge', '-q', '--no-ff', '-m', 'Merge pull request #7', 'devloop/T1')
+    await g(side, 'push', '-q', 'origin', 'work')
+    return { root, forge, merge: await g(side, 'rev-parse', 'HEAD') }
+  }
+
+  it('fetches the merge commit by id and fast-forwards the work branch to it', async () => {
+    const { root, forge, merge } = await forgeMerged()
+    await fastForwardWorkBranch(root, 'work', merge, forge, { trunks: TRUNKS })
+    expect(await g(root, 'rev-parse', 'HEAD')).toBe(merge)
+    expect(await g(root, 'symbolic-ref', 'HEAD')).toBe('refs/heads/work')
+    // Again is nothing: the checkout is already there.
+    await fastForwardWorkBranch(root, 'work', merge, forge, { trunks: TRUNKS })
+    expect(await g(root, 'rev-parse', 'HEAD')).toBe(merge)
+  })
+
+  it('keeps every local-merge guard: detached, trunk, another branch, tracked changes', async () => {
+    const { root, forge, merge } = await forgeMerged()
+    await g(root, 'switch', '-q', '--detach')
+    await expect(fastForwardWorkBranch(root, 'work', merge, forge, { trunks: TRUNKS })).rejects.toThrow(/^merge_detached_head/)
+    await g(root, 'switch', '-q', 'main')
+    await expect(fastForwardWorkBranch(root, 'work', merge, forge, { trunks: TRUNKS })).rejects.toThrow(/^merge_onto_trunk/)
+    await g(root, 'switch', '-q', '-c', 'elsewhere')
+    await expect(fastForwardWorkBranch(root, 'work', merge, forge, { trunks: TRUNKS })).rejects.toThrow(/^merge_wedged: the checkout is on elsewhere/)
+    await g(root, 'switch', '-q', 'work')
+    await writeFile(join(root, 'README.md'), 'changed\n', 'utf8')
+    await expect(fastForwardWorkBranch(root, 'work', merge, forge, { trunks: TRUNKS })).rejects.toThrow(/^merge_wedged: the workspace has tracked changes/)
+  })
+
+  it('refuses a commit it cannot fetch, and one the work branch is not behind', async () => {
+    const { root, forge } = await forgeMerged()
+    await expect(fastForwardWorkBranch(root, 'work', 'f'.repeat(40), forge)).rejects.toThrow(/^merge_wedged: could not fetch/)
+    // A local commit the merge does not contain: not a fast-forward.
+    await writeFile(join(root, 'local.txt'), 'x\n', 'utf8')
+    await g(root, 'add', 'local.txt')
+    await g(root, 'commit', '-q', '-m', 'local')
+    const other = await forgeMerged()
+    await expect(fastForwardWorkBranch(root, 'work', other.merge, other.forge)).rejects.toThrow(/^merge_wedged: work at .* is not behind/)
+    expect(await g(root, 'rev-parse', 'HEAD')).not.toBe(other.merge)
   })
 })
