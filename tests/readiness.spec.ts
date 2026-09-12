@@ -227,8 +227,8 @@ describe('protect_patterns', () => {
     const config = parsePilotConfig('protect_patterns:\n  - "qa/*"\n  - bad..name\n  - ok\n')
     expect(config.protectPatterns).toEqual([...floor, 'ok'])
     expect(config.protectDropped).toEqual([
-      { item: 'qa/*', reason: '通配符不起作用：保护按字面前缀匹配' },
-      { item: 'bad..name', reason: '不是合法的分支名' },
+      { item: 'qa/*', code: 'glob', reason: '通配符不起作用：保护按字面前缀匹配' },
+      { item: 'bad..name', code: 'invalid', reason: '不是合法的分支名' },
     ])
   })
 

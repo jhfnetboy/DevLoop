@@ -339,6 +339,7 @@ describe('dashboard strings', () => {
     const reasons = [...cleanup.matchAll(/code: '([a-zA-Z_]+)'/g)].map(m => m[1]!)
     expect(reasons.length).toBeGreaterThanOrEqual(8)
     for (const code of [...reasons, 'current', 'trunk', 'pattern', 'worktree', 'active_task']) asked.add(`cleanup.${code}`)
+    for (const code of ['glob', 'invalid']) asked.add(`protect.${code}`)
     expect(asked.size).toBeGreaterThan(40)
     for (const key of asked) {
       expect(STRINGS[key], key).toHaveLength(3)
