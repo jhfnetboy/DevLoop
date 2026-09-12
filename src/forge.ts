@@ -483,13 +483,16 @@ export class ForgePrBackend implements AgentBackend {
    */
   private async publishWorkBranch(isolated: string, work: { branch: string, sha: string }, ctx: RunCtx, env: Readonly<Record<string, string>>): Promise<void> {
     const ref = `refs/heads/${work.branch}`
-    const listed = (await this.git(isolated, ['ls-remote', '--', TARGET_REMOTE, ref], ctx, env)).trim()
-    const remote = listed === '' ? null : (listed.split(/\s+/)[0] ?? '').toLowerCase()
+    // ls-remote matches by suffix, so only the line naming exactly this ref is the work branch.
+    const line = (await this.git(isolated, ['ls-remote', '--', TARGET_REMOTE, ref], ctx, env)).split('\n').map(row => row.trim().split(/\s+/)).find(fields => fields[1] === ref)
+    const remote = line === undefined ? null : (line[0] ?? '').toLowerCase()
     if (remote === work.sha) return
     if (remote !== null) {
       if (!SHA.test(remote)) throw new Error(`forge_work_branch: the forge answered ${work.branch} with something that is not a commit`)
-      const behind = await this.git(isolated, ['merge-base', '--is-ancestor', remote, work.sha], ctx, env).then(() => true, () => false)
-      if (!behind) throw new Error(`forge_work_branch: ${work.branch} on the forge has moved away from the task's base; bring it back or restart the goal`)
+      const ancestor = (a: string, b: string) => this.git(isolated, ['merge-base', '--is-ancestor', a, b], ctx, env).then(() => true, () => false)
+      // Ahead of the base: other tasks merged since this one was cut, and that is the normal course of a goal.
+      if (await ancestor(work.sha, remote)) return
+      if (!await ancestor(remote, work.sha)) throw new Error(`forge_work_branch: ${work.branch} on the forge has moved away from the task's base; bring it back or restart the goal`)
     }
     await this.git(isolated, ['update-ref', ref, work.sha], ctx, env)
     await this.git(isolated, [
@@ -514,6 +517,7 @@ export class ForgePrBackend implements AgentBackend {
     taskId: string,
     ctx: RunCtx,
   ): Promise<number> {
+    await this.ensureLabel(root, repo, ctx)
     const existing = await this.findPullRequest(root, repo, branch, sha, ctx)
     if (existing !== null) {
       // A reused pull request still carries the previous attempt's instructions.
@@ -527,7 +531,6 @@ export class ForgePrBackend implements AgentBackend {
       ], ctx)
       return existing.number
     }
-    await this.ensureLabel(root, repo, ctx)
     await this.forge(root, [
       'pr', 'create',
       '--repo', repoSlug(repo),

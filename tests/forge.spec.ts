@@ -96,6 +96,8 @@ interface StubOptions {
   reviews?: unknown[]
   lsRemote?: string
   diverged?: boolean
+  /** Where the forge's work branch stands against the task's base, answering `merge-base --is-ancestor`. */
+  remoteIs?: 'behind' | 'ahead'
   headRef?: string
   prList?: unknown
   prView?: unknown
@@ -150,7 +152,12 @@ function stubRunner(stub: StubOptions): HeadlessRunner {
       if (joined.includes('rev-parse')) return { stdout: `${stub.stagedSha ?? HEAD_SHA}\n`, stderr: '' }
       if (joined.includes('ls-remote')) return { stdout: stub.lsRemote ?? '', stderr: '' }
       if (joined.includes('symbolic-ref')) return { stdout: `${stub.headRef ?? 'refs/heads/devloop/feature'}\n`, stderr: '' }
-      if (joined.includes('merge-base') && stub.diverged) throw new Error('exit 1')
+      if (joined.includes('merge-base')) {
+        const [a, b] = request.argv.slice(-2)
+        if (stub.diverged) throw new Error('exit 1')
+        const ok = stub.remoteIs === 'ahead' ? a === BASE_SHA : b === BASE_SHA
+        if (!ok) throw new Error('exit 1')
+      }
       return { stdout: '', stderr: '' }
     }
     if (joined.includes('/reviews')) return { stdout: commentLines(stub.reviews ?? []), stderr: '' }
@@ -450,7 +457,8 @@ describe('ForgePrBackend publishing', () => {
       'push', '--no-verify', '--no-signed', '--recurse-submodules=no',
       '--', 'devloop-target', `refs/heads/${BRANCH}:refs/heads/${BRANCH}`,
     ])
-    expect(calls.flatMap(call => [...call.argv]).join(' ')).not.toMatch(/--force|\+refs/)
+    // No forced push; `gh label create --force` only refreshes the label.
+    expect(calls.filter(call => call.command === 'git').flatMap(call => [...call.argv]).join(' ')).not.toMatch(/--force|\+refs/)
   })
 
   it('pins every gh call to the repository the push URL names, not gh\'s own guess', async () => {
@@ -1285,9 +1293,17 @@ describe('ForgePrBackend against the loop\'s work branch', () => {
     const same = onWork({ lsRemote: `${BASE_SHA}\trefs/heads/${WORK}\n` })
     expect(await same.run).toMatchObject({ status: 'started' })
     expect(pushes(same.calls)).toHaveLength(1)
-    const behind = onWork({ lsRemote: `${OTHER_SHA}\trefs/heads/${WORK}\n` })
+    const behind = onWork({ lsRemote: `${OTHER_SHA}\trefs/heads/${WORK}\n`, remoteIs: 'behind' })
     expect(await behind.run).toMatchObject({ status: 'started' })
     expect(pushes(behind.calls)).toHaveLength(2)
+    // Ahead: other tasks merged since this one was cut. Nothing to push, and nothing wrong.
+    const ahead = onWork({ lsRemote: `${OTHER_SHA}\trefs/heads/${WORK}\n`, remoteIs: 'ahead' })
+    expect(await ahead.run).toMatchObject({ status: 'started' })
+    expect(pushes(ahead.calls)).toHaveLength(1)
+    // ls-remote matches by suffix: a longer ref ending in the same name is not the work branch.
+    const suffix = onWork({ lsRemote: `${OTHER_SHA}\trefs/heads/x/refs/heads/${WORK}\n${BASE_SHA}\trefs/heads/${WORK}\n` })
+    expect(await suffix.run).toMatchObject({ status: 'started' })
+    expect(pushes(suffix.calls)).toHaveLength(1)
     const moved = onWork({ lsRemote: `${OTHER_SHA}\trefs/heads/${WORK}\n`, diverged: true })
     expect((await moved.run).detail).toMatch(/^forge_work_branch: .* has moved away/)
     expect(pushes(moved.calls)).toHaveLength(1)
