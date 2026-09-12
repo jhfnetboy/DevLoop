@@ -126,6 +126,14 @@ describe('resumeState', () => {
     expect(task?.reviewer).toBeUndefined()
   })
 
+  it('keeps a rework\'s notes for the retry, but starts a reopened done task without stale ones', () => {
+    const inRework = resumeState(halted({ tasks: [makeTask({ id: 'A', status: 'rework', reviewNotes: 'Split the parser out.' })] }), { taskId: 'A' }, NOW).tasks[0]
+    expect(inRework?.reviewNotes).toBe('Split the parser out.')
+    const reopened = resumeState(halted({ tasks: [makeTask({ id: 'A', status: 'done', reviewNotes: 'Split the parser out.' })] }), { taskId: 'A' }, NOW).tasks[0]
+    expect(reopened?.status).toBe('rework')
+    expect(reopened?.reviewNotes).toBeUndefined()
+  })
+
   it('restarts the retried task lifetime so it does not time out at once', () => {
     // Past the task lifetime, so the clock alone would stop the loop again.
     const late = (limits.taskLifetimeMinutes + 10) * 60_000
