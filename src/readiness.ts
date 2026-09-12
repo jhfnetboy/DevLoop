@@ -129,14 +129,24 @@ export function readinessRefusal(readiness: Readiness): string | null {
   return failing.length === 0 ? null : failing.map(check => check.message).join(' ')
 }
 
-interface PilotConfig {
+export interface PilotConfig {
   readonly baseBranch: string | null
   readonly docsDir: string | null
   readonly planningSource: string | null
+  /** Branch-name prefixes never deleted; always includes pilot's floor. */
+  readonly protectPatterns: readonly string[]
 }
 
 /**
- * The three scalar keys this needs, by line. Not a YAML parser, the same as
+ * pilot's floor: a config can only add to it, never remove from it — a file
+ * that is present, parses, and merely lacks a line must not protect less than
+ * no file at all.
+ */
+export const PROTECT_FLOOR: readonly string[] = ['release', 'hotfix', 'deploy']
+
+/**
+ * The scalar keys this needs, by line, and `protect_patterns` in either list
+ * form pilot repos use (`[a, b]` or `- a` lines). Not a YAML parser, the same as
  * pilot's own scripts: a value that is not a plain token is ignored rather than
  * guessed at.
  */
@@ -151,7 +161,19 @@ export function parsePilotConfig(text: string): PilotConfig {
     baseBranch: branch !== null && /^[A-Za-z0-9._/-]+$/.test(branch) ? branch : null,
     docsDir: docs !== null && safeRelative(docs) ? normalize(docs).replace(/[/\\]+$/, '') : null,
     planningSource: scalar('planning_source'),
+    protectPatterns: [...new Set([...PROTECT_FLOOR, ...protectList(text)])],
   }
+}
+
+function protectList(text: string): string[] {
+  const flow = /^protect_patterns:[ \t]*\[([^\]\n]*)\]/m.exec(text)
+  const block = /^protect_patterns:[ \t]*(?:#[^\n]*)?\n((?:[ \t]+-[^\n]*(?:\n|$))+)/m.exec(text)
+  const items = flow
+    ? (flow[1] ?? '').split(',')
+    : (block?.[1] ?? '').split('\n').map(line => line.replace(/^[ \t]+-/, ''))
+  return items
+    .map(item => item.replace(/#.*$/, '').trim().replace(/^(['"])(.*)\1$/, '$2'))
+    .filter(item => /^[A-Za-z0-9._/-]+$/.test(item))
 }
 
 function safeRelative(path: string): boolean {

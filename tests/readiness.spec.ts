@@ -148,7 +148,7 @@ describe('readiness to start a loop', () => {
 describe('parsePilotConfig', () => {
   it('reads plain scalars and refuses anything it would have to guess at', () => {
     expect(parsePilotConfig('base_branch: main\nintegration_branch: main\ndocs_dir: docs/agent\n')).toEqual({
-      baseBranch: 'main', docsDir: 'docs/agent', planningSource: null,
+      baseBranch: 'main', docsDir: 'docs/agent', planningSource: null, protectPatterns: ['release', 'hotfix', 'deploy'],
     })
     expect(parsePilotConfig('base_branch: "main"\n').baseBranch).toBeNull()
     expect(parsePilotConfig('base_branch: main;rm\n').baseBranch).toBeNull()
@@ -164,5 +164,17 @@ describe('the planner prompt', () => {
     expect(prompt).toContain(PLAN_CONTEXT)
     for (const name of ['AGENTS.md', 'CLAUDE.md', '.pilot.yml', 'tasks.md', 'roadmap.md']) expect(prompt).toContain(name)
     expect(prompt).toContain('GOAL.md wins')
+  })
+})
+
+describe('protect_patterns', () => {
+  it('reads both list forms, keeps pilot\'s floor, and drops what is not a plain token', () => {
+    expect(parsePilotConfig('protect_patterns: [release, "hotfix", ops]\n').protectPatterns)
+      .toEqual(['release', 'hotfix', 'deploy', 'ops'])
+    expect(parsePilotConfig('protect_patterns:   # extra\n  - staging\n  - "qa/*"\nremote: origin\n').protectPatterns)
+      .toEqual(['release', 'hotfix', 'deploy', 'staging'])
+    // A file that names fewer never protects fewer than the floor.
+    expect(parsePilotConfig('protect_patterns: [release]\n').protectPatterns).toEqual(['release', 'hotfix', 'deploy'])
+    expect(parsePilotConfig('').protectPatterns).toEqual(['release', 'hotfix', 'deploy'])
   })
 })
