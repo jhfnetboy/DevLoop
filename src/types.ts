@@ -212,6 +212,8 @@ export interface TaskContract {
   readonly implementationSha?: string
   /** That commit's size, when it is over the PR budget but inside the elastic band. */
   readonly overBudget?: string
+  /** What the last review asked to be changed, for the worker redoing the task. */
+  readonly reviewNotes?: string
 }
 
 export interface Route {
