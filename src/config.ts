@@ -35,6 +35,8 @@ export interface ForgeConfig {
   readonly pollIntervalMs: number
   /** 0 takes the wait bound from the task contract's own time budget. */
   readonly maxWaitMs: number
+  /** Where a verdict is read: GitHub reviews (default), or a `<devloop_result>` comment. Never both. */
+  readonly verdictSource: 'reviews' | 'comments'
 }
 
 export interface Config {
@@ -133,7 +135,8 @@ export const ConfigSchema: s<Config> = s.object({
     reviewers: s.array(s.string()).default([]),
     pollIntervalMs: s.number().step(1).min(1_000).max(2_147_483_647).default(30_000),
     maxWaitMs: s.number().step(1).min(0).max(2_147_483_647).default(0),
-  }).default({ pushUrl: '', base: 'main', command: 'gh', reviewers: [], pollIntervalMs: 30_000, maxWaitMs: 0 }),
+    verdictSource: s.union([s.const('reviews'), s.const('comments')]).default('reviews'),
+  }).default({ pushUrl: '', base: 'main', command: 'gh', reviewers: [], pollIntervalMs: 30_000, maxWaitMs: 0, verdictSource: 'reviews' }),
   routing: s.object({
     T0: routeSchema('T0', 'local', 'qwen-coder-7b').default({
       tier: 'T0', backend: 'local', model: 'qwen-coder-7b',

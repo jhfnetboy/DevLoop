@@ -34,7 +34,8 @@ const BRANCH = 'devloop/TASK-1'
 
 /** Tests must never sit on the real 30s poll gap. */
 const PUSH_URL = 'git@github.com:acme/widgets.git'
-const FAST: Partial<ForgeOptions> = { pollIntervalMs: 1, maxWaitMs: 400, reviewers: [REVIEWER], pushUrl: PUSH_URL }
+// The comment path's tests predate native reviews; the review path has its own block below.
+const FAST: Partial<ForgeOptions> = { pollIntervalMs: 1, maxWaitMs: 400, reviewers: [REVIEWER], pushUrl: PUSH_URL, verdictSource: 'comments' }
 
 function options(overrides: Partial<ForgeOptions> = {}): ForgeOptions {
   return {
@@ -44,6 +45,7 @@ function options(overrides: Partial<ForgeOptions> = {}): ForgeOptions {
     reviewers: [REVIEWER],
     pollIntervalMs: 30_000,
     maxWaitMs: 0,
+    verdictSource: 'comments',
     ...overrides,
   }
 }
@@ -90,6 +92,7 @@ interface Recorded {
 
 interface StubOptions {
   comments?: unknown[]
+  reviews?: unknown[]
   prList?: unknown
   prView?: unknown
   rewrittenUrl?: string
@@ -143,6 +146,7 @@ function stubRunner(stub: StubOptions): HeadlessRunner {
       if (joined.includes('rev-parse')) return { stdout: `${stub.stagedSha ?? HEAD_SHA}\n`, stderr: '' }
       return { stdout: '', stderr: '' }
     }
+    if (joined.includes('/reviews')) return { stdout: commentLines(stub.reviews ?? []), stderr: '' }
     if (joined.includes('/comments')) {
       views += 1
       const rolling = stub.onView?.(views)
@@ -922,7 +926,7 @@ describe('ForgePrBackend against real git', () => {
       return { stdout: JSON.stringify(pr({ number: 3, headRefOid: sha })), stderr: '' }
     }
     const result = await new ForgePrBackend(
-      { pollIntervalMs: 1_000, maxWaitMs: 60_000, reviewers: [REVIEWER], pushUrl: PUSH_URL },
+      { pollIntervalMs: 1_000, maxWaitMs: 60_000, reviewers: [REVIEWER], pushUrl: PUSH_URL, verdictSource: 'comments' },
       runner,
     ).run({ ...reviewInput(sha), workspaceRoot: root })
     expect(result).toMatchObject({ status: 'started', agent: `github:${REVIEWER}` })
@@ -972,7 +976,7 @@ describe('ForgePrBackend against a hostile checkout', () => {
       return { stdout: JSON.stringify(pr({ number: 5, headRefOid: sha })), stderr: '' }
     }
     const result = await new ForgePrBackend(
-      { pollIntervalMs: 1_000, maxWaitMs: 60_000, reviewers: [REVIEWER], pushUrl: PUSH_URL },
+      { pollIntervalMs: 1_000, maxWaitMs: 60_000, reviewers: [REVIEWER], pushUrl: PUSH_URL, verdictSource: 'comments' },
       runner,
     ).run({ ...reviewInput(sha), workspaceRoot: root })
     expect(result).toMatchObject({ status: 'started' })
@@ -1012,7 +1016,7 @@ describe('ForgePrBackend against a hostile checkout', () => {
       return defaultRunner({ ...request, env: { ...request.env, GIT_CONFIG_GLOBAL: globalConfig } })
     }
     const result = await new ForgePrBackend(
-      { pollIntervalMs: 1_000, maxWaitMs: 60_000, reviewers: [REVIEWER], pushUrl: PUSH_URL },
+      { pollIntervalMs: 1_000, maxWaitMs: 60_000, reviewers: [REVIEWER], pushUrl: PUSH_URL, verdictSource: 'comments' },
       runner,
     ).run({ ...reviewInput(sha), workspaceRoot: root })
 
@@ -1047,7 +1051,7 @@ describe('ForgePrBackend against a hostile checkout', () => {
     const relative = relativePath(process.cwd(), root)
     expect(isAbsolute(relative)).toBe(false)
     const result = await new ForgePrBackend(
-      { pollIntervalMs: 1_000, maxWaitMs: 60_000, reviewers: [REVIEWER], pushUrl: PUSH_URL },
+      { pollIntervalMs: 1_000, maxWaitMs: 60_000, reviewers: [REVIEWER], pushUrl: PUSH_URL, verdictSource: 'comments' },
       runner,
     ).run({ ...reviewInput(sha), workspaceRoot: relative })
 
@@ -1083,7 +1087,7 @@ describe('ForgePrBackend against a hostile checkout', () => {
       return { stdout: JSON.stringify(pr({ number: 6, headRefOid: sha })), stderr: '' }
     }
     const result = await new ForgePrBackend(
-      { pollIntervalMs: 1_000, maxWaitMs: 60_000, reviewers: [REVIEWER], pushUrl: PUSH_URL },
+      { pollIntervalMs: 1_000, maxWaitMs: 60_000, reviewers: [REVIEWER], pushUrl: PUSH_URL, verdictSource: 'comments' },
       runner,
     ).run({ ...reviewInput(sha), workspaceRoot: root })
     expect(result).toMatchObject({ status: 'started' })
@@ -1103,7 +1107,7 @@ describe('quoteAlternate', () => {
 
 describe('pullRequestBody', () => {
   it('names the exact commit, the envelope, and who may answer', () => {
-    const body = pullRequestBody('TASK-1', HEAD_SHA, [REVIEWER])
+    const body = pullRequestBody('TASK-1', HEAD_SHA, [REVIEWER], 'comments')
     expect(body).toContain(HEAD_SHA)
     expect(body).toContain('TASK-1')
     expect(body).toContain(`\`${REVIEWER}\``)
@@ -1169,5 +1173,64 @@ describe('routing review to the forge', () => {
     const state = withTasks(baseState(), [makeTask({ id: 'TASK-1', status: 'review_pending' })])
     await expect(routed.run(runInputFor('/repo', { type: 'review', taskId: 'TASK-1' }, state, config.budget)))
       .resolves.toMatchObject({ status: 'failed', detail: expect.stringMatching(/review route must differ/) })
+  })
+})
+
+describe('ForgePrBackend verdicts from GitHub reviews', () => {
+  const review = (author: string, state: string, commit = HEAD_SHA, body = '') => ({ author, state, commit, body })
+  const onReviews = (reviews: unknown[], overrides: Partial<ForgeOptions> = {}) =>
+    backend({ verdictSource: 'reviews', ...overrides }, { reviews }).run(reviewInput())
+
+  it('reads the pull request\'s reviews, not its comments, and passes an approval of this commit', async () => {
+    const calls: Recorded[] = []
+    const result = await backend({ verdictSource: 'reviews' }, { reviews: [review(REVIEWER, 'APPROVED')], comments: [comment(REVIEWER, envelope('TASK-1', HEAD_SHA, 'REWORK'))], calls }).run(reviewInput())
+    expect(result).toMatchObject({ status: 'started', agent: `github:${REVIEWER}`, outcome: { kind: 'review', taskId: 'TASK-1', reviewedSha: HEAD_SHA, verdict: 'PASS' } })
+    expect(calls.some(call => call.argv.join(' ').includes('repos/acme/widgets/pulls/7/reviews'))).toBe(true)
+    expect(calls.some(call => call.argv.join(' ').includes('/comments'))).toBe(false)
+  })
+
+  it('turns a request for changes into rework, with the review body as the notes', async () => {
+    const result = await onReviews([review(REVIEWER, 'CHANGES_REQUESTED', HEAD_SHA, '  Split the parser out.  ')])
+    expect(result).toMatchObject({ status: 'started', outcome: { verdict: 'REWORK', notes: 'Split the parser out.' } })
+  })
+
+  it('lets one reviewer\'s request for changes outrank another\'s approval, and a reviewer\'s later word replace their earlier one', async () => {
+    const two = { reviewers: [REVIEWER, 'b-reviewer'] }
+    expect((await onReviews([review(REVIEWER, 'APPROVED'), review('b-reviewer', 'CHANGES_REQUESTED')], two)).outcome).toMatchObject({ verdict: 'REWORK' })
+    expect((await onReviews([review(REVIEWER, 'CHANGES_REQUESTED'), review(REVIEWER, 'APPROVED')])).outcome).toMatchObject({ verdict: 'PASS' })
+    expect((await onReviews([review(REVIEWER, 'APPROVED'), review(REVIEWER, 'CHANGES_REQUESTED')])).outcome).toMatchObject({ verdict: 'REWORK' })
+  })
+
+  it('waits on reviews of another commit, comments-only reviews, strangers and itself', async () => {
+    for (const reviews of [
+      [review(REVIEWER, 'APPROVED', OTHER_SHA)],
+      [review(REVIEWER, 'COMMENTED'), review(REVIEWER, 'DISMISSED'), review(REVIEWER, 'PENDING')],
+      [review('a-stranger', 'APPROVED')],
+      [review(SELF, 'APPROVED')],
+      [review('not a login!', 'APPROVED')],
+    ]) {
+      const result = await onReviews(reviews, { reviewers: [REVIEWER, SELF] })
+      expect(result, JSON.stringify(reviews)).toMatchObject({ status: 'failed' })
+      expect(result.detail).toMatch(/^forge_timeout:/)
+    }
+  })
+
+  it('refuses a review row it cannot read, and a list too long to read whole', async () => {
+    expect((await onReviews([{ author: REVIEWER, state: 'APPROVED' }])).detail).toMatch(/missing an author, state or commit/)
+    const flood = Array.from({ length: MAX_REVIEW_COMMENTS + 1 }, () => review(REVIEWER, 'COMMENTED'))
+    expect((await onReviews(flood)).detail).toMatch(/more than \d+ reviews/)
+  })
+
+  it('reads reviews unless configured otherwise', () => {
+    expect(resolveConfig({}).forge.verdictSource).toBe('reviews')
+    expect(resolveConfig({ forge: { pushUrl: PUSH_URL, reviewers: [REVIEWER] } } as never).forge.verdictSource).toBe('reviews')
+  })
+
+  it('tells the reviewer to decide with a review of this commit, and that comments are not read', () => {
+    const body = pullRequestBody('TASK-1', HEAD_SHA, [REVIEWER])
+    expect(body).toContain('Request changes')
+    expect(body).toContain(HEAD_SHA)
+    expect(body).toContain('Comments are not read')
+    expect(body).not.toContain('<devloop_result>')
   })
 })

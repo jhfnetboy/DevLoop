@@ -20,6 +20,8 @@ const TARGET_REMOTE = 'devloop-target'
  * past this size fails closed instead.
  */
 export const MAX_REVIEW_COMMENTS = 2_000
+/** A review body kept as rework notes, capped like a result envelope's notes. */
+const MAX_NOTES = 8_000
 const SHA = /^[0-9a-f]{40}$/i
 /** GitHub logins are 39 chars of alphanumerics and hyphens; apps add a [bot] suffix. */
 const LOGIN = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}(?:\[bot\])?$/
@@ -113,6 +115,12 @@ export interface ForgeOptions {
   readonly pollIntervalMs: number
   /** Upper bound on one wait. 0 takes the bound from the task contract. */
   readonly maxWaitMs: number
+  /**
+   * Where the verdict comes from: GitHub's own reviews on the pull request
+   * (APPROVED, CHANGES_REQUESTED), or a comment carrying a `<devloop_result>`
+   * envelope. Exactly one is read, so the two can never disagree.
+   */
+  readonly verdictSource: 'reviews' | 'comments'
 }
 
 export const DEFAULT_FORGE_OPTIONS: ForgeOptions = {
@@ -122,6 +130,7 @@ export const DEFAULT_FORGE_OPTIONS: ForgeOptions = {
   reviewers: [],
   pollIntervalMs: DEFAULT_POLL_INTERVAL_MS,
   maxWaitMs: 0,
+  verdictSource: 'reviews',
 }
 
 export function assertForgeOptions(options: ForgeOptions): void {
@@ -466,7 +475,7 @@ export class ForgePrBackend implements AgentBackend {
       await this.forge(root, [
         'pr', 'edit', String(existing.number), '--repo', repoSlug(repo),
         '--title', pullRequestTitle(taskId, title),
-        '--body', pullRequestBody(taskId, sha, this.options.reviewers),
+        '--body', pullRequestBody(taskId, sha, this.options.reviewers, this.options.verdictSource),
       ], ctx)
       return existing.number
     }
@@ -476,7 +485,7 @@ export class ForgePrBackend implements AgentBackend {
       '--head', branch,
       '--base', this.options.base,
       '--title', pullRequestTitle(taskId, title),
-      '--body', pullRequestBody(taskId, sha, this.options.reviewers),
+      '--body', pullRequestBody(taskId, sha, this.options.reviewers, this.options.verdictSource),
     ], ctx)
     const created = await this.findPullRequest(root, repo, branch, sha, ctx)
     if (created === null) throw new Error('forge_pr: pull request was created but cannot be found')
@@ -525,6 +534,7 @@ export class ForgePrBackend implements AgentBackend {
       throw new Error(`forge_pr: pull request ${number} no longer targets ${branch} at ${sha}`)
     }
 
+    if (this.options.verdictSource === 'reviews') return this.readReviewVerdict(root, repo, number, taskId, sha, self, ctx)
     const verdicts: ForgeVerdict[] = []
     for (const comment of await this.readComments(root, repo, number, ctx)) {
       const { author, body } = comment
@@ -547,6 +557,66 @@ export class ForgePrBackend implements AgentBackend {
     const dissent = verdicts.filter(entry => !isApproval(entry.result.verdict))
     if (dissent.length > 0) return dissent[dissent.length - 1] ?? null
     return verdicts[verdicts.length - 1] ?? null
+  }
+
+  /**
+   * The verdict GitHub's own reviews give this commit.
+   *
+   * Only an allowlisted reviewer who is not this host counts, and only a review
+   * whose `commit_id` is the commit under review: an approval of an earlier push
+   * says nothing about this one. Each reviewer's latest APPROVED or
+   * CHANGES_REQUESTED at this commit is their word (COMMENTED, PENDING and
+   * DISMISSED say nothing), and any reviewer whose word is changes outranks
+   * every approval.
+   */
+  private async readReviewVerdict(
+    root: string,
+    repo: ForgeRepo,
+    number: number,
+    taskId: string,
+    sha: string,
+    self: string,
+    ctx: RunCtx,
+  ): Promise<ForgeVerdict | null> {
+    const raw = await this.forge(root, [
+      'api', '--hostname', repo.host, '--paginate',
+      '--jq', '.[] | {author: .user.login, state: .state, commit: .commit_id, body: .body}',
+      `repos/${repo.owner}/${repo.name}/pulls/${number}/reviews`,
+    ], ctx)
+    const rows = lines(raw)
+    if (rows.length > MAX_REVIEW_COMMENTS) {
+      throw new Error(`forge_pr: pull request ${number} has more than ${MAX_REVIEW_COMMENTS} reviews`)
+    }
+    const latest = new Map<string, { author: string, state: 'APPROVED' | 'CHANGES_REQUESTED', body: string }>()
+    rows.forEach((row, index) => {
+      const parsed: unknown = parseJson(row, `forge_pr: review ${index}`)
+      if (!isRecord(parsed)) throw new Error(`forge_pr: review ${index} is not an object`)
+      const { author, state, commit, body } = parsed
+      if (typeof author !== 'string' || typeof state !== 'string' || typeof commit !== 'string') {
+        throw new Error(`forge_pr: review ${index} is missing an author, state or commit`)
+      }
+      if (!LOGIN.test(author) || author.toLowerCase() === self.toLowerCase()) return
+      if (!this.options.reviewers.some(allowed => allowed.toLowerCase() === author.toLowerCase())) return
+      if (commit.toLowerCase() !== sha) return
+      if (state !== 'APPROVED' && state !== 'CHANGES_REQUESTED') return
+      // GitHub lists reviews oldest first, so a later word replaces an earlier one.
+      latest.set(author.toLowerCase(), { author, state, body: typeof body === 'string' ? body : '' })
+    })
+    const words = [...latest.values()]
+    const said = words.find(word => word.state === 'CHANGES_REQUESTED') ?? words.find(word => word.state === 'APPROVED')
+    if (said === undefined) return null
+    const notes = said.body.trim().slice(0, MAX_NOTES)
+    return {
+      author: said.author,
+      result: {
+        version: 1,
+        kind: 'review',
+        taskId,
+        reviewedSha: sha,
+        verdict: said.state === 'APPROVED' ? 'PASS' : 'REWORK',
+        ...(notes === '' ? {} : { notes }),
+      },
+    }
   }
 
   /**
@@ -638,7 +708,20 @@ export function pullRequestTitle(taskId: string, title: string): string {
   return `DevLoop ${taskId}: ${title}`
 }
 
-export function pullRequestBody(taskId: string, sha: string, reviewers: readonly string[]): string {
+export function pullRequestBody(taskId: string, sha: string, reviewers: readonly string[], source: ForgeOptions['verdictSource'] = 'reviews'): string {
+  const who = reviewers.map(login => `\`${login}\``).join(', ')
+  if (source === 'reviews') {
+    return [
+      `DevLoop task \`${taskId}\` is ready for review at commit \`${sha}\`.`,
+      '',
+      'Decide with a GitHub review on this pull request: **Approve**, or **Request changes**',
+      'with what to change in the review body, which the worker is given for its next attempt.',
+      '',
+      `Only reviews from ${who} of exactly this commit are read, never one from the account`,
+      'that opened this pull request. Comments are not read. If any of them requests changes,',
+      'that outranks every approval.',
+    ].join('\n')
+  }
   return [
     `DevLoop task \`${taskId}\` is ready for review at commit \`${sha}\`.`,
     '',
@@ -646,7 +729,7 @@ export function pullRequestBody(taskId: string, sha: string, reviewers: readonly
     '',
     resultInstructions('review', taskId, sha),
     '',
-    `Only comments from ${reviewers.map(login => `\`${login}\``).join(', ')} are read,`,
+    `Only comments from ${who} are read,`,
     'and never one from the account that opened this pull request.',
     'Any non-approving verdict for this commit outranks an approval.',
   ].join('\n')
