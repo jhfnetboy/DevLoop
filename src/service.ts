@@ -264,7 +264,9 @@ export class ProjectLoop {
               result = { ...result, state: { ...result.state, workBranch: branch } }
             } else {
               const reason = branch === null ? 'merge_detached_head' : 'merge_onto_trunk'
-              result = { ...result, action: { type: 'escalate', taskId: reviewTaskId, reason }, state: holdTask(result.state, reviewTaskId, reason) }
+              // No review ran, so the cycle the tick charged for one is given back: a resume still on trunk must hold for this again, not for max_review_cycles.
+              const refunded = { ...result.state, usage: refundAction(result.state.usage, result.action) }
+              result = { ...result, action: { type: 'escalate', taskId: reviewTaskId, reason }, state: holdTask(refunded, reviewTaskId, reason) }
             }
           }
           if (result.action.type === 'review') worktreeRoot = await existingWorktreeRoot(this.config.root, reviewTaskId)

@@ -1582,5 +1582,7 @@ describe('a forge review without a recorded work branch', () => {
     const state = await loadState(root, Date.now())
     expect(state.supervisor?.reason).toBe('merge_onto_trunk')
     expect(state.workBranch).toBeUndefined()
+    // No review ran, so none was spent.
+    expect(state.usage.reviewCycles.d1 ?? 0).toBe(0)
   })
 })

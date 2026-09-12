@@ -786,7 +786,8 @@ export function pullRequestBody(taskId: string, sha: string, reviewers: readonly
       'that opened this pull request. Comments are not read. If any of them requests changes,',
       'that outranks every approval.',
       '',
-      `Opened by DevLoop (label \`${DEVLOOP_LABEL}\`): DevLoop reworks it itself, so it is not for \`$pr-fix\`.`,
+      `Opened by DevLoop (label \`${DEVLOOP_LABEL}\`): DevLoop reworks it itself, so it is not for \`$pr-fix\`,`,
+      'and DevLoop merges it once approved: do not press Merge here.',
     ].join('\n')
   }
   return [

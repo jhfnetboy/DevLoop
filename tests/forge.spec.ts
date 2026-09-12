@@ -1249,6 +1249,8 @@ describe('ForgePrBackend verdicts from GitHub reviews', () => {
     expect(body).not.toContain('<devloop_result>')
     // Nothing at this commit hands the body to the worker, so the pull request must not promise it.
     expect(body).not.toMatch(/worker is given|next attempt/)
+    // DevLoop merges after re-checking the review and the checks; a person's Merge would skip both.
+    expect(body).toContain('do not press Merge here')
   })
 
   it('takes a dismissed review as withdrawn, not as bringing back the one before it', async () => {
