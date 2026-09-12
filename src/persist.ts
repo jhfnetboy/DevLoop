@@ -445,6 +445,7 @@ function isLoopState(value: unknown): value is LoopState {
   if (!isActionShape(record.lastAction)) return false
   // Loose here, strict where it is used: the forge checks it against git's rules before it names it to gh.
   if (record.workBranch !== undefined && !(typeof record.workBranch === 'string' && /^(?!-)[^\x00-\x20\x7f]{1,255}$/.test(record.workBranch))) return false
+  if (record.release !== undefined && !isReleaseShape(record.release)) return false
   if (record.tasks.some(task => {
     const entry = task as { id: string; status: string }
     return entry.status === 'running' && !Object.hasOwn((record.usage as { taskStartedAt: object }).taskStartedAt, entry.id)
@@ -507,6 +508,18 @@ const REVIEW_VERDICTS = new Set<ReviewVerdict>([
 const MAX_OVER_BUDGET = 200
 /** A review's notes as a result may carry them. */
 const MAX_REVIEW_NOTES = 8_192
+
+/** A reviewer's request for changes, as a review's notes may carry it. */
+const MAX_RELEASE_CHANGES = 8_192
+
+function isReleaseShape(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null) return false
+  const release = value as Record<string, unknown>
+  return isNonNegInt(release.number) && (release.number as number) > 0
+    && typeof release.merged === 'boolean'
+    && (release.mergeCommit === undefined || (typeof release.mergeCommit === 'string' && /^[0-9a-f]{40}$/i.test(release.mergeCommit)))
+    && (release.changes === undefined || (typeof release.changes === 'string' && release.changes.length > 0 && release.changes.length <= MAX_RELEASE_CHANGES))
+}
 
 function isTaskShape(value: unknown): boolean {
   if (typeof value !== 'object' || value === null) return false

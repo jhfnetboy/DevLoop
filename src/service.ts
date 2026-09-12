@@ -30,7 +30,7 @@ import { runTick, type TickResult } from './tick.js'
 import { mountDashboard, type LoopPresence } from './dashboard.js'
 import { browseRoot, dshHome, listProjects } from './projects.js'
 import { currentBranch, trunkBranches } from './readiness.js'
-import type { BudgetUsage, HoldReason, LoopState } from './types.js'
+import type { BudgetUsage, HoldReason, LoopState, Release } from './types.js'
 import { RUNNER_REAP_MS } from './spawn.js'
 import { applyAgentResult } from './transition.js'
 import { prepareDelegateWorktree, preparePlanWorktree, removePlanWorktree, mergeTaskWorktree, fastForwardWorkBranch, deleteMergedTaskBranch, worktreePath, worktreeTaskToken, readContractBaseSha, commitDirtyTaskWorktree, assertTaskChangesAllowed, taskWorktreeHeadSha } from './worktree.js'
@@ -89,6 +89,44 @@ export class ProjectLoop {
     this.ctx = { logger }
   }
 
+  /**
+   * Take a finished goal's work branch to trunk through its release pull
+   * request: open it once every task is merged, then look at it each tick and
+   * merge it when a reviewer has approved it with green checks. The forge is
+   * asked outside the state lock; what changed is written under it, and only
+   * when something did. A failure is logged and asked again next tick.
+   */
+  private async advanceRelease(now: number): Promise<void> {
+    const state = await loadState(this.config.root, now)
+    const workBranch = state.workBranch
+    if (!state.goalCompleted || state.supervisor || workBranch === undefined || state.release?.merged) return
+    const forge = forgeMergers.create(this.config)
+    let release: Release
+    try {
+      if (state.release === undefined) {
+        const opened = await forge.openRelease({ workspaceRoot: this.config.root, workBranch, title: releaseTitle(workBranch), body: releaseBody(state, workBranch) })
+        release = { number: opened.number, merged: false }
+      } else {
+        const step = await forge.advanceRelease({ workspaceRoot: this.config.root, workBranch })
+        release = step.state === 'merged'
+          ? { number: step.number, merged: true, mergeCommit: step.mergeCommit }
+          : { number: step.number, merged: false, ...(step.state === 'changes' ? { changes: (step.notes ?? 'changes requested').slice(0, 8_192) } : {}) }
+      }
+    } catch (error) {
+      this.ctx.logger.error('[dsh-devloop] release failed', error)
+      return
+    }
+    if (JSON.stringify(release) === JSON.stringify(state.release)) return
+    await withStateLock(this.config.root, async () => {
+      const current = await loadState(this.config.root, Date.now())
+      if (!current.goalCompleted || current.release?.merged) return
+      await saveState(this.config.root, { ...current, release, updatedAt: new Date().toISOString() }, {
+        expectedRevision: current.revision,
+        action: release.merged ? `release:merged:${String(release.number)}` : `release:${String(release.number)}`,
+      })
+    })
+  }
+
   get root(): string {
     return this.config.root
   }
@@ -144,6 +182,8 @@ export class ProjectLoop {
           this.ctx.logger.error('[dsh-devloop] budget snapshot failed', error)
         })
       }
+      // A finished goal on a forge still has its release to go: one look per tick, outside the lock.
+      if (mergesOnForge(this.config)) await this.advanceRelease(now)
       if (this.haltedRevision !== null) {
         // Read-only and lock-free: STATE is replaced by rename, so a peek sees a
         // whole snapshot. Still halted at the same revision means nothing changed.
@@ -1240,7 +1280,22 @@ function mergesOnForge(config: Config): boolean {
 
 /** The forge that merges; a seam, so a test can merge without a real forge. */
 export const forgeMergers = {
-  create: (config: Config): { mergeTask: ForgePrBackend['mergeTask'] } => new ForgePrBackend(config.forge),
+  create: (config: Config): Pick<ForgePrBackend, 'mergeTask' | 'openRelease' | 'advanceRelease'> => new ForgePrBackend(config.forge),
+}
+
+function releaseTitle(workBranch: string): string {
+  return `DevLoop release: ${workBranch}`
+}
+
+/** What the release reviewer checks the branch against: each task, its commit, and the branch its pull request came from. */
+function releaseBody(state: LoopState, workBranch: string): string {
+  return [
+    `DevLoop release of \`${workBranch}\`: every task below was reviewed and merged into it through its own pull request, labelled \`devloop\`.`,
+    '',
+    ...state.tasks.map(task => `- \`${task.id}\` ${task.title}: head \`${task.implementationSha ?? 'unknown'}\`, from \`devloop/${task.id}\`, verdict ${task.lastReviewVerdict ?? 'none'}`),
+    '',
+    'Review it as a summary: each task pull request should be merged, based on this branch, and approved at the head it merged with; a commit that came in any other way is a finding.',
+  ].join('\n')
 }
 
 function mergeHoldReason(error: unknown): 'empty_task' | 'merge_wedged' | 'unknown_base' | 'unknown_review_sha' | 'stale_review_sha' | 'merge_onto_trunk' | 'merge_detached_head' | 'no_review_pass' | null {
