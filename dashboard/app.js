@@ -293,7 +293,13 @@ function readinessPanel(r) {
       el('span', { class: 'muted' }, t('start.trunk', { base: r.base }))),
     el('ul', { class: 'checks' }, r.checks.map(c => el('li', { class: c.ok ? 'ok' : c.blocking ? 'bad' : 'warn' },
       el('span', { class: 'mark' }, c.ok ? '✓' : c.blocking ? '✕' : '!'),
-      el('span', { class: 'msg' }, c.message)))))
+      el('span', { class: 'msg' }, serverText('ready', c.code, c.params, c.message))))))
+}
+
+// A server finding in the reader's language when the page knows its code; the server's own words otherwise.
+function serverText(area, code, params, fallback) {
+  const key = `${area}.${code}`
+  return code && Object.hasOwn(STRINGS, key) ? t(key, params || {}) : fallback
 }
 
 function startPanel(p) {

@@ -23,6 +23,13 @@ export interface ReadinessCheck {
   /** A failing blocking check refuses a start. The others are advice. */
   readonly blocking: boolean
   readonly message: string
+  /**
+   * The same finding for a page to say in its reader's language: a stable code
+   * and the values `message` interpolates. `message` stays for the CLI and for
+   * the refusal a start returns.
+   */
+  readonly code: string
+  readonly params: Readonly<Record<string, string>>
 }
 
 export interface Readiness {
@@ -53,7 +60,7 @@ export async function inspectReadiness(root: string): Promise<Readiness> {
       branch: null,
       base: 'main',
       docsDir: DEFAULT_DOCS_DIR,
-      checks: [{ id: 'repo', ok: false, blocking: true, message: '这个目录不是一个 git 仓库的顶层（仓库被删除、移走，或它只是别的仓库里的子目录），不能启动。' }],
+      checks: [{ id: 'repo', ok: false, blocking: true, code: 'repo.notToplevel', params: {}, message: '这个目录不是一个 git 仓库的顶层（仓库被删除、移走，或它只是别的仓库里的子目录），不能启动。' }],
       ready: false,
     }
   }
@@ -65,8 +72,8 @@ export async function inspectReadiness(root: string): Promise<Readiness> {
   const checks: ReadinessCheck[] = []
 
   checks.push(branch === null
-    ? { id: 'branch', ok: false, blocking: true, message: 'HEAD 是游离状态：DevLoop 会把任务合并到当前分支，而现在没有分支。先切到一个分支。' }
-    : { id: 'branch', ok: true, blocking: true, message: `当前分支 ${branch}` })
+    ? { id: 'branch', ok: false, blocking: true, code: 'branch.detached', params: {}, message: 'HEAD 是游离状态：DevLoop 会把任务合并到当前分支，而现在没有分支。先切到一个分支。' }
+    : { id: 'branch', ok: true, blocking: true, code: 'branch.ok', params: { branch }, message: `当前分支 ${branch}` })
 
   if (branch !== null) {
     const trunks = trunkSet(base)
@@ -75,28 +82,30 @@ export async function inspectReadiness(root: string): Promise<Readiness> {
           id: 'trunk',
           ok: false,
           blocking: true,
+          code: 'trunk.onTrunk',
+          params: { branch, base, command: `git -C ${shellQuote(root)} switch -c devloop/<goal>` },
           message: `仓库停在 ${branch} 上，DevLoop 会把每个任务直接在本地合并进它。先切到一个工作分支，做完再用 PR 合回 ${base}：git -C ${shellQuote(root)} switch -c devloop/<目标名>`,
         }
       // The merge checks the same set again (`trunkBranches`), so a checkout
       // switched back mid-loop halts the loop instead of taking the merge.
-      : { id: 'trunk', ok: true, blocking: true, message: `任务会合并到 ${branch}。运行中如果检出被切回 ${[...trunks].join(' / ')}，合并前会停下来问你。` })
+      : { id: 'trunk', ok: true, blocking: true, code: 'trunk.ok', params: { branch, trunks: [...trunks].join(' / ') }, message: `任务会合并到 ${branch}。运行中如果检出被切回 ${[...trunks].join(' / ')}，合并前会停下来问你。` })
   }
 
   checks.push(tracked === 0
-    ? { id: 'clean', ok: true, blocking: true, message: '已跟踪的文件没有未提交的改动' }
-    : { id: 'clean', ok: false, blocking: true, message: `有 ${tracked} 个已跟踪文件有未提交的改动，每次合并都会被拒绝（而那时规划、实现、评审的钱已经花了）。先提交或 stash。` })
+    ? { id: 'clean', ok: true, blocking: true, code: 'clean.ok', params: {}, message: '已跟踪的文件没有未提交的改动' }
+    : { id: 'clean', ok: false, blocking: true, code: 'clean.dirty', params: { n: String(tracked) }, message: `有 ${tracked} 个已跟踪文件有未提交的改动，每次合并都会被拒绝（而那时规划、实现、评审的钱已经花了）。先提交或 stash。` })
 
   checks.push(pilot === null
-    ? { id: 'pilot', ok: false, blocking: false, message: `没有 ${PILOT_FILE}，按 ${base} 当主干。建议先在 Claude Code 里跑 pilot status / pilot doctor：清理分支，并记下真实的主干。` }
-    : { id: 'pilot', ok: true, blocking: false, message: `${PILOT_FILE}：主干 ${base}${pilot.planningSource === 'external' ? '，规划声明在仓库外' : ''}` })
+    ? { id: 'pilot', ok: false, blocking: false, code: 'pilot.missing', params: { file: PILOT_FILE, base }, message: `没有 ${PILOT_FILE}，按 ${base} 当主干。建议先在 Claude Code 里跑 pilot status / pilot doctor：清理分支，并记下真实的主干。` }
+    : { id: 'pilot', ok: true, blocking: false, code: pilot.planningSource === 'external' ? 'pilot.okExternal' : 'pilot.ok', params: { file: PILOT_FILE, base }, message: `${PILOT_FILE}：主干 ${base}${pilot.planningSource === 'external' ? '，规划声明在仓库外' : ''}` })
 
   if (pilot?.planningSource === 'external') {
-    checks.push({ id: 'plan', ok: true, blocking: false, message: '.pilot.yml 声明规划在仓库外：规划器只能参考 GOAL.md 和 AGENTS.md / CLAUDE.md' })
+    checks.push({ id: 'plan', ok: true, blocking: false, code: 'plan.external', params: {}, message: '.pilot.yml 声明规划在仓库外：规划器只能参考 GOAL.md 和 AGENTS.md / CLAUDE.md' })
   } else {
     const found = await planningFiles(root, docsDir)
     checks.push(found.length > 0
-      ? { id: 'plan', ok: true, blocking: false, message: `规划器会读 ${docsDir}/ 里的：${found.join('、')}` }
-      : { id: 'plan', ok: false, blocking: false, message: `${docsDir}/ 里没有规划文档。pilot plan 会写出它们；没有的话规划器只能看 GOAL.md。` })
+      ? { id: 'plan', ok: true, blocking: false, code: 'plan.found', params: { dir: docsDir, files: found.join(', ') }, message: `规划器会读 ${docsDir}/ 里的：${found.join('、')}` }
+      : { id: 'plan', ok: false, blocking: false, code: 'plan.none', params: { dir: docsDir }, message: `${docsDir}/ 里没有规划文档。pilot plan 会写出它们；没有的话规划器只能看 GOAL.md。` })
   }
 
   return { branch, base, docsDir, checks, ready: checks.every(check => check.ok || !check.blocking) }
