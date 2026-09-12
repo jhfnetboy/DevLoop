@@ -363,9 +363,13 @@ describe('dashboard strings', () => {
     const { STRINGS, t, setLang } = await strings()
     const families = new Set(Object.keys(STRINGS).filter(k => k.startsWith('gate.') && /\.(q|e\d|m)$/.test(k)).map(k => k.split('.')[1]))
     expect(families.size).toBeGreaterThanOrEqual(2)
+    // A family may take its question from the one it shares it with (app.js's GATE_ALIAS).
+    const js = (await loadDashboardAssets(dashboardAssetsDir())).js
+    const aliasBody = /const GATE_ALIAS = \{([^}]*)\}/.exec(js)?.[1] ?? ''
+    const alias = Object.fromEntries([...aliasBody.matchAll(/([a-z_]+): '([a-z_]+)'/g)].map(m => [m[1]!, m[2]!]))
     for (const family of families) {
-      expect(STRINGS[`gate.${family}.q`], family).toBeDefined()
-      expect(STRINGS[`gate.${family}.e1`], family).toBeDefined()
+      expect(STRINGS[`gate.${family}.q`] ?? STRINGS[`gate.${alias[family]}.q`], family).toBeDefined()
+      expect(STRINGS[`gate.${family}.e1`] ?? STRINGS[`gate.${alias[family]}.e1`], family).toBeDefined()
     }
     setLang('zh')
     expect(t('gate.generic.e1', { reason: 'escalate:x' })).toBe('记录的原因是 escalate:x')
