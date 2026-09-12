@@ -1,5 +1,5 @@
-import { constants, lstat, open, readFile, realpath, rename, unlink } from 'node:fs/promises'
-import { basename, isAbsolute, join } from 'node:path'
+import { constants, lstat, open, realpath, rename, unlink } from 'node:fs/promises'
+import { join } from 'node:path'
 import type { AgentBackend, AgentRunInput, AgentRunResult } from './backend.js'
 import { headlessPrompt, type HeadlessRunner } from './dsh.js'
 import { assertLocalDevloopDir, DEVLOOP_DIR } from './persist.js'
@@ -25,20 +25,6 @@ function claudeArgv(input: AgentRunInput): string[] {
   return ['-p', ...model, ...shape, '--permission-mode', mode, '--', cliPrompt(input)]
 }
 
-async function resolveLinkedGitDir(input: AgentRunInput): Promise<string | null> {
-  if (!input.worktreeRoot) return null
-  try {
-    const marker = await readFile(join(input.worktreeRoot, '.git'), 'utf8')
-    const match = /^gitdir:\s*(.+?)\s*$/m.exec(marker)
-    if (match?.[1]) {
-      const raw = match[1]
-      return isAbsolute(raw) ? raw : join(input.worktreeRoot, raw)
-    }
-  } catch {
-    // Missing, unreadable, or a real .git directory.
-  }
-  return join(input.workspaceRoot, '.git', 'worktrees', basename(input.worktreeRoot))
-}
 
 async function codexArgv(input: AgentRunInput): Promise<string[]> {
   const sandbox = input.action.type === 'delegate' ? 'workspace-write' : 'read-only'
@@ -49,8 +35,8 @@ async function codexArgv(input: AgentRunInput): Promise<string[]> {
     argv.push(cliPrompt(input))
     return argv
   }
-  const gitDir = await resolveLinkedGitDir(input)
-  if (gitDir) argv.push('--add-dir', gitDir)
+  // No --add-dir for the gitdir: the host commits, and a worker that can write there can point
+  // the host's own git at a repository whose config runs a program (commondir → core.fsmonitor).
   argv.push(cliPrompt(input))
   return argv
 }
@@ -212,9 +198,9 @@ export class ClaudeCliBackend implements AgentBackend {
 
 /**
  * One-shot `codex exec --sandbox … "<task>"` in a worktree.
- * Plan and review use `read-only`. Delegate uses `workspace-write` and
- * `--add-dir` of the worktree's real gitdir (from `.git` gitdir: file). The host
- * commits dirty task worktrees after a successful started run, with hooks disabled.
+ * Plan and review use `read-only`. Delegate uses `workspace-write` on the
+ * worktree alone, never its gitdir. The host commits dirty task worktrees after
+ * a successful started run, with hooks disabled and its git directories pinned.
  */
 export class CodexCliBackend implements AgentBackend {
   constructor(

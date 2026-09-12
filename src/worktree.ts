@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { copyFile, lstat, mkdir, readFile, realpath, unlink, writeFile } from 'node:fs/promises'
-import { basename, isAbsolute, join, matchesGlob, normalize, sep } from 'node:path'
+import { basename, isAbsolute, join, matchesGlob, normalize, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
 import { DEVLOOP_DIR, devloopDir } from './persist.js'
 import type { TaskContract } from './types.js'
@@ -638,7 +638,8 @@ function isNotFound(error: unknown): boolean {
 
 async function git(root: string, args: readonly string[]): Promise<string> {
   const hooksPath = process.platform === 'win32' ? 'NUL' : '/dev/null'
-  const { stdout } = await execFileAsync('git', ['-C', root, '-c', `core.hooksPath=${hooksPath}`, ...args], {
+  const pinned = await taskGitEnv(root)
+  const { stdout } = await execFileAsync('git', ['-C', root, '-c', `core.hooksPath=${hooksPath}`, '-c', 'core.fsmonitor=false', ...args], {
     encoding: 'utf8',
     timeout: 30_000,
     env: {
@@ -646,7 +647,36 @@ async function git(root: string, args: readonly string[]): Promise<string> {
       GIT_PAGER: 'cat',
       GIT_TERMINAL_PROMPT: '0',
       GIT_OPTIONAL_LOCKS: '0',
+      ...pinned,
     },
   })
   return stdout
+}
+
+/**
+ * For a task worktree, the git directories as the host knows them, never as
+ * the worktree says: its `.git` file sits in the worktree, and its gitdir's
+ * `commondir` could be written by a worker granted that directory, either of
+ * which could point git at a repository whose config names a program to run
+ * (`core.fsmonitor`, a filter). Derived from the workspace root the path is
+ * under, with the recorded `commondir` checked against it; null for any other
+ * directory, which git reads as usual.
+ */
+export async function taskGitEnv(dir: string): Promise<Record<string, string> | null> {
+  const match = /^(.*)[/\\]\.devloop[/\\]worktrees[/\\]([^/\\]+)[/\\]?$/.exec(dir)
+  if (!match) return null
+  const [, root = '', token = ''] = match
+  if (!worktreeTaskToken(token) && token !== PLAN_WORKTREE_ID) return null
+  const common = join(root, '.git')
+  const gitDir = join(common, 'worktrees', token)
+  let recorded: string
+  try {
+    recorded = (await readFile(join(gitDir, 'commondir'), 'utf8')).trim()
+  } catch {
+    throw new Error(`worktree ${token} has no gitdir under ${common}`)
+  }
+  if (resolve(gitDir, recorded) !== resolve(common)) {
+    throw new Error(`worktree ${token} was pointed at another repository (commondir ${recorded}); refusing to run git in it`)
+  }
+  return { GIT_DIR: gitDir, GIT_COMMON_DIR: common, GIT_WORK_TREE: dir }
 }

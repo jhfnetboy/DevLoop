@@ -420,8 +420,6 @@ describe('CodexCliBackend', () => {
       '--json',
       '--sandbox',
       'workspace-write',
-      '--add-dir',
-      '/repo/.git/worktrees/d1',
       expect.stringContaining('Execute task d1'),
     ])
     expect(calls[0]?.argv.at(-1)).toContain('Do not run git')
@@ -455,7 +453,7 @@ describe('CodexCliBackend', () => {
     expect(calls[0]?.argv.at(-1)).toContain('Review task d1')
   })
 
-  it('adds the gitdir from a linked worktree .git file', async () => {
+  it('never grants the worker its gitdir, even when the worktree\'s .git file names one', async () => {
     const root = await mkdtemp(join(tmpdir(), 'devloop-codex-gitdir-'))
     const wt = join(root, 'wt')
     await mkdir(wt)
@@ -471,10 +469,9 @@ describe('CodexCliBackend', () => {
       '--json',
       '--sandbox',
       'workspace-write',
-      '--add-dir',
-      '/abs/git/worktrees/custom-name',
       expect.stringContaining('Execute task d1'),
     ])
+    expect(calls[0]?.argv).not.toContain('--add-dir')
   })
 
   it('uses read-only sandbox for plan ticks', async () => {
