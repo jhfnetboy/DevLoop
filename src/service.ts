@@ -234,8 +234,8 @@ export class ProjectLoop {
                   state: stampTaskBaseSha(result.state, result.action.taskId, baseSha),
                 }
               }
-              // Once, at the first delegate: the branch every later task pull request targets.
-              // A trunk or a detached HEAD is left unrecorded, and the merge guards say why.
+              // At the first delegate that finds it unset, and never again: the branch every later task pull request targets.
+              // A trunk or a detached HEAD is left unrecorded: with the forge, the review then holds before any pull request is opened.
               if (result.state.workBranch === undefined) {
                 const branch = await currentBranch(this.config.root)
                 if (branch !== null && !(await trunkBranches(this.config.root)).has(branch.toLowerCase())) {
@@ -255,7 +255,21 @@ export class ProjectLoop {
             return
           }
         } else if (!result.skipped && result.action.type === 'review') {
-          worktreeRoot = await existingWorktreeRoot(this.config.root, result.action.taskId)
+          const reviewTaskId = result.action.taskId
+          // A task pull request needs the work branch as its base, never trunk: one an older delegate
+          // did not record is recorded now, and a checkout on trunk or detached holds before any is opened.
+          if (mergesOnForge(this.config) && result.state.workBranch === undefined) {
+            const branch = await currentBranch(this.config.root)
+            if (branch !== null && !(await trunkBranches(this.config.root)).has(branch.toLowerCase())) {
+              result = { ...result, state: { ...result.state, workBranch: branch } }
+            } else {
+              const reason = branch === null ? 'merge_detached_head' : 'merge_onto_trunk'
+              // No review ran, so the cycle the tick charged for one is given back: a resume still on trunk must hold for this again, not for max_review_cycles.
+              const refunded = { ...result.state, usage: refundAction(result.state.usage, result.action) }
+              result = { ...result, action: { type: 'escalate', taskId: reviewTaskId, reason }, state: holdTask(refunded, reviewTaskId, reason) }
+            }
+          }
+          if (result.action.type === 'review') worktreeRoot = await existingWorktreeRoot(this.config.root, reviewTaskId)
         } else if (!result.skipped && result.action.type === 'merge') {
           const mergeTaskId = result.action.taskId
           try {
@@ -1189,6 +1203,11 @@ function actionKeyForJournal(action: TickResult['action']): string {
 
 function finitePositive(value: number | undefined): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0
+}
+
+/** Where a task's merge happens: on the forge, when the forge is the review route; in the checkout otherwise. */
+function mergesOnForge(config: Config): boolean {
+  return config.agentBackend === 'routed' && config.reviewerRoute.backend === 'forge'
 }
 
 function mergeHoldReason(error: unknown): 'empty_task' | 'merge_wedged' | 'unknown_base' | 'unknown_review_sha' | 'stale_review_sha' | 'merge_onto_trunk' | 'merge_detached_head' | null {

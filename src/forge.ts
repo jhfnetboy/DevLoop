@@ -14,6 +14,8 @@ const DEFAULT_POLL_INTERVAL_MS = 30_000
 const MAX_TIMER_MS = 2_147_483_647
 /** Named by this code, so a hostile URL can never be mistaken for a remote name. */
 const TARGET_REMOTE = 'devloop-target'
+/** Every pull request DevLoop opens carries it, so PR-daemon's fixer leaves them to DevLoop. */
+export const DEVLOOP_LABEL = 'devloop'
 /**
  * A hard ceiling on the thread, not a window: discarding older comments would
  * let a flood of filler bury an objection behind a newer approval, so a thread
@@ -267,6 +269,8 @@ interface RunCtx {
   readonly deadline: number
   readonly budgetMs: number
   readonly signal?: AbortSignal
+  /** This pull request's base: the loop's work branch, or the configured base without one. */
+  readonly base?: string
 }
 
 export interface ForgeVerdict {
@@ -333,6 +337,18 @@ export class ForgePrBackend implements AgentBackend {
     if (this.options.pushUrl.length === 0) {
       return { status: 'failed', detail: 'forge_config: pushUrl must name the repository to publish to', reachedProvider: false }
     }
+    // A task's pull request targets the loop's work branch; trunk only ever receives the release pull request.
+    const base = input.workBranch ?? this.options.base
+    if (!isValidBranchName(base)) {
+      return { status: 'failed', detail: 'forge_input: the work branch is not a valid branch name', reachedProvider: false }
+    }
+    const workBase = input.workBranch === undefined ? null : contract.baseSha?.toLowerCase()
+    if (input.workBranch !== undefined && base.toLowerCase() === this.options.base.toLowerCase()) {
+      return { status: 'failed', detail: 'forge_input: the work branch is the trunk', reachedProvider: false }
+    }
+    if (workBase !== null && (workBase === undefined || !SHA.test(workBase))) {
+      return { status: 'failed', detail: 'forge_input: targeting a work branch needs the task\'s base commit', reachedProvider: false }
+    }
 
     const branch = `${WORKTREE_BRANCH_PREFIX}${token}`
     const reviewed = sha.toLowerCase()
@@ -347,7 +363,7 @@ export class ForgePrBackend implements AgentBackend {
       MAX_TIMER_MS,
     )
     const deadline = Date.now() + budgetMs
-    const ctx: RunCtx = { deadline, budgetMs, ...(input.signal === undefined ? {} : { signal: input.signal }) }
+    const ctx: RunCtx = { deadline, budgetMs, base, ...(input.signal === undefined ? {} : { signal: input.signal }) }
     try {
       // Trusted configuration, not the checkout, decides where this goes.
       const url = this.options.pushUrl
@@ -355,7 +371,14 @@ export class ForgePrBackend implements AgentBackend {
       // Identity is read once per dispatch and scoped to this repository's host,
       // never cached across runs where the logged-in account may have changed.
       const self = await this.authenticatedLogin(workspaceRoot, repo, ctx)
-      await this.publish(workspaceRoot, url, branch, reviewed, ctx)
+      if (input.workBranch !== undefined) {
+        // Tasks are cut from, and followed into, the checkout: one moved off the work branch would split the two.
+        const head = (await this.git(workspaceRoot, ['symbolic-ref', '--quiet', 'HEAD'], ctx).catch(() => '')).trim()
+        if (head !== `refs/heads/${base}`) {
+          return { status: 'failed', detail: `forge_input: the checkout is on ${head || 'a detached HEAD'}, not the work branch ${base}`, reachedProvider: false }
+        }
+      }
+      await this.publish(workspaceRoot, url, branch, reviewed, ctx, workBase === null ? null : { branch: base, sha: workBase })
       const number = await this.ensurePullRequest(workspaceRoot, repo, branch, reviewed, contract.title, contract.taskId, ctx)
 
       const ranOut = {
@@ -412,7 +435,7 @@ export class ForgePrBackend implements AgentBackend {
    * keeping a list current. Global configuration still applies, so the
    * operator's own credential helper keeps working.
    */
-  private async publish(root: string, url: string, branch: string, sha: string, ctx: RunCtx): Promise<void> {
+  private async publish(root: string, url: string, branch: string, sha: string, ctx: RunCtx, work: { branch: string, sha: string } | null = null): Promise<void> {
     const objects = await this.objectsDir(root, ctx)
     const scratch = await mkdtemp(join(tmpdir(), 'devloop-forge-'))
     try {
@@ -446,9 +469,36 @@ export class ForgePrBackend implements AgentBackend {
         'push', '--no-verify', '--no-signed', '--recurse-submodules=no',
         '--', TARGET_REMOTE, `${ref}:${ref}`,
       ], ctx, borrow, PUSH_TIMEOUT_MS)
+      if (work !== null) await this.publishWorkBranch(isolated, work, ctx, borrow)
     } finally {
       await rm(scratch, { recursive: true, force: true })
     }
+  }
+
+  /**
+   * Make the work branch on the forge the base the task was cut from. Missing,
+   * it is created at that commit; behind it, it is fast-forwarded; anything
+   * else means someone moved it, and the task is not offered against a base
+   * it was never built on.
+   */
+  private async publishWorkBranch(isolated: string, work: { branch: string, sha: string }, ctx: RunCtx, env: Readonly<Record<string, string>>): Promise<void> {
+    const ref = `refs/heads/${work.branch}`
+    // ls-remote matches by suffix, so only the line naming exactly this ref is the work branch.
+    const line = (await this.git(isolated, ['ls-remote', '--', TARGET_REMOTE, ref], ctx, env)).split('\n').map(row => row.trim().split(/\s+/)).find(fields => fields[1] === ref)
+    const remote = line === undefined ? null : (line[0] ?? '').toLowerCase()
+    if (remote === work.sha) return
+    if (remote !== null) {
+      if (!SHA.test(remote)) throw new Error(`forge_work_branch: the forge answered ${work.branch} with something that is not a commit`)
+      const ancestor = (a: string, b: string) => this.git(isolated, ['merge-base', '--is-ancestor', a, b], ctx, env).then(() => true, () => false)
+      // Ahead of the base: other tasks merged since this one was cut, and that is the normal course of a goal.
+      if (await ancestor(work.sha, remote)) return
+      if (!await ancestor(remote, work.sha)) throw new Error(`forge_work_branch: ${work.branch} on the forge has moved away from the task's base; bring it back or restart the goal`)
+    }
+    await this.git(isolated, ['update-ref', ref, work.sha], ctx, env)
+    await this.git(isolated, [
+      'push', '--no-verify', '--no-signed', '--recurse-submodules=no',
+      '--', TARGET_REMOTE, `${ref}:${ref}`,
+    ], ctx, env, PUSH_TIMEOUT_MS)
   }
 
   /** Absolute object store the throwaway repository borrows from. */
@@ -467,6 +517,7 @@ export class ForgePrBackend implements AgentBackend {
     taskId: string,
     ctx: RunCtx,
   ): Promise<number> {
+    await this.ensureLabel(root, repo, ctx)
     const existing = await this.findPullRequest(root, repo, branch, sha, ctx)
     if (existing !== null) {
       // A reused pull request still carries the previous attempt's instructions.
@@ -476,6 +527,7 @@ export class ForgePrBackend implements AgentBackend {
         'pr', 'edit', String(existing.number), '--repo', repoSlug(repo),
         '--title', pullRequestTitle(taskId, title),
         '--body', pullRequestBody(taskId, sha, this.options.reviewers, this.options.verdictSource),
+        '--add-label', DEVLOOP_LABEL,
       ], ctx)
       return existing.number
     }
@@ -483,13 +535,22 @@ export class ForgePrBackend implements AgentBackend {
       'pr', 'create',
       '--repo', repoSlug(repo),
       '--head', branch,
-      '--base', this.options.base,
+      '--base', ctx.base ?? this.options.base,
+      '--label', DEVLOOP_LABEL,
       '--title', pullRequestTitle(taskId, title),
       '--body', pullRequestBody(taskId, sha, this.options.reviewers, this.options.verdictSource),
     ], ctx)
     const created = await this.findPullRequest(root, repo, branch, sha, ctx)
     if (created === null) throw new Error('forge_pr: pull request was created but cannot be found')
     return created.number
+  }
+
+  /** The `devloop` label, created or refreshed; `--force` makes this safe to repeat. */
+  private async ensureLabel(root: string, repo: ForgeRepo, ctx: RunCtx): Promise<void> {
+    await this.forge(root, [
+      'label', 'create', DEVLOOP_LABEL, '--repo', repoSlug(repo), '--force',
+      '--color', '5319e7', '--description', 'Opened by DevLoop; reviewed by PR-daemon, fixed by DevLoop itself',
+    ], ctx)
   }
 
   private async findPullRequest(
@@ -505,7 +566,7 @@ export class ForgePrBackend implements AgentBackend {
     ], ctx)
     const listed: unknown = parseJson(raw, 'forge_pr: pr list')
     if (!Array.isArray(listed)) throw new Error('forge_pr: pr list did not return an array')
-    const matching = listed.map(entry => readPullRequest(entry)).filter(pr => matchesReviewTarget(pr, this.options.base, branch, sha))
+    const matching = listed.map(entry => readPullRequest(entry)).filter(pr => matchesReviewTarget(pr, ctx.base ?? this.options.base, branch, sha))
     if (matching.length === 0) return null
     // Two open pull requests for one head is ambiguous; refuse rather than guess.
     if (matching.length > 1) throw new Error(`forge_pr: ${matching.length} open pull requests match ${branch}`)
@@ -530,7 +591,7 @@ export class ForgePrBackend implements AgentBackend {
     // Re-established every poll: a pull request retargeted mid-review must not
     // keep deciding the commit it no longer points at.
     const pr = readPullRequest(view)
-    if (!matchesReviewTarget(pr, this.options.base, branch, sha) || pr.number !== number) {
+    if (!matchesReviewTarget(pr, ctx.base ?? this.options.base, branch, sha) || pr.number !== number) {
       throw new Error(`forge_pr: pull request ${number} no longer targets ${branch} at ${sha}`)
     }
 
@@ -724,6 +785,9 @@ export function pullRequestBody(taskId: string, sha: string, reviewers: readonly
       `Only reviews from ${who} of exactly this commit are read, never one from the account`,
       'that opened this pull request. Comments are not read. If any of them requests changes,',
       'that outranks every approval.',
+      '',
+      `Opened by DevLoop (label \`${DEVLOOP_LABEL}\`): DevLoop reworks it itself, so it is not for \`$pr-fix\`,`,
+      'and DevLoop merges it once approved: do not press Merge here.',
     ].join('\n')
   }
   return [

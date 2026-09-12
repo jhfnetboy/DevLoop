@@ -1513,6 +1513,18 @@ process.exit(${code})
     expect((await readPrLog(plain.root))[0]).toMatchObject({ band: 'normal', estimate: null })
   })
 
+  it('keeps the work branch it recorded when the checkout later moves to another branch', async () => {
+    const root = await mkdtempInRepo('devloop-prepr-svc-')
+    await mkdir(join(root, '.devloop'))
+    await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
+    await initWorkRepo(root, 'other')
+    await saveState(root, { ...emptyState(Date.now()), workBranch: 'work', tasks: [makeTask({ id: 'd1', status: 'ready', allowedPaths: ['src/**'] })] })
+    const service = new DevloopService(new Context(), resolveConfig({ root, enabled: false }), new RecordingBackend())
+    services.push(service)
+    await service.tick()
+    expect((await loadState(root, Date.now())).workBranch).toBe('work')
+  })
+
   it('leaves the work branch unrecorded on a trunk, where the merge guards will stop the loop', async () => {
     const { root } = await runWith((await checker([], 0, { lines: 12, files: 1, band: 'normal' })).argv, {}, true)
     expect((await loadState(root, Date.now())).workBranch).toBeUndefined()
@@ -1532,5 +1544,45 @@ process.exit(${code})
     const log = await readPrLog(root)
     expect(log.map(e => e.kind === 'check' ? e.status : e.kind)).toEqual([code === 2 ? 'unavailable' : 'blocked'])
     expect(log[0]?.kind === 'check' ? log[0].blocking : null).toEqual(findings.filter(f => (f as { severity: string }).severity === 'block').map(f => (f as { rule: string }).rule))
+  })
+})
+
+describe('a forge review without a recorded work branch', () => {
+  const services: DevloopService[] = []
+  afterEach(() => { for (const service of services.splice(0)) service.stop() })
+
+  async function reviewing(onTrunk: boolean): Promise<{ root: string, backend: RecordingBackend }> {
+    const root = await mkdtempInRepo('devloop-forge-review-')
+    await mkdir(join(root, '.devloop'))
+    await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
+    if (onTrunk) await initGitRepo(root)
+    else await initWorkRepo(root)
+    // As a loop upgraded mid-task would have it: in review, with no work branch recorded.
+    await saveState(root, { ...emptyState(Date.now()), tasks: [makeTask({ id: 'd1', status: 'review_pending', implementationSha: 'a'.repeat(40), baseSha: 'b'.repeat(40), implementer: 'dsh/flash' })] })
+    const backend = new RecordingBackend()
+    const service = new DevloopService(new Context(), resolveConfig({
+      root, enabled: false, agentBackend: 'routed',
+      reviewerRoute: { tier: 'T3', backend: 'forge', model: 'pr' },
+      forge: { pushUrl: 'git@github.com:acme/widgets.git', reviewers: ['clestons'] },
+    } as never), backend)
+    services.push(service)
+    await service.tick()
+    return { root, backend }
+  }
+
+  it('records the work branch before the review, so the pull request targets it', async () => {
+    const { root, backend } = await reviewing(false)
+    expect((await loadState(root, Date.now())).workBranch).toBe('work')
+    expect(backend.runs.map(run => [run.action.type, run.workBranch])).toEqual([['review', 'work']])
+  })
+
+  it('holds on a trunk instead of reviewing, so no pull request can be opened into it', async () => {
+    const { root, backend } = await reviewing(true)
+    expect(backend.runs).toEqual([])
+    const state = await loadState(root, Date.now())
+    expect(state.supervisor?.reason).toBe('merge_onto_trunk')
+    expect(state.workBranch).toBeUndefined()
+    // No review ran, so none was spent.
+    expect(state.usage.reviewCycles.d1 ?? 0).toBe(0)
   })
 })
