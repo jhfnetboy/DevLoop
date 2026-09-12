@@ -103,7 +103,9 @@ function parseOutput(stdout: string): Omit<PreprResult, 'status' | 'detail'> | n
   }
   if (typeof value !== 'object' || value === null || !Array.isArray((value as { findings?: unknown }).findings)) return null
   const raw = value as { findings: unknown[], size?: unknown, checker?: unknown }
-  const findings = raw.findings.slice(0, MAX_FINDINGS).flatMap((entry): PreprFinding[] => {
+  // Capped after parsing, blocking findings first: a cap taken before counting would drop the
+  // one block among hundreds of review notes and misread the run as having no verdict.
+  const parsed = raw.findings.flatMap((entry): PreprFinding[] => {
     if (typeof entry !== 'object' || entry === null) return []
     const f = entry as Record<string, unknown>
     if (typeof f.rule !== 'string' || typeof f.severity !== 'string') return []
@@ -115,6 +117,7 @@ function parseOutput(stdout: string): Omit<PreprResult, 'status' | 'detail'> | n
       severity: f.severity,
     }]
   })
+  const findings = [...parsed.filter(f => f.severity === 'block'), ...parsed.filter(f => f.severity !== 'block')].slice(0, MAX_FINDINGS)
   const size = raw.size as { lines?: unknown, files?: unknown, counted_top_dirs?: unknown } | undefined
   const checker = raw.checker as { rules_version?: unknown, git_sha?: unknown, dirty?: unknown } | undefined
   return {
