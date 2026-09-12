@@ -669,7 +669,8 @@ function prLogPanel(p) {
       el('td', { class: 'mono' }, e.taskId),
       el('td', {}, badge(label, tone, true)),
       el('td', { class: 'num' }, e.kind === 'check' && e.size ? `${e.size.lines} 行 / ${e.size.files} 文件` : '—',
-        e.kind === 'check' && BAND_LABEL[e.band] ? [' ', badge(...BAND_LABEL[e.band], true)] : null),
+        e.kind === 'check' && BAND_LABEL[e.band] ? [' ', badge(...BAND_LABEL[e.band], true)] : null,
+        e.kind === 'check' && e.estimate ? el('div', { class: 'muted' }, `预估 ${e.estimate.lines} 行 / ${e.estimate.files} 文件`) : null),
       el('td', { class: 'mono' }, e.kind === 'check' ? (e.blocking.length ? e.blocking.join(' ') : e.rules.join(' ') || '—') : (e.reviewer || '—')),
       el('td', { class: 'mono' }, e.kind === 'check' && e.checker ? `${e.checker.rulesVersion || '?'}${e.checker.dirty ? '*' : ''}` : ''),
       el('td', { class: 'mono' }, e.head ? e.head.slice(0, 7) : ''))
