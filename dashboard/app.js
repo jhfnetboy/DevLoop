@@ -341,15 +341,15 @@ function removeButton(p) {
 // What an answer costs, in the words a person decides in. Empty for a server that does not say.
 function impactText(o) {
   if (!o.impact) return ''
-  if (!o.impact.spends && !o.impact.discards) return '不花钱，不动已有的改动'
-  return [o.impact.spends ? '会再调用一次模型，产生费用' : '不花钱', o.impact.discards ? '丢弃这次的改动，从头再做' : '保留已有的改动'].join('；')
+  if (!o.impact.spends && !o.impact.discards) return t('impact.free')
+  return [o.impact.spends ? t('impact.spends') : t('impact.noSpend'), o.impact.discards ? t('impact.discards') : t('impact.keeps')].join(t('impact.sep'))
 }
 
 function answerRow(p, o, tone) {
-  const label = ANSWER_LABEL[o.key] || o.key
+  const label = STRINGS[`answer.${o.key}`] ? t(`answer.${o.key}`) : o.key
   const impact = impactText(o)
   return el('div', { class: 'option' },
-    actionButton(label, tone, `回答「${label}」：${impact || o.summary}。继续？`,
+    actionButton(label, tone, t('answer.confirm', { label, impact: impact || o.summary }),
       () => postJson(`${API}/projects/${p.id}/answer`, { revision: p.revision, choice: o.key })),
     el('span', {}, impact ? el('b', {}, impact) : null, impact ? el('br') : null, el('span', { class: 'muted' }, el('code', {}, o.key), ' ', o.summary)))
 }
@@ -363,13 +363,13 @@ function gatePanel(p) {
   const primary = options.find(o => o.key === g.recommended) || null
   const rest = options.filter(o => o !== primary)
   return el('section', { class: 'panel gate' },
-    el('h3', {}, '等你回答'),
+    el('h3', {}, t('badge.question')),
     el('p', { class: 'q' }, g.question),
     g.evidence && g.evidence.length ? el('ul', { class: 'plain' }, g.evidence.map(e => el('li', {}, e))) : null,
-    !primary && g.manual ? el('div', { class: 'manual' }, el('b', {}, '要你做的事：'), g.manual) : null,
+    !primary && g.manual ? el('div', { class: 'manual' }, el('b', {}, t('gate.manual')), g.manual) : null,
     primary ? el('div', { class: 'options' }, answerRow(p, primary, 'primary')) : null,
     rest.length ? (primary
-      ? el('details', { class: 'more' }, el('summary', {}, `其他选项（${rest.length}）`), el('div', { class: 'options' }, rest.map(o => answerRow(p, o, ''))))
+      ? el('details', { class: 'more' }, el('summary', {}, t('gate.more', { n: rest.length })), el('div', { class: 'options' }, rest.map(o => answerRow(p, o, ''))))
       : el('div', { class: 'options' }, rest.map(o => answerRow(p, o, '')))) : null,
     primary && g.manual ? el('p', { class: 'note' }, g.manual) : null,
   )
@@ -378,57 +378,57 @@ function gatePanel(p) {
 function haltPanel(p) {
   if (p.completed && !p.supervisor) {
     return el('section', { class: 'panel' },
-      el('h3', {}, '目标已完成'),
-      el('p', {}, '所有任务都已评审通过并合并到主分支。这个循环不会再做别的事。'),
-      el('p', { class: 'note' }, '新需求建议作为新项目添加。确实要在这里重开某个任务，在本机用 devloop resume --task <任务ID>。'))
+      el('h3', {}, t('halt.completed')),
+      el('p', {}, t('halt.completedText')),
+      el('p', { class: 'note' }, t('halt.completedNote')))
   }
   if (!p.halted && !p.supervisor) return null
   return el('section', { class: 'panel' },
-    el('h3', {}, p.paused ? '已暂停' : '停机原因'),
+    el('h3', {}, p.paused ? t('badge.paused') : t('halt.title')),
     p.haltReasons && p.haltReasons.length
       ? el('ul', { class: 'plain' }, p.haltReasons.map(r => el('li', {}, r)))
       : el('p', { class: 'muted' }, '—'),
-    p.supervisor ? el('p', { class: 'note' }, `supervisor hold：${p.supervisor.reason}${p.supervisor.taskId ? `（任务 ${p.supervisor.taskId}）` : ''}`) : null,
-    p.acknowledged ? el('p', { class: 'note' }, `已于 ${time(p.acknowledged.at)} 选择暂不处理（answer stop）`) : null,
+    p.supervisor ? el('p', { class: 'note' }, p.supervisor.taskId ? t('halt.holdTask', { reason: p.supervisor.reason, task: p.supervisor.taskId }) : t('halt.hold', { reason: p.supervisor.reason })) : null,
+    p.acknowledged ? el('p', { class: 'note' }, t('halt.acknowledged', { at: time(p.acknowledged.at) })) : null,
     el('div', { class: 'actions' },
-      actionButton('恢复循环', 'primary',
-        p.paused ? '恢复这个循环？' : '解除停机并清掉基于旧历史的熔断。如果停机原因还在，下一轮会再次停下。继续？',
+      actionButton(t('btn.resume'), 'primary',
+        p.paused ? t('halt.resumePaused') : t('halt.resumeHalted'),
         () => postJson(`${API}/projects/${p.id}/resume`, { revision: p.revision }))),
-    el('p', { class: 'note' }, '只重做某个任务（--task）或清零花费（--reset-cost）仍需在本机用 devloop resume。'),
+    el('p', { class: 'note' }, t('halt.cliNote')),
   )
 }
 
 // Who did what, as the route identities STATE records: the three-way split made visible.
-function rolesLine(t) {
-  const roles = [['规划', t.planner], ['实现', t.implementer], ['评审', t.reviewer]].filter(([, who]) => who)
+function rolesLine(task) {
+  const roles = [[t('role.planner'), task.planner], [t('role.implementer'), task.implementer], [t('role.reviewer'), task.reviewer]].filter(([, who]) => who)
   if (!roles.length) return null
   return el('div', { class: 'roles' }, roles.flatMap(([role, who], i) => [i ? ' · ' : '', `${role} `, el('span', { class: 'mono' }, who)]))
 }
 
 function tasksPanel(p) {
   if (!p.tasks.length) {
-    return el('section', { class: 'panel' }, el('h3', {}, '任务'),
-      el('p', { class: 'muted' }, p.armed ? '还没有任务：循环会先根据 GOAL.md 做规划。' : '—'))
+    return el('section', { class: 'panel' }, el('h3', {}, t('tasks.title')),
+      el('p', { class: 'muted' }, p.armed ? t('tasks.none') : '—'))
   }
-  const rows = p.tasks.map(t => {
-    const [label, tone] = STATUS[t.status] || [t.status, '']
+  const rows = p.tasks.map(task => {
+    const [label, tone] = STATUS[task.status] || [task.status, '']
     return el('tr', {},
-      el('td', { class: 'mono' }, t.id),
-      el('td', { class: 'title-cell' }, t.title,
-        t.allowedPaths && t.allowedPaths.length ? el('div', { class: 'path' }, t.allowedPaths.join('  ')) : null,
-        t.acceptance && t.acceptance.length ? el('ul', { class: 'accept' }, t.acceptance.map(a => el('li', {}, a))) : null,
-        rolesLine(t)),
+      el('td', { class: 'mono' }, task.id),
+      el('td', { class: 'title-cell' }, task.title,
+        task.allowedPaths && task.allowedPaths.length ? el('div', { class: 'path' }, task.allowedPaths.join('  ')) : null,
+        task.acceptance && task.acceptance.length ? el('ul', { class: 'accept' }, task.acceptance.map(a => el('li', {}, a))) : null,
+        rolesLine(task)),
       el('td', {}, badge(label, tone)),
-      el('td', {}, t.tier),
-      el('td', { class: 'num' }, t.attempts),
-      el('td', { class: 'num' }, t.reviewCycles),
-      el('td', {}, t.lastReviewVerdict || '—'),
+      el('td', {}, task.tier),
+      el('td', { class: 'num' }, task.attempts),
+      el('td', { class: 'num' }, task.reviewCycles),
+      el('td', {}, task.lastReviewVerdict || '—'),
     )
   })
   return el('section', { class: 'panel' },
-    el('h3', {}, `任务（${p.tasks.length}）`),
+    el('h3', {}, t('tasks.count', { n: p.tasks.length })),
     el('div', { class: 'table-wrap' }, el('table', {},
-      el('thead', {}, el('tr', {}, ['ID', '标题', '状态', '层级', '尝试', '评审', '结论'].map(h => el('th', {}, h)))),
+      el('thead', {}, el('tr', {}, ['id', 'title', 'status', 'tier', 'attempts', 'reviews', 'verdict'].map(h => el('th', {}, t(`tasks.col.${h}`))))),
       el('tbody', {}, rows))))
 }
 
@@ -443,21 +443,21 @@ function budgetPanel(p) {
   if (!p.budget) return null
   const l = p.budget.limits
   return el('section', { class: 'panel' },
-    el('h3', {}, '预算'),
-    el('div', {}, `本次会话 ${usd(p.costUsdSession)} / ${usd(l.maxCostUsdPerSession)}`), meter(p.costUsdSession, l.maxCostUsdPerSession),
-    el('div', {}, `今日 ${usd(p.costUsdDay)} / ${usd(l.maxCostUsdPerDay)}`), meter(p.costUsdDay, l.maxCostUsdPerDay),
+    el('h3', {}, t('budget.title')),
+    el('div', {}, t('budget.session', { used: usd(p.costUsdSession), cap: usd(l.maxCostUsdPerSession) })), meter(p.costUsdSession, l.maxCostUsdPerSession),
+    el('div', {}, t('budget.day', { used: usd(p.costUsdDay), cap: usd(l.maxCostUsdPerDay) })), meter(p.costUsdDay, l.maxCostUsdPerDay),
     el('div', { class: 'kv' },
-      el('span', {}, '每任务尝试 ', el('b', {}, l.maxTaskAttempts)),
-      el('span', {}, '评审轮次 ', el('b', {}, l.maxReviewCycles)),
-      el('span', {}, '无进展 ', el('b', {}, `${l.noProgressMinutes} 分钟`)),
+      el('span', {}, t('budget.attempts'), el('b', {}, l.maxTaskAttempts)),
+      el('span', {}, t('budget.reviews'), el('b', {}, l.maxReviewCycles)),
+      el('span', {}, t('budget.noProgress'), el('b', {}, t('dur.m', { n: l.noProgressMinutes }))),
     ),
-    el('p', { class: 'note' }, `来源：${p.budget.source}。只有会报告花费的后端才计入；dsh headless 不报告，所以它的花费这里看不到。`),
+    el('p', { class: 'note' }, t('budget.note', { source: p.budget.source })),
   )
 }
 
 function eventsPanel(p) {
   return el('section', { class: 'panel' },
-    el('h3', {}, '最近事件'),
+    el('h3', {}, t('events.title')),
     p.events.length
       ? el('ul', { class: 'events' }, p.events.map(e => el('li', {},
           el('span', { class: 'rev' }, `#${e.revision ?? '?'}`),
@@ -738,8 +738,8 @@ function renderProject(p) {
     loopBadges(p),
     p.revision !== null ? badge(`revision ${p.revision}`, '', true) : null,
     el('span', { class: 'spacer' }),
-    canPause ? actionButton('暂停', '',
-      '暂停这个循环？正在跑的那一步会中止，并计为一次尝试；恢复后重做。',
+    canPause ? actionButton(t('btn.pause'), '',
+      t('pause.confirm'),
       () => postJson(`${API}/projects/${p.id}/pause`, { revision: p.revision })) : null,
     removeButton(p))
   const sub = el('div', { class: 'path' }, p.root)
@@ -750,13 +750,11 @@ function renderProject(p) {
   main.push(prLogPanel(p))
   return [back(), head, sub, flashNode(),
     el('div', { class: 'kv' },
-      el('span', {}, '最近动作 ', el('b', {}, p.lastAction || '—')),
-      el('span', {}, '最近进展 ', el('b', {}, ago(p.lastProgressAt) || '—')),
-      el('span', {}, '更新 ', el('b', {}, time(p.updatedAt)))),
+      el('span', {}, t('card.lastAction'), el('b', {}, p.lastAction || '—')),
+      el('span', {}, t('project.lastProgress'), el('b', {}, ago(p.lastProgressAt) || '—')),
+      el('span', {}, t('card.updated'), el('b', {}, time(p.updatedAt)))),
     el('div', { class: 'sections' }, el('div', {}, main), el('div', {}, side))]
 }
-
-const ANSWER_LABEL = { retry: '重做', review: '重新评审', accept: '接受', stop: '先不处理' }
 
 // The last action's result, kept across the refresh that follows it.
 let flash = null
@@ -768,9 +766,9 @@ function flashNode() {
 }
 
 function describeResult(value) {
-  if (value.declined) return `已记录：先不处理（revision ${value.revision}）。`
-  if (value.stillBlocked) return `已写入（revision ${value.revision}），但下一轮还会被挡住：${value.stillBlocked}`
-  return `已写入（revision ${value.revision}）。循环会在下一轮接着跑。`
+  if (value.declined) return t('result.declined', { revision: value.revision })
+  if (value.stillBlocked) return t('result.stillBlocked', { revision: value.revision, why: value.stillBlocked })
+  return t('result.written', { revision: value.revision })
 }
 
 function actionButton(label, tone, question, run) {
@@ -783,8 +781,8 @@ function actionButton(label, tone, question, run) {
       flash = { text: value && value.text ? value.text : describeResult(value), tone: '', at: Date.now() }
     } catch (error) {
       flash = error.code === 'stale'
-        ? { text: '状态已经变了，页面已刷新。请看一眼再决定。', tone: 'bad', at: Date.now() }
-        : { text: `没有执行：${error.message}`, tone: 'bad', at: Date.now() }
+        ? { text: t('result.stale'), tone: 'bad', at: Date.now() }
+        : { text: t('result.failed', { error: error.message }), tone: 'bad', at: Date.now() }
     }
     await load(true)
   })
@@ -792,7 +790,7 @@ function actionButton(label, tone, question, run) {
 }
 
 function back() {
-  return el('a', { class: 'back', href: '#/' }, '← 所有项目')
+  return el('a', { class: 'back', href: '#/' }, t('project.back'))
 }
 
 // ---- loop -------------------------------------------------------------------

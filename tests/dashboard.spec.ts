@@ -323,6 +323,8 @@ describe('dashboard strings', () => {
     for (const l of ['running', 'stopped', 'elsewhere']) asked.add(`loop.${l}`)
     for (const lane of ['needs_you', 'running', 'idle', 'done']) asked.add(`lane.${lane}`).add(`lane.${lane}.hint`)
     for (const verb of ['plan', 'delegate', 'review', 'merge']) asked.add(`doing.${verb}`)
+    for (const key of ['retry', 'review', 'accept', 'stop']) asked.add(`answer.${key}`)
+    for (const col of ['id', 'title', 'status', 'tier', 'attempts', 'reviews', 'verdict']) asked.add(`tasks.col.${col}`)
     expect(asked.size).toBeGreaterThan(40)
     for (const key of asked) {
       expect(STRINGS[key], key).toHaveLength(3)
