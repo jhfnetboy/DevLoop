@@ -47,6 +47,18 @@ describe('diagnoseHalt', () => {
       'task A is failed',
     ]))
     expect(diagnosis.taskId).toBe('A')
+    // The same reasons as codes, one for one and in order, for a page to say in another language.
+    expect(diagnosis.details).toHaveLength(diagnosis.reasons.length)
+    expect(diagnosis.details).toEqual([
+      { code: 'kill_switch', params: {} },
+      { code: 'last_stop', params: { reason: 'budget' } },
+      { code: 'hold', params: { reason: 'max_task_attempts:A' } },
+      { code: 'task_stuck', params: { task: 'A', status: 'failed' } },
+    ])
+    const paused = diagnoseHalt({ ...baseState(), paused: { at: '2026-09-12T00:00:00.000Z', via: 'dashboard' } }, limits, NOW)
+    expect(paused.details).toContainEqual({ code: 'paused', params: { via: 'dashboard', at: '2026-09-12T00:00:00.000Z' } })
+    const broken = diagnoseHalt({ ...baseState(), killSwitch: true, supervisor: { taskId: null, reason: 'invalid_state' } }, limits, NOW)
+    expect(broken.details[0]).toEqual({ code: 'integrity', params: { reason: 'invalid_state' } })
   })
 
   it('warns when lifting the hold would change nothing', () => {

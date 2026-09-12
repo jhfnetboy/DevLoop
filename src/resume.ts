@@ -14,12 +14,19 @@ export interface HaltDiagnosis {
   readonly halted: boolean
   /** Why the loop is stopped now, most specific first. */
   readonly reasons: readonly string[]
+  /** The same reasons, in the same order, as codes and values: for a page to say in its reader's language. */
+  readonly details: readonly HaltDetail[]
   /** What would stop it again on the next tick, given these resume options. */
   readonly wouldHaltAgain: string | null
   /** A task worth naming with --task, when one would unblock the loop. */
   readonly taskId: string | null
   /** State this command must not touch: the file itself is suspect. */
   readonly integrityHold: string | null
+}
+
+export interface HaltDetail {
+  readonly code: 'integrity' | 'paused' | 'kill_switch' | 'last_stop' | 'hold' | 'goal_complete' | 'task_stuck'
+  readonly params: Readonly<Record<string, string>>
 }
 
 /** Halts the host synthesises when STATE cannot be trusted; never resumable. */
@@ -48,27 +55,33 @@ export function diagnoseHalt(
   options: ResumeOptions = {},
 ): HaltDiagnosis {
   const reasons: string[] = []
+  const details: HaltDetail[] = []
+  // Each reason is said twice, once for the CLI and once for the page, and always together.
+  const say = (reason: string, code: HaltDetail['code'], params: Record<string, string> = {}) => {
+    reasons.push(reason)
+    details.push({ code, params })
+  }
   let taskId: string | null = null
 
   const integrity = integrityHold(state)
-  if (integrity !== null) reasons.push(`state integrity hold: ${integrity}`)
-  if (state.paused && integrity === null) reasons.push(`paused by an operator (${state.paused.via}) at ${state.paused.at}`)
-  if (state.killSwitch) reasons.push('killSwitch is set')
-  if (state.lastAction.type === 'stop') reasons.push(`last action was stop:${state.lastAction.reason}`)
+  if (integrity !== null) say(`state integrity hold: ${integrity}`, 'integrity', { reason: integrity })
+  if (state.paused && integrity === null) say(`paused by an operator (${state.paused.via}) at ${state.paused.at}`, 'paused', { via: state.paused.via, at: state.paused.at })
+  if (state.killSwitch) say('killSwitch is set', 'kill_switch')
+  if (state.lastAction.type === 'stop') say(`last action was stop:${state.lastAction.reason}`, 'last_stop', { reason: state.lastAction.reason })
   if (state.supervisor && integrity === null) {
-    reasons.push(`supervisor hold: ${state.supervisor.reason}`)
+    say(`supervisor hold: ${state.supervisor.reason}`, 'hold', { reason: state.supervisor.reason })
     taskId = state.supervisor.taskId
   }
-  if (state.goalCompleted) reasons.push('goal is marked complete')
+  if (state.goalCompleted) say('goal is marked complete', 'goal_complete')
   for (const task of state.tasks) {
     if (task.status === 'failed' || task.status === 'blocked') {
-      reasons.push(`task ${task.id} is ${task.status}`)
+      say(`task ${task.id} is ${task.status}`, 'task_stuck', { task: task.id, status: task.status })
       taskId = taskId ?? task.id
     }
   }
 
   if (integrity !== null) {
-    return { halted: true, reasons, wouldHaltAgain: integrity, taskId, integrityHold: integrity }
+    return { halted: true, reasons, details, wouldHaltAgain: integrity, taskId, integrityHold: integrity }
   }
 
   let resumed: LoopState
@@ -76,12 +89,13 @@ export function diagnoseHalt(
     resumed = resumeState(state, options, now)
   } catch (error) {
     const reason = error instanceof Error ? error.message : 'resume is not possible'
-    return { halted: true, reasons, wouldHaltAgain: reason, taskId, integrityHold: null }
+    return { halted: true, reasons, details, wouldHaltAgain: reason, taskId, integrityHold: null }
   }
 
   return {
     halted: reasons.length > 0,
     reasons,
+    details,
     wouldHaltAgain: blockedReason(resumed, limits, now),
     taskId,
     integrityHold: null,
