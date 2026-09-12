@@ -171,7 +171,11 @@ export class ProjectLoop {
           await clearCommitHoldMarker(this.config.root)
         }
         const pendingHold = await readPendingHold(this.config.root)
-        if (pendingHold) {
+        if (pendingHold === 'invalid') {
+          // Corrupt, or not a plain file: say so and remove it, rather than read it every tick.
+          this.ctx.logger.error('[dsh-devloop] unusable PENDING_HOLD marker removed')
+          await unlink(join(this.config.root, DEVLOOP_DIR, PENDING_HOLD_FILE)).catch(() => undefined)
+        } else if (pendingHold) {
           // Applied only to a running loop; one already halted is showing its own hold,
           // and a resume after it must not bring this stale one back.
           if (!current.killSwitch && !current.supervisor) {
@@ -915,17 +919,18 @@ async function writePendingHold(root: string, taskId: string | null, reason: Hol
   }
 }
 
-async function readPendingHold(root: string): Promise<{ taskId: string | null, reason: HoldReason } | null> {
+/** The marker's hold; null when there is none; 'invalid' when one is there but unusable. */
+async function readPendingHold(root: string): Promise<{ taskId: string | null, reason: HoldReason } | 'invalid' | null> {
   let handle
   try {
     handle = await open(pendingHoldPath(root), constants.O_RDONLY | constants.O_NOFOLLOW)
-    if (!(await handle.stat()).isFile()) return null
+    if (!(await handle.stat()).isFile()) return 'invalid'
     const value = JSON.parse(await handle.readFile('utf8')) as { taskId?: unknown, reason?: unknown }
     const taskId = value.taskId === null ? null : typeof value.taskId === 'string' && worktreeTaskToken(value.taskId) ? value.taskId : undefined
-    if (taskId === undefined || typeof value.reason !== 'string' || !HOLD_REASON.test(value.reason)) return null
+    if (taskId === undefined || typeof value.reason !== 'string' || !HOLD_REASON.test(value.reason)) return 'invalid'
     return { taskId, reason: value.reason as HoldReason }
-  } catch {
-    return null
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'ENOENT' ? null : 'invalid'
   } finally {
     await handle?.close().catch(() => undefined)
   }
