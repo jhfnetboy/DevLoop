@@ -35,17 +35,17 @@ export function planCleanup(status: RepoStatus): CleanupPlan {
       // A task branch the loop gave up on is the usual leftover; deleting
       // unmerged work is still a person's call.
       if (b.name.startsWith('devloop/')) {
-        manual.push({ target: b.name, reason: '未合并的 DevLoop 任务分支', command: `git branch -D ${b.name}` })
+        manual.push({ target: b.name, reason: '未合并的 DevLoop 任务分支', command: `git branch -D -- ${quote(b.name)}` })
       }
     }
   }
   for (const w of status.worktrees) {
     // The primary checkout, and DevLoop's own task and plan worktrees, which
     // the loop creates and removes itself.
-    // Folded, as in the scan: on APFS the primary checkout's branch can differ
-    // from the listed one by case alone, and must still be skipped.
-    const primary = w.branch !== null && status.branch !== null && w.branch.toLowerCase() === status.branch.toLowerCase()
-    if (primary || /[/\\]\.devloop[/\\]worktrees[/\\]/.test(w.path)) continue
+    // Never the main checkout (known by position: on a detached HEAD it has no
+    // branch to match) and never the project's own checkout, which is a linked
+    // worktree when the project was registered from one — git would remove it.
+    if (w.primary || w.current || /[/\\]\.devloop[/\\]worktrees[/\\]/.test(w.path)) continue
     manual.push(w.dirty
       ? { target: w.path, reason: 'worktree 有未提交的改动，先看一眼', command: `git -C ${quote(w.path)} status` }
       : { target: w.path, reason: '干净的 worktree，不需要了可以删', command: `git worktree remove ${quote(w.path)}` })
@@ -90,7 +90,7 @@ export async function applyCleanup(root: string, confirmed: readonly string[], o
  * starts with the full command line, paths included, and stderr can name a
  * worktree's path.
  */
-function refusalReason(error: unknown): string {
+export function refusalReason(error: unknown): string {
   const stderr = String((error as { stderr?: unknown } | null)?.stderr ?? '')
   if (/not fully merged/.test(stderr)) return 'git 拒绝：分支没有完全合并'
   if (/(checked out|used by worktree)/.test(stderr)) return 'git 拒绝：分支被某个 worktree 检出'

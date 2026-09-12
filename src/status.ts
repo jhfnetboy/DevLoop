@@ -1,3 +1,4 @@
+import { realpath } from 'node:fs/promises'
 import { baseBranch, git, isToplevel, protectedPrefixes, readPilotConfig, trunkBranches, type ProtectDrop } from './readiness.js'
 
 /** The read-only half of pilot's `status`, for the 仓库状态 panel. Git runs through
@@ -15,6 +16,10 @@ export interface WorktreeStatus {
   readonly path: string
   readonly branch: string | null // null when detached
   readonly dirty: boolean
+  /** The main checkout: the first `git worktree list` entry, whatever HEAD points at. */
+  readonly primary: boolean
+  /** The checkout this scan ran in — the project itself, even when it is a linked worktree. */
+  readonly current: boolean
 }
 
 export interface RepoStatus {
@@ -77,6 +82,7 @@ export async function scanRepo(root: string, options: ScanOptions = {}): Promise
 }
 
 async function listWorktrees(root: string): Promise<WorktreeStatus[]> {
+  const here = await realpath(root)
   const out: WorktreeStatus[] = []
   let path: string | null = null
   let branch: string | null = null
@@ -84,7 +90,8 @@ async function listWorktrees(root: string): Promise<WorktreeStatus[]> {
     if (path === null) return
     const status = await optional(path, ['status', '--porcelain'])
     // Unreadable counts as dirty: it is the answer that keeps a worktree's files.
-    out.push({ path, branch, dirty: status === null || status.trim() !== '' })
+    const current = await realpath(path).then(real => real === here, () => false)
+    out.push({ path, branch, dirty: status === null || status.trim() !== '', primary: out.length === 0, current })
     path = null
     branch = null
   }
