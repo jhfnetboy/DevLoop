@@ -43,7 +43,8 @@ export interface Gate {
   readonly recommended: GateOption['key'] | null
 }
 
-const RETRY: GateOption = { key: 'retry', summary: 'give the task another attempt from a clean worktree', impact: { spends: true, discards: true } }
+// A retry reuses the task's worktree and base: the worker continues from what the last attempt left there.
+const RETRY: GateOption = { key: 'retry', summary: 'run the worker on the task again, in its existing worktree', impact: { spends: true, discards: false } }
 const REVIEW: GateOption = { key: 'review', summary: 'send the existing commit back for review', impact: { spends: true, discards: false } }
 const ACCEPT: GateOption = { key: 'accept', summary: 'agree the task needed no change and mark it done', impact: { spends: false, discards: false } }
 const STOP: GateOption = { key: 'stop', summary: 'leave the loop halted; nothing changes', impact: { spends: false, discards: false } }
@@ -325,10 +326,11 @@ function costGate({ reason, taskId, base }: GateContext): Gate {
  * Apply an answer. Pure, like the resume it builds on; the caller persists it
  * under the lock.
  *
- * Only `retry` is a resume. `retry` means "throw the attempt away and start
- * over", so it spends a fresh budget and `resumeState` clears the task's
- * counters to match. `review` and `accept` keep the work that exists, so they
- * must keep the budget that bought it: they lift the hold and nothing else.
+ * Only `retry` is a resume. `retry` means "run the worker again", so it spends
+ * a fresh budget and `resumeState` clears the task's counters to match; the
+ * worktree and its commits stay as they are. `review` and `accept` pay for no
+ * new attempt, so they must keep the budget that bought the work: they lift the
+ * hold and nothing else.
  * Routing them through `resumeState` handed a task a fresh `maxReviewCycles`
  * every time an operator answered, and dropped the task's start time — which
  * only a `delegate` ever writes back, so the lifetime circuit stopped seeing a

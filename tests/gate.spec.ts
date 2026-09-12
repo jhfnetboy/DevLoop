@@ -41,7 +41,8 @@ describe('gateFor', () => {
 
   it('says what each answer costs before it is chosen, and recommends one unless the only answer is to leave it', () => {
     const cost = {
-      retry: { spends: true, discards: true },
+      // Not a clean slate: the worker runs again in the same worktree, on the same base.
+      retry: { spends: true, discards: false },
       review: { spends: true, discards: false },
       accept: { spends: false, discards: false },
       stop: { spends: false, discards: false },
@@ -218,7 +219,7 @@ describe('applyAnswer', () => {
   it('refuses an answer that needs a task when the halt names none', () => {
     const corrupt: LoopState = { ...baseState(), killSwitch: true, supervisor: { taskId: null, reason: 'invalid_state' } }
     const g = gateFor(corrupt, limits, NOW)!
-    expect(() => applyAnswer(corrupt, { ...g, options: [{ key: 'retry', summary: 'x', impact: { spends: true, discards: true } }] }, 'retry', NOW))
+    expect(() => applyAnswer(corrupt, { ...g, options: [{ key: 'retry', summary: 'x', impact: { spends: true, discards: false } }] }, 'retry', NOW))
       .toThrow(/names none/)
   })
 })
