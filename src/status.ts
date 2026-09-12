@@ -4,7 +4,8 @@ import { baseBranch, git, isToplevel, protectedPrefixes, readPilotConfig, trunkB
  * readiness's helper, so no call takes the index lock from a loop mid-merge. */
 export interface BranchStatus {
   readonly name: string
-  /** Fully merged into HEAD: exactly the branches `git branch -d` would accept. */
+  /** Merged into HEAD. `git branch -d` also takes a branch merged into its upstream, so
+   * this is a subset of what -d accepts; cleanup still runs -d and reports each refusal. */
   readonly merged: boolean
   /** Why this branch must never be deleted, or null. */
   readonly protectedBy: 'current' | 'trunk' | 'pattern' | 'worktree' | 'active_task' | null
