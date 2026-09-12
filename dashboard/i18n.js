@@ -306,4 +306,17 @@ const STRINGS = {
   // Why a .pilot.yml protect_patterns entry has no effect (src/readiness.ts).
   'protect.glob': ['wildcards have no effect: protection matches a literal prefix', '通配符不起作用：保护按字面前缀匹配', 'ไวลด์การ์ดไม่มีผล: การป้องกันจับคู่คำนำหน้าตามตัวอักษร'],
   'protect.invalid': ['not a valid branch name', '不是合法的分支名', 'ไม่ใช่ชื่อสาขาที่ถูกต้อง'],
+
+  // Gates: each answer's own summary, then each question by the family the server sends (src/gate.ts).
+  // A family with no entry here is asked in the server's English.
+  'summary.retry': ['run the worker on the task again, in its existing worktree', '在原来的 worktree 里让编码模型再做一次', 'ให้ผู้พัฒนาทำงานนี้อีกครั้งใน worktree เดิม'],
+  'summary.review': ['send the existing commit back for review', '把现有的提交重新送去评审', 'ส่งคอมมิตเดิมกลับไปรีวิว'],
+  'summary.accept': ['agree the task needed no change and mark it done', '认可这个任务不需要改动，标为完成', 'ยอมรับว่างานนี้ไม่ต้องแก้ไข และทำเครื่องหมายว่าเสร็จ'],
+  'summary.stop': ['leave the loop halted; nothing changes', '让循环保持停机；什么都不变', 'ปล่อยให้ลูปหยุดอยู่ ไม่มีอะไรเปลี่ยน'],
+  'gate.generic.q': ['The loop stopped and needs a decision. Redo the task, or leave it?', '循环停下了，需要你拿主意。重做这个任务，还是先不管？', 'ลูปหยุดและต้องการการตัดสินใจ ทำงานนี้ใหม่ หรือปล่อยไว้ก่อน?'],
+  'gate.generic.e1': ['the recorded reason is {reason}', '记录的原因是 {reason}', 'สาเหตุที่บันทึกไว้คือ {reason}'],
+  'gate.integrity.q': ['The recorded state could not be read back. What should it be?', '记录的状态读不回来了。它应该是什么？', 'อ่านสถานะที่บันทึกไว้กลับมาไม่ได้ ควรเป็นอย่างไร?'],
+  'gate.integrity.e1': ['the host replaced STATE.json with a halted placeholder ({reason})', '宿主把 STATE.json 换成了一个停机的占位状态（{reason}）', 'โฮสต์แทนที่ STATE.json ด้วยสถานะหยุดชั่วคราว ({reason})'],
+  'gate.integrity.e2': ['the task history is not in it', '里面没有任务历史', 'ไม่มีประวัติงานอยู่ในนั้น'],
+  'gate.integrity.m': ['Repair or restore .devloop/STATE.json, or recover it from EVENTS.jsonl, before resuming.', '恢复前，先修复或还原 .devloop/STATE.json，或者从 EVENTS.jsonl 恢复。', 'ก่อนทำงานต่อ ให้ซ่อมหรือกู้คืน .devloop/STATE.json หรือกู้จาก EVENTS.jsonl'],
 }

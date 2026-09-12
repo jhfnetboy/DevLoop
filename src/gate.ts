@@ -41,6 +41,13 @@ export interface Gate {
    * `manual` is what to do.
    */
   readonly recommended: GateOption['key'] | null
+  /**
+   * The same question for a page to ask in its reader's language: the reason's
+   * family (`empty_task`, `task_over_budget`, … or `integrity`, `generic`) and
+   * the values its sentences use. The English above stays for the CLI.
+   */
+  readonly key: string
+  readonly vars: Readonly<Record<string, string>>
 }
 
 // A retry reuses the task's worktree and base: the worker continues from what the last attempt left there.
@@ -67,6 +74,8 @@ export function gateFor(state: LoopState, limits: BudgetLimits, now: number): Ga
       options: [STOP],
       manual: 'Repair or restore .devloop/STATE.json, or recover it from EVENTS.jsonl, before resuming.',
       recommended: null,
+      key: 'integrity',
+      vars: { reason: integrity },
     }
   }
 
@@ -83,15 +92,24 @@ export function gateFor(state: LoopState, limits: BudgetLimits, now: number): Ga
   const task = taskId === null ? undefined : state.tasks.find(entry => entry.id === taskId)
   const base = reason.split(':')[0] ?? reason
   const compose = KNOWN_GATES[base as KnownReasonBase]
+  const vars: Record<string, string> = {
+    reason,
+    task: taskId ?? '',
+    detail: reason.includes(':') ? reason.slice(reason.indexOf(':') + 1).trim() : '',
+    verdict: task?.lastReviewVerdict ?? '',
+    attempts: String(limits.maxTaskAttempts),
+    cycles: String(limits.maxReviewCycles),
+    refused: String(limits.maxRefusedDispatches),
+  }
   if (compose === undefined) {
     // Genuinely open: `stop:*`, `escalate:*` and the message from a resume that
     // refused. Both closed families are covered by KNOWN_GATES, so a reason
     // reaching here is one no code in this repo writes as a hold or a circuit.
-    return gate(reason, taskId, 'The loop stopped and needs a decision. Redo the task, or leave it?', [
+    return { ...gate(reason, taskId, 'The loop stopped and needs a decision. Redo the task, or leave it?', [
       `the recorded reason is ${reason}`,
-    ], taskId === null ? [STOP] : [RETRY, STOP])
+    ], taskId === null ? [STOP] : [RETRY, STOP]), key: 'generic', vars }
   }
-  return compose({ reason, taskId, task, limits, base })
+  return { ...compose({ reason, taskId, task, limits, base }), key: base, vars }
 }
 
 interface GateContext {
@@ -113,7 +131,7 @@ interface GateContext {
  */
 type KnownReasonBase = BaseReason<HoldReason> | BaseReason<CircuitReason>
 
-const KNOWN_GATES: Record<KnownReasonBase, (ctx: GateContext) => Gate> = {
+const KNOWN_GATES: Record<KnownReasonBase, (ctx: GateContext) => Omit<Gate, 'key' | 'vars'>> = {
   empty_task: ({ reason, taskId }) =>
     gate(reason, taskId, 'The task branch has no commits, but review passed it. Did it need any change?', [
       `${label(taskId)} is still at the commit it started from`,
@@ -277,21 +295,21 @@ const KNOWN_GATES: Record<KnownReasonBase, (ctx: GateContext) => Gate> = {
     ], [RETRY, STOP]),
 }
 
-function scopeGate({ reason, taskId }: GateContext): Gate {
+function scopeGate({ reason, taskId }: GateContext): Omit<Gate, 'key' | 'vars'> {
   return gate(reason, taskId, 'The worker wrote outside the paths this task was allowed. Retry, or change the plan?', [
     `${label(taskId)} touched a path outside its allowedPaths`,
     'nothing was committed, so the workspace is unchanged',
   ], [RETRY, STOP], 'To let the task write there, widen allowedPaths in the plan and retry.')
 }
 
-function staleShaGate({ reason, taskId }: GateContext): Gate {
+function staleShaGate({ reason, taskId }: GateContext): Omit<Gate, 'key' | 'vars'> {
   return gate(reason, taskId, 'The review does not match the commit under review. Review the current commit, or redo the task?', [
     `${label(taskId)} moved after its review was requested`,
     'a verdict is only accepted for the exact commit it names',
   ], [REVIEW, RETRY, STOP])
 }
 
-function attemptsGate({ reason, taskId, limits }: GateContext): Gate {
+function attemptsGate({ reason, taskId, limits }: GateContext): Omit<Gate, 'key' | 'vars'> {
   return gate(reason, taskId, 'The task has used its attempts without succeeding. Spend more, or leave it?', [
     `${label(taskId)} reached ${String(limits.maxTaskAttempts)} attempts`,
     'retrying clears its counters and starts the budget again',
@@ -308,14 +326,14 @@ function redoFromBase(taskId: string | null, why: string): string {
   return `${why} To redo it smaller from its base: git worktree remove --force .devloop/worktrees/${id} && git branch -D devloop/${id}, then devloop resume --task ${id}. The worker is told the PR budget.`
 }
 
-function mergeGate({ reason, taskId }: GateContext): Gate {
+function mergeGate({ reason, taskId }: GateContext): Omit<Gate, 'key' | 'vars'> {
   return gate(reason, taskId, 'The merge could not be completed safely. Redo the task, or fix the tree by hand?', [
     `merging ${label(taskId)} was refused: ${reason}`,
     'the workspace was left untouched',
   ], [RETRY, STOP], 'Check the primary worktree is clean and on a branch, then retry.')
 }
 
-function costGate({ reason, taskId, base }: GateContext): Gate {
+function costGate({ reason, taskId, base }: GateContext): Omit<Gate, 'key' | 'vars'> {
   return gate(reason, taskId, 'The loop reached a spending limit. Raise it, or stop here?', [
     `the ${base.replace(/_/g, ' ')} was reached`,
     'the limit is a decision, so nothing here clears it on its own',
@@ -395,7 +413,7 @@ function gate(
   evidence: readonly string[],
   options: readonly GateOption[],
   manual: string | null = null,
-): Gate {
+): Omit<Gate, 'key' | 'vars'> {
   const first = options[0]
   const recommended = first !== undefined && first.key !== 'stop' ? first.key : null
   return { reason, taskId, question, evidence, options, manual, recommended }
