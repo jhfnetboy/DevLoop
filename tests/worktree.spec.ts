@@ -646,3 +646,28 @@ describe('a task worktree whose gitdir a worker could write', () => {
     expect((await execFileAsync('git', ['-C', tree, 'log', '-1', '--format=%s'])).stdout.trim()).toBe('devloop: delegate')
   })
 })
+
+describe('the repository status scan over a worker\'s worktree', () => {
+  // No gitdir access needed: the worker rewrites the `.git` pointer inside its own worktree to a
+  // linked gitdir of its own, whose commondir names a repository with a program in its config.
+  it('runs git status there without running anything the worktree points at, and counts it dirty', async () => {
+    const root = await gitWorkspace()
+    const tree = await prepareDelegateWorktree(root, contractFor('scan'))
+    const fake = await mkdtempInRepo('devloop-fake-scan-')
+    scratch.push(fake)
+    const common = join(fake, 'common')
+    await execFileAsync('cp', ['-R', join(root, '.git') + '/.', common])
+    const marker = join(fake, 'PWNED')
+    const hook = join(fake, 'monitor.sh')
+    await writeFile(hook, `#!/bin/sh\ntouch '${marker}'\nexit 1\n`, 'utf8')
+    await chmod(hook, 0o755)
+    await execFileAsync('git', ['config', '--file', join(common, 'config'), 'core.fsmonitor', hook])
+    const linked = join(common, 'worktrees', 'scan')
+    await writeFile(join(linked, 'commondir'), `${common}\n`, 'utf8')
+    await writeFile(join(tree, '.git'), `gitdir: ${linked}\n`, 'utf8')
+    const { scanRepo } = await import('../src/status.ts')
+    const status = await scanRepo(root)
+    await expect(lstat(marker)).rejects.toThrow()
+    expect(status.worktrees.find(w => w.path.endsWith('/.devloop/worktrees/scan'))).toBeDefined()
+  })
+})
