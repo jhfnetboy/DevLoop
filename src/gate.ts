@@ -7,6 +7,13 @@ export interface GateOption {
   /** What they type. */
   readonly key: 'retry' | 'review' | 'accept' | 'stop'
   readonly summary: string
+  /** What choosing it costs, said before it is chosen. */
+  readonly impact: {
+    /** A model is dispatched again, and paid for. */
+    readonly spends: boolean
+    /** The attempt that exists is thrown away. */
+    readonly discards: boolean
+  }
 }
 
 /**
@@ -28,12 +35,18 @@ export interface Gate {
   readonly options: readonly GateOption[]
   /** Set when no answer this tool can apply would help. */
   readonly manual: string | null
+  /**
+   * The answer to offer first. Each gate lists its options most likely first;
+   * when the only option is to leave the halt, there is nothing to recommend and
+   * `manual` is what to do.
+   */
+  readonly recommended: GateOption['key'] | null
 }
 
-const RETRY: GateOption = { key: 'retry', summary: 'give the task another attempt from a clean worktree' }
-const REVIEW: GateOption = { key: 'review', summary: 'send the existing commit back for review' }
-const ACCEPT: GateOption = { key: 'accept', summary: 'agree the task needed no change and mark it done' }
-const STOP: GateOption = { key: 'stop', summary: 'leave the loop halted; nothing changes' }
+const RETRY: GateOption = { key: 'retry', summary: 'give the task another attempt from a clean worktree', impact: { spends: true, discards: true } }
+const REVIEW: GateOption = { key: 'review', summary: 'send the existing commit back for review', impact: { spends: true, discards: false } }
+const ACCEPT: GateOption = { key: 'accept', summary: 'agree the task needed no change and mark it done', impact: { spends: false, discards: false } }
+const STOP: GateOption = { key: 'stop', summary: 'leave the loop halted; nothing changes', impact: { spends: false, discards: false } }
 
 /** The question a halted loop is really asking, or null when it is not halted. */
 export function gateFor(state: LoopState, limits: BudgetLimits, now: number): Gate | null {
@@ -52,6 +65,7 @@ export function gateFor(state: LoopState, limits: BudgetLimits, now: number): Ga
       ],
       options: [STOP],
       manual: 'Repair or restore .devloop/STATE.json, or recover it from EVENTS.jsonl, before resuming.',
+      recommended: null,
     }
   }
 
@@ -380,7 +394,9 @@ function gate(
   options: readonly GateOption[],
   manual: string | null = null,
 ): Gate {
-  return { reason, taskId, question, evidence, options, manual }
+  const first = options[0]
+  const recommended = first !== undefined && first.key !== 'stop' ? first.key : null
+  return { reason, taskId, question, evidence, options, manual, recommended }
 }
 
 function label(taskId: string | null): string {

@@ -39,6 +39,24 @@ describe('gateFor', () => {
     expect(gate?.options.map(o => o.key)).toEqual(['retry', 'accept', 'stop'])
   })
 
+  it('says what each answer costs before it is chosen, and recommends one unless the only answer is to leave it', () => {
+    const cost = {
+      retry: { spends: true, discards: true },
+      review: { spends: true, discards: false },
+      accept: { spends: false, discards: false },
+      stop: { spends: false, discards: false },
+    }
+    for (const reason of ['empty_task', 'no_review_pass', 'stale_review_sha', 'blocked_task', 'prepr_blocked:B2', 'task_over_budget:300 lines, 7 files', 'security_high_risk', 'daily_cost_cap']) {
+      const g = gateFor(held(reason), limits, NOW)!
+      for (const option of g.options) expect(option.impact, `${reason} ${option.key}`).toEqual(cost[option.key])
+    }
+    expect(gateFor(held('empty_task'), limits, NOW)?.recommended).toBe('retry')
+    expect(gateFor(held('no_review_pass'), limits, NOW)?.recommended).toBe('review')
+    // Nothing to recommend where leaving it is the only answer: what to do is in `manual`.
+    expect(gateFor(held('task_over_budget:300 lines, 7 files'), limits, NOW)?.recommended).toBeNull()
+    expect(gateFor({ ...baseState(), killSwitch: true, supervisor: { taskId: null, reason: 'invalid_state' } }, limits, NOW)?.recommended).toBeNull()
+  })
+
   it('offers a re-review, not a redo, when the verdict is the problem', () => {
     for (const reason of ['no_review_pass', 'stale_review_sha', 'reviewer_identity_conflict']) {
       const keys = gateFor(held(reason), limits, NOW)?.options.map(o => o.key)
@@ -200,7 +218,7 @@ describe('applyAnswer', () => {
   it('refuses an answer that needs a task when the halt names none', () => {
     const corrupt: LoopState = { ...baseState(), killSwitch: true, supervisor: { taskId: null, reason: 'invalid_state' } }
     const g = gateFor(corrupt, limits, NOW)!
-    expect(() => applyAnswer(corrupt, { ...g, options: [{ key: 'retry', summary: 'x' }] }, 'retry', NOW))
+    expect(() => applyAnswer(corrupt, { ...g, options: [{ key: 'retry', summary: 'x', impact: { spends: true, discards: true } }] }, 'retry', NOW))
       .toThrow(/names none/)
   })
 })
