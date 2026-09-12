@@ -58,6 +58,20 @@ describe('the PR log', () => {
     expect(await readPrLog(linked)).toEqual([])
   })
 
+  it('drops a line with a kind and a task but not the rest of the shape, and keeps the good ones', async () => {
+    const root = await project()
+    const good = { kind: 'check', at: '2026-09-12T00:00:00Z', taskId: 'OK', head: null, status: 'passed', size: { lines: 3, files: 1, countedTopDirs: ['src'] }, rules: [], blocking: [], checker: null }
+    const bad = [
+      { kind: 'check', taskId: 'X' }, // what took the page down
+      { ...good, taskId: 'B1', status: 'maybe' },
+      { ...good, taskId: 'B2', blocking: 'SZ-1' },
+      { ...good, taskId: 'B3', size: { lines: '3', files: 1, countedTopDirs: [] } },
+      { kind: 'review', at: 'x', taskId: 'B4', head: null },
+    ]
+    await writeFile(join(root, '.devloop', 'PR-LOG.jsonl'), [good, ...bad, review('R')].map(e => JSON.stringify(e)).join('\n') + '\n', 'utf8')
+    expect((await readPrLog(root)).map(e => e.taskId)).toEqual(['OK', 'R'])
+  })
+
   it('keeps only the newest entries', async () => {
     const root = await project()
     for (let i = 0; i < 5; i += 1) await appendPrLog(root, review(`T${i}`), { error() {} })

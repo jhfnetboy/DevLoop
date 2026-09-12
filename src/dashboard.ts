@@ -10,6 +10,7 @@ import { answerGate, OperatorError, pauseLoop, resumeLoop, type OperatorFailure 
 import { actionKey } from './loop.js'
 import { devloopDir, eventsPath, goalPath, loadState, workspaceArmed } from './persist.js'
 import { PROGRESS_FILE } from './progress.js'
+import { readPrLog, type PrLogEntry } from './prlog.js'
 import {
   armProject,
   browseDirectory,
@@ -132,6 +133,8 @@ export interface ProjectDetail extends ProjectSummary {
   /** The planner's and the reviewer's last notes, kept under `.devloop/`. */
   readonly planNote: string | null
   readonly reviewNote: string | null
+  /** The newest pre-PR checks and review verdicts, for judging the PR budget trial. */
+  readonly prLog: readonly PrLogEntry[]
 }
 
 export type TaskView = Pick<Task,
@@ -147,6 +150,7 @@ export interface EventView {
 const GOAL_MAX_BYTES = 64 * 1024
 const PROGRESS_MAX_BYTES = 64 * 1024
 const NOTE_MAX_BYTES = 64 * 1024
+const PR_LOG_SHOWN = 50
 /** A record carries a whole state snapshot, so the tail is read in bytes, not lines. */
 const EVENTS_TAIL_BYTES = 512 * 1024
 const EVENTS_SHOWN = 40
@@ -246,6 +250,7 @@ async function readProject(
         docsDir: null,
         planNote: await readHead(join(devloopDir(project.root), 'PLAN.md'), NOTE_MAX_BYTES),
         reviewNote: await readHead(join(devloopDir(project.root), 'REVIEW.md'), NOTE_MAX_BYTES),
+        prLog: await readPrLog(project.root, PR_LOG_SHOWN),
       },
     }
   } catch (error) {
@@ -271,6 +276,7 @@ function emptyDetail(): Omit<ProjectDetail, keyof ProjectSummary> {
     docsDir: null,
     planNote: null,
     reviewNote: null,
+    prLog: [],
   }
 }
 
