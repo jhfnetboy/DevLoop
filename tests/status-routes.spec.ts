@@ -85,7 +85,7 @@ describe('status and cleanup routes', () => {
   })
 
   it('refuses to scan or clean up when STATE cannot be read, instead of offering task branches', async () => {
-    const { root, call } = await setup('route-badstate-')
+    const { root, call, logged } = await setup('route-badstate-')
     await git(root, 'branch', 'devloop/T1')
     await mkdir(join(root, '.devloop'))
     await writeFile(join(root, '.devloop', 'GOAL.md'), '# g\n', 'utf8')
@@ -94,6 +94,7 @@ describe('status and cleanup routes', () => {
     expect(view.status).toBe(422)
     expect(view.body).toMatch(/STATE cannot be read/)
     expect((await call('POST', '/cleanup', { branches: ['devloop/T1'] })).status).toBe(422)
+    expect(logged).toHaveLength(2) // both refusals are logged in full: the status view's and the cleanup's
     expect((await git(root, 'rev-parse', '--verify', 'refs/heads/devloop/T1')).stdout).toBeTruthy()
   })
 

@@ -222,6 +222,23 @@ both and wrote neither.
   neither replaces an existing goal nor follows a planted symlink. A goal
   changed under a running loop would leave it working through tasks planned for
   a different one, so an existing goal is edited by hand.
+- **Branch cleanup deletes only what git itself calls safe** (0.6.0,
+  `status.ts`, `cleanup.ts`, `status-routes.ts`). The 仓库状态 panel scans
+  the repository (only a root that is its own git toplevel, branches by full
+  ref so a same-named tag cannot rename them, git's environment stripped of
+  `GIT_DIR` and friends) and offers the branches merged into HEAD that nothing
+  protects: not the current branch, not a trunk, not a prefix in
+  `.pilot.yml`'s `protect_patterns` (read as a superset of pilot's ref hook,
+  always with the release/hotfix/deploy floor), not one a worktree has checked
+  out, not the branch of an unfinished task. Applying a cleanup rescans at that
+  moment and runs `git branch -d --` only for names the operator ticked **and**
+  the fresh plan still offers, so `-d`'s own refusals are the last guard; the
+  repository's hooks stay on. `-D`, remote branches and `git worktree remove`
+  are only listed with a command — never for the main checkout or the
+  project's own checkout. The state lock is held just to read which task
+  branches are live, not through the deletes, because a loop that finds it busy
+  would otherwise have to wait to save a result. An unreadable STATE refuses the
+  cleanup rather than treating every task branch as finished.
 - **Removing forgets, and deletes nothing.** A running loop must be paused
   first, so the decision to abandon its work is in its journal. The own root
   cannot be removed. `.devloop/`, worktrees and branches stay where they are.
