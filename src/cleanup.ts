@@ -42,9 +42,10 @@ export function planCleanup(status: RepoStatus): CleanupPlan {
   for (const w of status.worktrees) {
     // The primary checkout, and DevLoop's own task and plan worktrees, which
     // the loop creates and removes itself.
-    // By position, not branch: on a detached HEAD the main checkout has no
-    // branch to match, and must never be offered for `worktree remove`.
-    if (w.primary || /[/\\]\.devloop[/\\]worktrees[/\\]/.test(w.path)) continue
+    // Never the main checkout (known by position: on a detached HEAD it has no
+    // branch to match) and never the project's own checkout, which is a linked
+    // worktree when the project was registered from one — git would remove it.
+    if (w.primary || w.current || /[/\\]\.devloop[/\\]worktrees[/\\]/.test(w.path)) continue
     manual.push(w.dirty
       ? { target: w.path, reason: 'worktree 有未提交的改动，先看一眼', command: `git -C ${quote(w.path)} status` }
       : { target: w.path, reason: '干净的 worktree，不需要了可以删', command: `git worktree remove ${quote(w.path)}` })

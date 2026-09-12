@@ -23,10 +23,11 @@ describe('planning a cleanup', () => {
       { name: 'devloop/T9', merged: false, protectedBy: null },
       { name: 'devloop/a$b', merged: false, protectedBy: null },
     ], [
-      { path: '/r', branch: null, dirty: false, primary: true }, // detached: known by position, not branch
-      { path: '/r/.devloop/worktrees/T1', branch: 'devloop/T1', dirty: false, primary: false },
-      { path: '/tmp/side', branch: 'side', dirty: false, primary: false },
-      { path: '/tmp/wip', branch: 'wip', dirty: true, primary: false },
+      { path: '/r', branch: null, dirty: false, primary: true, current: false }, // detached: known by position, not branch
+      { path: '/r/.devloop/worktrees/T1', branch: 'devloop/T1', dirty: false, primary: false, current: false },
+      { path: '/here', branch: 'here', dirty: false, primary: false, current: true }, // the project's own checkout
+      { path: '/tmp/side', branch: 'side', dirty: false, primary: false, current: false },
+      { path: '/tmp/wip', branch: 'wip', dirty: true, primary: false, current: false },
     ]))
     expect(plan.delete).toEqual(['done'])
     expect(plan.keep.map(k => k.name)).toEqual(['work', 'release/1', 'open', 'devloop/T9', 'devloop/a$b'])
@@ -73,6 +74,18 @@ describe('applying a cleanup', () => {
     expect(result.deleted).toEqual([])
     expect(result.refused).toEqual([{ name: 'guarded', reason: 'git 拒绝删除这个分支' }])
     expect((await git(root, 'rev-parse', '--verify', 'refs/heads/guarded')).stdout.trim()).toMatch(/^[0-9a-f]{40}$/)
+  })
+
+  it('never offers to remove the project\'s own checkout or the main one, when the project is a linked worktree', async () => {
+    const main = await realpath(await mkdtempInRepo('cleanup-linked-'))
+    await initWorkRepo(main)
+    const linked = join(main, '..', `${main.split('/').pop()}-linked`)
+    await git(main, 'worktree', 'add', '-q', '-b', 'lw', linked)
+    await git(main, 'worktree', 'add', '-q', '-b', 'spare', `${linked}-spare`)
+    const s = await scanRepo(await realpath(linked))
+    expect(s.worktrees.map(w => [w.primary, w.current])).toEqual([[true, false], [false, true], [false, false]])
+    const removals = planCleanup(s).manual.map(m => m.command).filter(c => c.startsWith('git worktree remove'))
+    expect(removals).toEqual([`git worktree remove ${await realpath(`${linked}-spare`)}`])
   })
 
   it('deletes only with -d: a branch merged into HEAD but not into its upstream is kept', async () => {
