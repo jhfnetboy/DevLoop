@@ -74,7 +74,7 @@ browser, including from another device.
 Everything above this line is how to run it. Everything below is why it is built
 this way.
 
-## What 0.6.0 does
+## What 0.6.1 does
 
 - Advances the bounded plan → delegate → review → local merge pipeline from validated, versioned model results
 - Adds a human snapshot at `.devloop/PROGRESS.md` after each tick (including latched idle, killSwitch, and unreadable STATE)
@@ -120,7 +120,7 @@ Routing is opt-in. The safe default remains `noop`; fixed `dsh` / `claude` / `co
 
 ## Progress vs that target
 
-**0.6.0 is the current release.** It adds the operator surface: a dashboard over one loop per project. Before it, 0.3 combined the unattended scheduler,
+**0.6.1 is the current release.** It holds each task's change to a per-PR budget, judged by PR-daemon's own pre-PR rules, and logs every check for tuning. 0.6.0 added the operator surface: a dashboard over one loop per project. Before it, 0.3 combined the unattended scheduler,
 role-aware one-shot dispatch, host-enforced task boundaries, SHA-bound review,
 durable recovery, and human-readable progress snapshots; 0.4 makes a halt
 answerable, runs the operator's own checks before a reviewer is paid, and stops
@@ -223,7 +223,7 @@ In routed mode, plan / delegate / review use independent configured routes. Merg
 
 The goal is: expensive models plan and review, cheap models implement, a program loop keeps the factory inside budget.
 
-| Goal slice | 0.6.0 |
+| Goal slice | 0.6.1 |
 |---|---|
 | DSH plugin, not a new runtime | Yes. Bundle + Cordis Service. |
 | Program loop, one transition per tick | Yes. Pure `decideNextAction` plus `runTick`, driven by `setInterval`. |
@@ -318,12 +318,12 @@ Git installs run `prepare` → `pnpm build`, so the published entry is `lib/`.
 
 ## Install into DSH
 
-Pinned GitHub tag (needs git tag `v0.6.0`; until then `github:jhfnetboy/DevLoop`). Git install runs `prepare` → `pnpm build`. pnpm ≥10 may ignore that build and still exit 0 — if it prints `Ignored build scripts`, approve `@jhfnetboy/dsh-devloop` (`onlyBuiltDependencies` on pnpm 10.1–10.25, `allowBuilds` on ≥10.26, or `pnpm approve-builds`) and re-run `add` (not `pnpm rebuild`), even when `add` succeeded:
+Pinned GitHub tag (needs git tag `v0.6.1`; until then `github:jhfnetboy/DevLoop`). Git install runs `prepare` → `pnpm build`. pnpm ≥10 may ignore that build and still exit 0 — if it prints `Ignored build scripts`, approve `@jhfnetboy/dsh-devloop` (`onlyBuiltDependencies` on pnpm 10.1–10.25, `allowBuilds` on ≥10.26, or `pnpm approve-builds`) and re-run `add` (not `pnpm rebuild`), even when `add` succeeded:
 
 Quote the spec: zsh treats `#` as a glob (`no matches found`).
 
 ```bash
-dsh plugin --profile web add 'github:jhfnetboy/DevLoop#v0.6.0'
+dsh plugin --profile web add 'github:jhfnetboy/DevLoop#v0.6.1'
 ```
 
 From this checkout (after `pnpm build`):
@@ -555,6 +555,37 @@ never chooses what the host executes.**
 The trade is stated rather than hidden. Running the project's tests runs code the
 worker wrote, so this is off by default; switching it on is the same trust as
 typing those commands yourself after reading the diff.
+
+## Pre-PR check
+
+Each task's change can be put through PR-daemon's
+mechanical pre-PR rules — the per-PR size budget among them — after the
+acceptance checks and before any reviewer is paid.
+
+```yaml
+- id: devloop
+  config:
+    prePrCheck: [bash, ~/Dev/tools/PR-daemon/scripts/pre-pr-check.sh]
+    prePrProfile: devloop      # the default
+    prePrTimeoutMinutes: 5     # the default
+```
+
+DevLoop knows only the checker's contract (argv, exit codes, JSON), never a
+rule: the rules live in the PR-daemon repository, so `git -C ~/Dev/tools/PR-daemon
+pull --ff-only` changes them for every loop without a DevLoop release.
+
+- **Passed** — reviewed. A change in the elastic band (in the `devloop` profile,
+  201–260 lines, 6 files or 3 counted top-level directories) is reviewed with
+  its size in front of the reviewer, who judges whether it should have been split.
+- **Blocked on size alone** — held as `task_over_budget`; the answer is to redo
+  the task smaller from its base.
+- **Blocked by another rule** — held as `prepr_blocked:<rules>`.
+- **No verdict** (a timeout, a missing checker, output that is not the JSON) —
+  held as `prepr_unavailable`, never a pass.
+
+Every check and review verdict is a line in `.devloop/PR-LOG.jsonl` (size,
+band, the planner's estimate, rules hit, rules version), shown on the project
+page as PR 记录. Off by default: unset, nothing changes.
 
 ## Unsticking a halted loop
 
