@@ -50,6 +50,7 @@ export function headlessPrompt(input: AgentRunInput): string {
       `Allowed paths: ${input.contract.allowedPaths.join(', ')}.`,
       `Forbidden: ${input.contract.forbidden.join(', ')}.`,
       `Acceptance: ${input.contract.acceptance.join('; ')}.`,
+      'Keep the change within one reviewable pull request: at most 200 changed lines, 5 files and 2 top-level directories (tests and docs do not count toward directories); a larger change is refused before review.',
       'Read .devloop/CONTRACT.json. Do not modify .devloop/.',
       resultInstructions('implementation', input.contract.taskId),
     ].join(' ')
