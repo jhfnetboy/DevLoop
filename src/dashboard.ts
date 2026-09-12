@@ -86,6 +86,8 @@ export interface DashboardDeps {
 export interface DashboardAssets {
   readonly html: string
   readonly js: string
+  /** The page's strings in each language; loaded before `js`. */
+  readonly i18n: string
   readonly css: string
 }
 
@@ -439,6 +441,7 @@ export function createDashboardHandler(deps: DashboardDeps): (req: IncomingMessa
     }
     if (path === `${DASHBOARD_PATH}/`) return send(res, req, 200, 'text/html; charset=utf-8', deps.assets.html)
     if (path === `${DASHBOARD_PATH}/app.js`) return send(res, req, 200, 'text/javascript; charset=utf-8', deps.assets.js)
+    if (path === `${DASHBOARD_PATH}/i18n.js`) return send(res, req, 200, 'text/javascript; charset=utf-8', deps.assets.i18n)
     if (path === `${DASHBOARD_PATH}/app.css`) return send(res, req, 200, 'text/css; charset=utf-8', deps.assets.css)
 
     try {
@@ -722,15 +725,16 @@ export function dashboardAssetsDir(): string {
 }
 
 export async function loadDashboardAssets(dir = dashboardAssetsDir()): Promise<DashboardAssets> {
-  const [html, js, css, version] = await Promise.all([
+  const [html, js, i18n, css, version] = await Promise.all([
     readFile(join(dir, 'index.html'), 'utf8'),
     readFile(join(dir, 'app.js'), 'utf8'),
+    readFile(join(dir, 'i18n.js'), 'utf8'),
     readFile(join(dir, 'app.css'), 'utf8'),
     packageVersion(join(dir, '..', 'package.json')),
   ])
   // Stamped once at load, so the page names the release that is actually
   // installed — the one `dsh plugin add` put there — without another request.
-  return { html: html.replaceAll(VERSION_PLACEHOLDER, escapeHtml(version)), js, css }
+  return { html: html.replaceAll(VERSION_PLACEHOLDER, escapeHtml(version)), js, i18n, css }
 }
 
 const VERSION_PLACEHOLDER = '%DEVLOOP_VERSION%'
