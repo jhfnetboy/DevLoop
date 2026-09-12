@@ -184,7 +184,7 @@ describe('dashboard projects', () => {
       makeTask({ id: 't2', status: 'review_pending', title: 'second' }),
     ])
     const first = await saveState(root, state, { action: 'plan' })
-    await saveState(root, {
+    const held = await saveState(root, {
       ...first,
       killSwitch: true,
       supervisor: { taskId: 't2', reason: 'empty_task' },
@@ -198,9 +198,11 @@ describe('dashboard projects', () => {
       loop: string, armed: boolean, halted: boolean, question: string | null,
       tasks: Array<{ id: string, status: string, planner?: string, implementer?: string, reviewer?: string }>, taskCounts: Record<string, number>,
       gate: { options: Array<{ key: string }> } | null, goal: string,
-      events: Array<Record<string, unknown>>,
+      events: Array<Record<string, unknown>>, lane: string, since: string | null,
     }
     expect(detail.loop).toBe('stopped')
+    // A halt asks for the operator: the home page's first column, aged from when it stopped.
+    expect(detail).toMatchObject({ lane: 'needs_you', since: held.updatedAt })
     expect(detail.armed).toBe(true)
     expect(detail.halted).toBe(true)
     expect(detail.goal).toBe('# Ship the thing\n')
