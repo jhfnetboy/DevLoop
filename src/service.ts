@@ -17,6 +17,7 @@ import { ConfigSchema, resolveConfig, type Config } from './config.js'
 import { ClaudeCliBackend, CodexCliBackend } from './cli.js'
 import { runAcceptanceChecks } from './acceptance.js'
 import { blockedOnlyBySize, runPreprCheck } from './prepr.js'
+import { appendPrLog, checkEntry } from './prlog.js'
 import { ForgePrBackend } from './forge.js'
 import { DshHeadlessBackend } from './dsh.js'
 import { CordisHarnessHost, HarnessSubagentBackend } from './harness.js'
@@ -402,6 +403,8 @@ export class ProjectLoop {
                   const check = typeof base !== 'string' || base === ''
                     ? null
                     : await runPreprCheck(this.config.prePrCheck, this.config.prePrProfile, outcome.value.worktreeRoot, base, this.config.prePrTimeoutMinutes * 60_000)
+                  // Logged whatever it said, before any hold: the budget is to be judged on these lines.
+                  if (check !== null) await appendPrLog(this.config.root, checkEntry(action.taskId, implementationSha ?? null, check, Date.now()), this.ctx.logger)
                   if (check === null || check.status === 'unavailable') throw new Error(`prepr_unavailable: ${check?.detail ?? 'the task has no base commit'}`)
                   if (check.status === 'blocked') {
                     const rules = [...new Set(check.findings.filter(f => f.severity === 'block').map(f => f.rule))].join(',')
@@ -447,6 +450,12 @@ export class ProjectLoop {
                   implementationSha,
                   this.ctx.logger,
                 )
+                if (action.type === 'review' && agentOutcome.kind === 'review') {
+                  await appendPrLog(this.config.root, {
+                    kind: 'review', at: new Date().toISOString(), taskId: action.taskId,
+                    head: agentOutcome.reviewedSha, verdict: agentOutcome.verdict, reviewer: dispatched.agent ?? null,
+                  }, this.ctx.logger)
+                }
               } catch (error) {
                 this.ctx.logger.error('[dsh-devloop] result transition failed', error)
                 await persistAgentHold(

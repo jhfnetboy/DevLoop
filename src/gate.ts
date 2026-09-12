@@ -183,10 +183,11 @@ const KNOWN_GATES: Record<KnownReasonBase, (ctx: GateContext) => Gate> = {
   // Size alone: a bigger diff is not fixed by running the same task again; it is
   // split. No `review` answer — an over-budget change is never handed to review.
   task_over_budget: ({ reason, taskId }) =>
-    gate(reason, taskId, 'This change is too big for one reviewable PR. Split the task, or redo it?', [
+    // No `retry` either: a redo reuses the worktree and its base, so the same diff is measured again.
+    gate(reason, taskId, 'This change is too big for one reviewable PR. Split the task?', [
       `${label(taskId)} is over the PR budget: ${reason.slice('task_over_budget:'.length).trim()}`,
-      'the budget is PR-daemon\'s: at most 200 changed lines, 5 files, 2 top-level directories',
-    ], [RETRY, STOP], `Split it into smaller tasks in .devloop/PLAN.md, then: devloop resume --task ${taskId ?? '<id>'}`),
+      'the budget is the configured pre-PR profile\'s (devloop: 200 changed lines, 5 files, 2 top-level directories)',
+    ], [STOP], `Split it into smaller tasks in .devloop/PLAN.md, then: devloop resume --task ${taskId ?? '<id>'}`),
 
   prepr_blocked: ({ reason, taskId }) =>
     gate(reason, taskId, 'PR-daemon\'s pre-PR rules refused this change. Redo it, or leave it?', [
@@ -195,7 +196,7 @@ const KNOWN_GATES: Record<KnownReasonBase, (ctx: GateContext) => Gate> = {
     ], [RETRY, STOP], 'Run pre-pr-check.sh --base <task base> --repo .devloop/worktrees/<task> to see each finding.'),
 
   prepr_unavailable: ({ reason, taskId }) =>
-    gate(reason, taskId, 'The pre-PR checker gave no verdict, so the change was not offered for review. Fix the checker, then redo?', [
+    gate(reason, taskId, 'The pre-PR checker gave no verdict, so the change was not offered for review. Fix the checker, then redo the task (the worker runs, and is paid, again)?', [
       `checking ${label(taskId)} failed: ${reason.slice('prepr_unavailable:'.length).trim()}`,
       'no verdict is never taken as a pass',
     ], [RETRY, STOP], 'Run the checker with --selftest; update it with git -C ~/Dev/tools/PR-daemon pull --ff-only.'),
