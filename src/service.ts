@@ -295,7 +295,9 @@ export class ProjectLoop {
             }
           } catch (error) {
             this.ctx.logger.error('[dsh-devloop] merge failed', error)
-            const reason = mergeHoldReason(error)
+            // On the forge an error nothing here names (gh exiting, timing out, missing) holds too:
+            // retried blindly, an expired login or a refusing forge would spin without an operator ever asked.
+            const reason = mergeHoldReason(error) ?? (mergesOnForge(this.config) ? 'merge_wedged' : null)
             if (reason) {
               result = {
                 ...result,

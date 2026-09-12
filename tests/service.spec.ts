@@ -1646,7 +1646,13 @@ describe('merging on the forge', () => {
   })
 
   it('holds for a review again when the approval is gone, and as a wedged merge for any other forge refusal', async () => {
-    for (const [message, reason] of [['forge_review_gone: pull request 7 is no longer approved', 'no_review_pass'], ['forge_pr: pull request 7 no longer targets work', 'merge_wedged']] as const) {
+    for (const [message, reason] of [
+      ['forge_review_gone: pull request 7 is no longer approved', 'no_review_pass'],
+      ['forge_pr: pull request 7 no longer targets work', 'merge_wedged'],
+      // What gh itself throws carries no prefix: an expired login, a missing binary, a timeout.
+      ['Command failed: gh pr merge 7 (exit 1)', 'merge_wedged'],
+      ['backend timeout', 'merge_wedged'],
+    ] as const) {
       const { root } = await merged()
       forgeMergers.create = () => ({ async mergeTask() { throw new Error(message) } })
       await forgeService(root).tick()
