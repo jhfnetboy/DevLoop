@@ -129,29 +129,102 @@ export function readinessRefusal(readiness: Readiness): string | null {
   return failing.length === 0 ? null : failing.map(check => check.message).join(' ')
 }
 
-interface PilotConfig {
+export interface PilotConfig {
   readonly baseBranch: string | null
   readonly docsDir: string | null
   readonly planningSource: string | null
+  /** Branch-name prefixes never deleted; always includes pilot's floor. */
+  readonly protectPatterns: readonly string[]
+  /** Entries of protect_patterns that protect nothing, with why. */
+  readonly protectDropped: readonly ProtectDrop[]
 }
 
 /**
- * The three scalar keys this needs, by line. Not a YAML parser, the same as
- * pilot's own scripts: a value that is not a plain token is ignored rather than
- * guessed at.
+ * pilot's floor: a config can only add to it, never remove from it — a file
+ * that is present, parses, and merely lacks a line must not protect less than
+ * no file at all.
  */
-export function parsePilotConfig(text: string): PilotConfig {
+export const PROTECT_FLOOR: readonly string[] = ['release', 'hotfix', 'deploy']
+
+/**
+ * The scalar keys this needs, by line, and `protect_patterns` (see
+ * `protectList`). Not a YAML parser, the same as pilot's own scripts: a scalar
+ * that is not a plain token is ignored rather than guessed at. CRLF files read
+ * the same as LF ones.
+ */
+export function parsePilotConfig(source: string): PilotConfig {
+  const text = source.replace(/\r/g, '')
   const scalar = (key: string): string | null => {
     const match = new RegExp(`^${key}:[ \\t]*([^\\s#'"]+)[ \\t]*(?:#.*)?$`, 'm').exec(text)
     return match?.[1] ?? null
   }
   const branch = scalar('base_branch')
   const docs = scalar('docs_dir')
+  const protect = protectList(text)
   return {
     baseBranch: branch !== null && /^[A-Za-z0-9._/-]+$/.test(branch) ? branch : null,
     docsDir: docs !== null && safeRelative(docs) ? normalize(docs).replace(/[/\\]+$/, '') : null,
     planningSource: scalar('planning_source'),
+    protectPatterns: [...new Set([...PROTECT_FLOOR, ...protect.items])],
+    protectDropped: protect.dropped,
   }
+}
+
+/**
+ * A deny-list, so reading less than pilot's ref hook would protect less than
+ * the hook does. This reads a superset of what the hook's awk reads: CRLF is
+ * normalized; inside a block list, blank and comment lines are skipped and a
+ * `- x` item counts at any indentation; only a new top-level key ends the list;
+ * items are cleaned as the hook cleans them. What is still not a branch name is
+ * returned, not silently dropped.
+ */
+function protectList(text: string): { items: string[], dropped: ProtectDrop[] } {
+  const lines = text.replace(/\r/g, '').split('\n')
+  const at = lines.findIndex(line => line.startsWith('protect_patterns:'))
+  const raw: string[] = []
+  if (at >= 0) {
+    const rest = (lines[at] ?? '').slice('protect_patterns:'.length)
+    const flow = /^[ \t]*\[([^\]]*)\]/.exec(rest)
+    if (flow) raw.push(...(flow[1] ?? '').split(','))
+    else {
+      for (const line of lines.slice(at + 1)) {
+        const item = /^[ \t]*-(.*)$/.exec(line)
+        if (item) raw.push(item[1] ?? '')
+        else if (/^[^ \t#]/.test(line)) break
+      }
+    }
+  }
+  const items: string[] = []
+  const dropped: ProtectDrop[] = []
+  for (const entry of raw) {
+    const item = entry.replace(/\s*#.*$/, '').trim().replace(/^["']/, '').replace(/["']$/, '')
+    if (item === '') continue
+    if (isBranchName(item)) items.push(item)
+    else dropped.push({ item, reason: /[*?[]/.test(item) ? '通配符不起作用：保护按字面前缀匹配' : '不是合法的分支名' })
+  }
+  return { items, dropped }
+}
+
+export interface ProtectDrop {
+  readonly item: string
+  readonly reason: string
+}
+
+/** `git check-ref-format --branch`'s rules, which admit non-ASCII and `+`. */
+function isBranchName(name: string): boolean {
+  if (name.startsWith('-') || name.endsWith('/') || name.endsWith('.') || name === '@') return false
+  if (/[\x00-\x20\x7f~^:?*[\\]/.test(name) || name.includes('..') || name.includes('@{') || name.includes('//')) return false
+  return name.split('/').every(part => part !== '' && !part.startsWith('.') && !part.endsWith('.lock'))
+}
+
+/**
+ * The protected prefixes for a repository: `.pilot.yml`'s list unioned with the
+ * floor, or the floor alone when there is no file (or it is unreadable). The
+ * one place the union is made, so no caller can build a list without the floor.
+ */
+export async function protectedPrefixes(root: string): Promise<{ readonly patterns: readonly string[], readonly dropped: readonly ProtectDrop[] }> {
+  const pilot = await readPilotConfig(root)
+  return { patterns: pilot?.protectPatterns ?? PROTECT_FLOOR, dropped: pilot?.protectDropped ?? [] }
 }
 
 function safeRelative(path: string): boolean {

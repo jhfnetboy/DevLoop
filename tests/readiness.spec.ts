@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { describe, expect, it } from 'vitest'
 import { headlessPrompt, PLAN_CONTEXT } from '../src/dsh.ts'
-import { inspectReadiness, parsePilotConfig, readinessRefusal } from '../src/readiness.ts'
+import { inspectReadiness, parsePilotConfig, protectedPrefixes, readinessRefusal } from '../src/readiness.ts'
 import { initGitRepo, mkdtempInRepo } from './helpers.ts'
 
 const execFileAsync = promisify(execFile)
@@ -148,7 +148,7 @@ describe('readiness to start a loop', () => {
 describe('parsePilotConfig', () => {
   it('reads plain scalars and refuses anything it would have to guess at', () => {
     expect(parsePilotConfig('base_branch: main\nintegration_branch: main\ndocs_dir: docs/agent\n')).toEqual({
-      baseBranch: 'main', docsDir: 'docs/agent', planningSource: null,
+      baseBranch: 'main', docsDir: 'docs/agent', planningSource: null, protectPatterns: ['release', 'hotfix', 'deploy'], protectDropped: [],
     })
     expect(parsePilotConfig('base_branch: "main"\n').baseBranch).toBeNull()
     expect(parsePilotConfig('base_branch: main;rm\n').baseBranch).toBeNull()
@@ -164,5 +164,45 @@ describe('the planner prompt', () => {
     expect(prompt).toContain(PLAN_CONTEXT)
     for (const name of ['AGENTS.md', 'CLAUDE.md', '.pilot.yml', 'tasks.md', 'roadmap.md']) expect(prompt).toContain(name)
     expect(prompt).toContain('GOAL.md wins')
+  })
+})
+
+describe('protect_patterns', () => {
+  const floor = ['release', 'hotfix', 'deploy']
+  const read = (text: string) => parsePilotConfig(text).protectPatterns
+
+  it('reads the flow form, and keeps the floor however few a file names', () => {
+    expect(read('protect_patterns: [release, "hotfix", ops]\n')).toEqual([...floor, 'ops'])
+    expect(read('protect_patterns: [release]\n')).toEqual(floor)
+    expect(read('')).toEqual(floor)
+  })
+
+  // Each row is a form pilot's ref hook reads; DevLoop must read at least as much.
+  it.each([
+    ['a blank line inside the list', 'protect_patterns:\n  - staging\n\n  - qa\nremote: origin\n'],
+    ['a comment line inside the list', 'protect_patterns:\n  - staging\n  # reviewed weekly\n  - qa\n'],
+    ['CRLF line endings', 'protect_patterns:\r\n  - staging\r\n  - qa\r\n'],
+    ['items at column 0', 'protect_patterns:\n- staging\n- qa\nremote: origin\n'],
+    ['a trailing comment on the key and on items', 'protect_patterns:   # extra\n  - staging # keep\n  - qa\n'],
+  ])('reads %s', (_form, text) => {
+    expect(read(text)).toEqual([...floor, 'staging', 'qa'])
+  })
+
+  it('keeps names git accepts, non-ASCII and + included, and stops at the next key', () => {
+    expect(read('protect_patterns:\n  - 发布\n  - feat+x\nnext:\n  - not-protect\n')).toEqual([...floor, '发布', 'feat+x'])
+  })
+
+  it('reports what it cannot use instead of dropping it silently', () => {
+    const config = parsePilotConfig('protect_patterns:\n  - "qa/*"\n  - bad..name\n  - ok\n')
+    expect(config.protectPatterns).toEqual([...floor, 'ok'])
+    expect(config.protectDropped).toEqual([
+      { item: 'qa/*', reason: '通配符不起作用：保护按字面前缀匹配' },
+      { item: 'bad..name', reason: '不是合法的分支名' },
+    ])
+  })
+
+  it('applies the floor when a repository has no .pilot.yml at all', async () => {
+    const root = await repoOn('work', 'ready-noprotect-')
+    expect(await protectedPrefixes(root)).toEqual({ patterns: floor, dropped: [] })
   })
 })
