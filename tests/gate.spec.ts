@@ -153,8 +153,11 @@ describe('applyAnswer', () => {
   })
 
   it('marks the task done only when the operator says it needed no change', () => {
-    const state = held('empty_task', { lastReviewVerdict: 'PASS' })
-    expect(applyAnswer(state, gate('empty_task'), 'accept', NOW).tasks[0]?.status).toBe('done')
+    const state = held('empty_task', { lastReviewVerdict: 'PASS', reviewNotes: 'Split the parser out.' })
+    const accepted = applyAnswer(state, gate('empty_task'), 'accept', NOW).tasks[0]
+    expect(accepted?.status).toBe('done')
+    // Done is done: no attempt follows to use a review's requests.
+    expect(accepted?.reviewNotes).toBeUndefined()
     // accept is offered nowhere else, so no other halt can reach that status.
     for (const reason of ['no_review_pass', 'scope_violation', 'blocked_task', 'max_task_attempts:A']) {
       expect(gate(reason).options.map(o => o.key), reason).not.toContain('accept')
