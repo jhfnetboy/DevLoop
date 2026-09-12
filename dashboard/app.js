@@ -118,13 +118,38 @@ function countPills(counts) {
     .map(s => badge(`${(STATUS[s] || [s])[0]} ${counts[s]}`, (STATUS[s] || [])[1], true))
 }
 
+// The home page's columns, in the order a person should look at them.
+const LANES = [
+  ['needs_you', '等你处理', '卡住了，或者没人在跑它：要你看一眼才会动。'],
+  ['running', '进行中', '循环在自己跑，不用管。'],
+  ['idle', '闲置', '还没启动、已暂停，或你选择了先不处理。'],
+  ['done', '已完成', '目标做完了。'],
+]
+
+const DOING = { plan: '正在规划任务', delegate: '正在实现', review: '正在评审', merge: '正在合并' }
+
+// One sentence: what happens next, or what it is waiting for. The question itself, when there is one.
+function nextStep(p) {
+  if (p.error) return null
+  if (p.lane === 'needs_you') return p.question ? null : '循环没在运行：重启 dsh web，或检查这个项目的配置。'
+  if (!p.armed) return '还没启动：进去写下目标，点启动。'
+  if (p.lane === 'done') return '目标已完成。新需求建议作为新项目添加。'
+  if (p.paused) return '已暂停：进去点「恢复循环」继续。'
+  if (p.lane === 'idle') return '你选择了先不处理这次停机：进去可以随时恢复。'
+  const [verb, task] = String(p.lastAction || '').split(':')
+  return DOING[verb] ? `${DOING[verb]}${task ? ` ${task}` : ''}。` : '等下一轮。'
+}
+
 function projectCard(p) {
   const total = Object.values(p.taskCounts || {}).reduce((a, b) => a + b, 0)
+  const next = nextStep(p)
   return el('a', { class: 'card', href: `#/p/${p.id}` },
     el('h2', {}, p.name, p.own ? el('span', { class: 'muted' }, ' · 本进程') : null),
     el('div', { class: 'path' }, p.root),
     el('div', { class: 'row' }, loopBadges(p)),
+    next ? el('div', { class: 'next' }, next) : null,
     p.question ? el('div', { class: 'question' }, p.question) : null,
+    p.since && p.lane !== 'running' && ago(p.since) ? el('div', { class: 'muted since' }, p.lane === 'done' ? `${ago(p.since)}完成` : `已等 ${ago(p.since).replace(/前$/, '')}`) : null,
     p.error ? el('div', { class: 'question' }, p.error) : null,
     total ? el('div', { class: 'row' }, countPills(p.taskCounts)) : null,
     p.armed ? el('div', { class: 'kv' },
@@ -143,10 +168,20 @@ function renderHome(value) {
       `所有项目今日合计花费 ${usd(g.costUsdDay)}，已达到共享上限 ${usd(g.cap)}：各循环都在等待，UTC 零点后自动继续。`))
   }
   if (value.registryError) parts.push(el('div', { class: 'banner' }, `项目注册表有问题：${value.registryError}`))
-  parts.push(guidePanel())
-  parts.push(addProjectPanel())
-  if (!value.projects.length) parts.push(el('div', { class: 'empty' }, '还没有项目。点上面的「浏览仓库…」选一个 git 仓库来添加。'))
-  parts.push(el('div', { class: 'grid' }, value.projects.map(projectCard)))
+  // What needs the operator comes first; the guide and the picker move below once there is anything to show.
+  const setup = [guidePanel(), addProjectPanel()]
+  if (!value.projects.length) {
+    parts.push(...setup, el('div', { class: 'empty' }, '还没有项目。点上面的「浏览仓库…」选一个 git 仓库来添加。'))
+  }
+  for (const [lane, title, hint] of LANES) {
+    const here = value.projects.filter(p => (p.lane || 'running') === lane)
+    if (!here.length) continue
+    parts.push(el('section', { class: `lane lane-${lane}` },
+      el('h2', {}, title, el('span', { class: 'count' }, String(here.length))),
+      el('p', { class: 'muted' }, hint),
+      el('div', { class: 'grid' }, here.map(projectCard))))
+  }
+  if (value.projects.length) parts.push(...setup)
   if (g) {
     parts.push(el('p', { class: 'note' }, `今日合计花费 ${usd(g.costUsdDay)}`,
       g.cap !== null ? ` / 共享上限 ${usd(g.cap)}` : '（只有一个项目时，由它自己的每日上限管）',

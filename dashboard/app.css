@@ -37,6 +37,13 @@ a.card:hover { text-decoration: none; border-color: var(--accent); }
 .card h2 { margin: 0 0 2px; font-size: 16px; }
 .path { color: var(--muted); font-family: var(--mono); font-size: 11.5px; overflow-wrap: anywhere; }
 .row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 10px; }
+.lane { margin-top: 22px; }
+.lane > h2 { font-size: 15px; margin: 0 0 2px; display: flex; align-items: center; gap: 8px; }
+.lane > h2 .count { font-size: 12px; font-weight: 600; min-width: 20px; padding: 0 6px; border-radius: 10px; background: var(--line); text-align: center; }
+.lane-needs_you > h2 .count { background: var(--warn-bg); color: var(--warn); }
+.lane > p.muted { margin: 0 0 10px; font-size: 13px; }
+.card .next { margin-top: 10px; font-weight: 500; }
+.card .since { margin-top: 6px; font-size: 12px; }
 .question { margin-top: 10px; padding: 8px 10px; border-left: 3px solid var(--warn); background: var(--warn-bg); border-radius: 0 6px 6px 0; }
 .kv { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 10px; color: var(--muted); font-size: 12.5px; }
 .kv b { color: var(--ink); font-weight: 600; }
