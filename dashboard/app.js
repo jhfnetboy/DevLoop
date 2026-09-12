@@ -642,19 +642,19 @@ async function loadRepo(id) {
 
 function repoPanel(p) {
   const entry = repoViews.get(p.id)
-  if (!entry) { void loadRepo(p.id); return el('section', { class: 'panel' }, el('h3', {}, '仓库状态'), el('p', { class: 'muted' }, '读取中…')) }
-  const recheck = el('button', { type: 'button', class: 'btn' }, entry.loading ? '读取中…' : '重新检查')
+  if (!entry) { void loadRepo(p.id); return el('section', { class: 'panel' }, el('h3', {}, t('repo.title')), el('p', { class: 'muted' }, t('add.reading'))) }
+  const recheck = el('button', { type: 'button', class: 'btn' }, entry.loading ? t('add.reading') : t('start.recheck'))
   recheck.disabled = entry.loading
   recheck.addEventListener('click', () => void loadRepo(p.id))
   if (entry.error || !entry.view) {
-    return el('section', { class: 'panel' }, el('h3', {}, '仓库状态'), el('div', { class: 'banner bad' }, entry.error || '还没有结果'), recheck)
+    return el('section', { class: 'panel' }, el('h3', {}, t('repo.title')), el('div', { class: 'banner bad' }, entry.error || t('repo.noResult')), recheck)
   }
   const { status, plan } = entry.view
   const summary = el('div', { class: 'kv' },
-    el('span', {}, '当前分支 ', el('b', {}, status.branch || '（游离）')),
-    el('span', {}, '主干 ', el('b', {}, status.base)),
-    status.ahead !== null ? el('span', {}, '领先 / 落后主干 ', el('b', {}, `${status.ahead} / ${status.behind}`)) : null,
-    el('span', {}, '未提交改动 ', el('b', {}, String(status.trackedChanges))))
+    el('span', {}, t('repo.branch'), el('b', {}, status.branch || t('repo.detached'))),
+    el('span', {}, t('repo.trunk'), el('b', {}, status.base)),
+    status.ahead !== null ? el('span', {}, t('repo.aheadBehind'), el('b', {}, `${status.ahead} / ${status.behind}`)) : null,
+    el('span', {}, t('repo.uncommitted'), el('b', {}, String(status.trackedChanges))))
   const boxes = plan.delete.map((name) => {
     const box = el('input', { type: 'checkbox' })
     box.checked = entry.selected.has(name)
@@ -662,69 +662,72 @@ function repoPanel(p) {
     return el('label', { class: 'branch-row' }, box, el('span', { class: 'mono' }, name))
   })
   const chosen = () => plan.delete.filter(name => entry.selected.has(name))
-  const del = actionButton('删除选中的分支', 'primary',
-    '用 git branch -d 删除选中的已合并分支？git 会拒绝任何没合并或正被检出的分支；仓库里的提交不会丢。',
+  const del = actionButton(t('repo.delete'), 'primary',
+    t('repo.deleteConfirm'),
     async () => {
       const names = chosen()
-      if (!names.length) throw new Error('没有选中任何分支')
+      if (!names.length) throw new Error(t('repo.noneSelected'))
       const result = await postJson(`${API}/projects/${p.id}/cleanup`, { branches: names })
       void loadRepo(p.id)
-      const refused = result.refused.map(r => `${r.name}（${r.reason}）`).join('、')
-      return { text: `已删除 ${result.deleted.length} 个分支${result.deleted.length ? `：${result.deleted.join('、')}` : ''}。${refused ? `没有删：${refused}` : ''}` }
+      const refused = result.refused.map(r => t('repo.refusedOne', { name: r.name, reason: r.reason })).join(t('repo.listSep'))
+      const deleted = result.deleted.length ? t('repo.deletedNames', { n: result.deleted.length, names: result.deleted.join(t('repo.listSep')) }) : t('repo.deletedNone')
+      return { text: refused ? `${deleted} ${t('repo.refused', { list: refused })}` : deleted }
     })
   del.disabled = plan.delete.length === 0
   // A deny-list entry that silently protects nothing is exactly what must be said out loud.
   const dropped = status.protectDropped && status.protectDropped.length
-    ? el('div', { class: 'banner' }, '.pilot.yml 的 protect_patterns 里有项不起作用：',
-      status.protectDropped.map((d, i) => [i ? '；' : '', el('code', {}, d.item), `（${d.reason}）`]).flat())
+    ? el('div', { class: 'banner' }, t('repo.protectDropped'),
+      status.protectDropped.map((d, i) => [i ? t('impact.sep') : '', el('code', {}, d.item), t('repo.paren', { text: d.reason })]).flat())
     : null
   return el('section', { class: 'panel repo' },
-    el('h3', {}, '仓库状态'),
+    el('h3', {}, t('repo.title')),
     summary,
     dropped,
-    el('h4', {}, `可以删除的已合并分支（${plan.delete.length}）`),
-    plan.delete.length ? el('div', { class: 'branch-list' }, boxes) : el('p', { class: 'muted' }, '没有：已合并的分支都清理过了。'),
+    el('h4', {}, t('repo.deletable', { n: plan.delete.length })),
+    plan.delete.length ? el('div', { class: 'branch-list' }, boxes) : el('p', { class: 'muted' }, t('repo.nothingToDelete')),
     el('div', { class: 'actions' }, del, recheck),
-    plan.manual.length ? el('details', {}, el('summary', {}, `需要你手动处理（${plan.manual.length}）`),
-      el('ul', { class: 'plain' }, plan.manual.map(m => el('li', {}, m.reason, '：', el('code', {}, m.command))))) : null,
-    el('details', {}, el('summary', {}, `保留的分支（${plan.keep.length}）`),
+    plan.manual.length ? el('details', {}, el('summary', {}, t('repo.manual', { n: plan.manual.length })),
+      el('ul', { class: 'plain' }, plan.manual.map(m => el('li', {}, m.reason, t('repo.colon'), el('code', {}, m.command))))) : null,
+    el('details', {}, el('summary', {}, t('repo.kept', { n: plan.keep.length })),
       el('ul', { class: 'plain' }, plan.keep.map(k => el('li', {}, el('span', { class: 'mono' }, k.name), ' — ', k.reason)))),
-    el('p', { class: 'note' }, '只会执行 git branch -d，只处理本地分支。强制删除、删 worktree 只列出命令，由你决定；远程分支不在这里处理（建议在 GitHub 开启合并后自动删除分支）。'))
+    el('p', { class: 'note' }, t('repo.note')))
 }
 
 // The pre-PR checks and review verdicts, newest first: the data the PR budget
 // trial is to be judged on. Everything in it came from a checker or a model, so
 // it is placed as text, like every other field here.
-const CHECK_LABEL = { passed: ['通过', 'ok'], blocked: ['拦下', 'bad'], unavailable: ['无结论', 'warn'] }
+const CHECK_TONE = { passed: 'ok', blocked: 'bad', unavailable: 'warn' }
 
 // Normal needs no mark: the budget is only worth pointing at where it was stretched or broken.
-const BAND_LABEL = { elastic: ['弹性', 'warn'], over: ['超限', 'bad'] }
+const BAND_TONE = { elastic: 'warn', over: 'bad' }
 
 function prLogPanel(p) {
   const entries = (p.prLog || []).slice().reverse()
   if (!entries.length) {
-    return el('section', { class: 'panel' }, el('h3', {}, 'PR 记录'),
-      el('p', { class: 'muted' }, '还没有记录。配置了 pre-PR 检查器后，每个任务的检查结果和评审结论都会记在这里（.devloop/PR-LOG.jsonl）。'))
+    return el('section', { class: 'panel' }, el('h3', {}, t('prlog.title')),
+      el('p', { class: 'muted' }, t('prlog.none')))
   }
   const rows = entries.map((e) => {
-    const [label, tone] = e.kind === 'check' ? (CHECK_LABEL[e.status] || [e.status, '']) : [`评审 ${e.verdict}`, e.verdict === 'PASS' || e.verdict === 'PASS_WITH_NOTES' ? 'ok' : 'warn']
+    const [label, tone] = e.kind === 'check'
+      ? (e.status in CHECK_TONE ? [t(`prlog.${e.status}`), CHECK_TONE[e.status]] : [e.status, ''])
+      : [t('prlog.review', { verdict: e.verdict }), e.verdict === 'PASS' || e.verdict === 'PASS_WITH_NOTES' ? 'ok' : 'warn']
     return el('tr', {},
       el('td', { class: 'mono' }, time(e.at)),
       el('td', { class: 'mono' }, e.taskId),
       el('td', {}, badge(label, tone, true)),
-      el('td', { class: 'num' }, e.kind === 'check' && e.size ? `${e.size.lines} 行 / ${e.size.files} 文件` : '—',
-        e.kind === 'check' && BAND_LABEL[e.band] ? [' ', badge(...BAND_LABEL[e.band], true)] : null,
-        e.kind === 'check' && e.estimate ? el('div', { class: 'muted' }, `预估 ${e.estimate.lines} 行 / ${e.estimate.files} 文件`) : null),
+      el('td', { class: 'num' }, e.kind === 'check' && e.size ? t('prlog.size', { lines: e.size.lines, files: e.size.files }) : '—',
+        e.kind === 'check' && e.band in BAND_TONE ? [' ', badge(t(`prlog.${e.band}`), BAND_TONE[e.band], true)] : null,
+        e.kind === 'check' && e.estimate ? el('div', { class: 'muted' }, t('prlog.estimate', { lines: e.estimate.lines, files: e.estimate.files })) : null),
       el('td', { class: 'mono' }, e.kind === 'check' ? (e.blocking.length ? e.blocking.join(' ') : e.rules.join(' ') || '—') : (e.reviewer || '—')),
       el('td', { class: 'mono' }, e.kind === 'check' && e.checker ? `${e.checker.rulesVersion || '?'}${e.checker.dirty ? '*' : ''}` : ''),
       el('td', { class: 'mono' }, e.head ? e.head.slice(0, 7) : ''))
   })
   return el('section', { class: 'panel' },
-    el('h3', {}, `PR 记录（最近 ${entries.length} 条）`),
+    el('h3', {}, t('prlog.count', { n: entries.length })),
     el('div', { class: 'table-wrap' }, el('table', {},
-      el('thead', {}, el('tr', {}, ['时间', '任务', '结果', '大小', '规则 / 评审者', '规则版本', '提交'].map(h => el('th', {}, h)))),
+      el('thead', {}, el('tr', {}, ['time', 'task', 'result', 'size', 'rules', 'version', 'commit'].map(h => el('th', {}, t(`prlog.col.${h}`))))),
       el('tbody', {}, rows))),
-    el('p', { class: 'note' }, '上限（试行）：每个 PR ≤200 行、≤5 个文件、≤2 个顶层目录；略超（弹性）照常评审，评审会被告知超了多少、判断该不该拆；超出更多（超限）打回重拆。拦下时标出的是阻断规则，否则是提示规则；规则版本带 * 表示检查器有未提交的改动。'))
+    el('p', { class: 'note' }, t('prlog.note')))
 }
 
 function renderProject(p) {
