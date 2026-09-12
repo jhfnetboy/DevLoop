@@ -573,6 +573,81 @@ function guidePanel() {
   return details
 }
 
+// ---- repository status --------------------------------------------------------
+//
+// Scanned once when a project is opened and on 重新检查, not every 5 s: it runs
+// several git commands. Kept here, like the picker, so a refresh rebuild keeps
+// the result and the operator's checkbox choices.
+
+const repoViews = new Map()
+
+async function loadRepo(id) {
+  const entry = repoViews.get(id) || { selected: null }
+  repoViews.set(id, { ...entry, loading: true, error: null })
+  try {
+    const view = await getJson(`${API}/projects/${id}/status`)
+    // Default: every branch the plan offers is ticked; ones the operator untick stay unticked.
+    const previous = entry.selected
+    const selected = new Set(view.plan.delete.filter(name => !previous || previous.has(name) || !entry.view || !entry.view.plan.delete.includes(name)))
+    repoViews.set(id, { view, selected, loading: false, error: null })
+  } catch (error) {
+    repoViews.set(id, { ...entry, loading: false, error: error.message })
+  }
+  void load(true)
+}
+
+function repoPanel(p) {
+  const entry = repoViews.get(p.id)
+  if (!entry) { void loadRepo(p.id); return el('section', { class: 'panel' }, el('h3', {}, '仓库状态'), el('p', { class: 'muted' }, '读取中…')) }
+  const recheck = el('button', { type: 'button', class: 'btn' }, entry.loading ? '读取中…' : '重新检查')
+  recheck.disabled = entry.loading
+  recheck.addEventListener('click', () => void loadRepo(p.id))
+  if (entry.error || !entry.view) {
+    return el('section', { class: 'panel' }, el('h3', {}, '仓库状态'), el('div', { class: 'banner bad' }, entry.error || '还没有结果'), recheck)
+  }
+  const { status, plan } = entry.view
+  const summary = el('div', { class: 'kv' },
+    el('span', {}, '当前分支 ', el('b', {}, status.branch || '（游离）')),
+    el('span', {}, '主干 ', el('b', {}, status.base)),
+    status.ahead !== null ? el('span', {}, '领先 / 落后主干 ', el('b', {}, `${status.ahead} / ${status.behind}`)) : null,
+    el('span', {}, '未提交改动 ', el('b', {}, String(status.trackedChanges))))
+  const boxes = plan.delete.map((name) => {
+    const box = el('input', { type: 'checkbox' })
+    box.checked = entry.selected.has(name)
+    box.addEventListener('change', () => { box.checked ? entry.selected.add(name) : entry.selected.delete(name) })
+    return el('label', { class: 'branch-row' }, box, el('span', { class: 'mono' }, name))
+  })
+  const chosen = () => plan.delete.filter(name => entry.selected.has(name))
+  const del = actionButton('删除选中的分支', 'primary',
+    '用 git branch -d 删除选中的已合并分支？git 会拒绝任何没合并或正被检出的分支；仓库里的提交不会丢。',
+    async () => {
+      const names = chosen()
+      if (!names.length) throw new Error('没有选中任何分支')
+      const result = await postJson(`${API}/projects/${p.id}/cleanup`, { branches: names })
+      void loadRepo(p.id)
+      const refused = result.refused.map(r => `${r.name}（${r.reason}）`).join('、')
+      return { text: `已删除 ${result.deleted.length} 个分支${result.deleted.length ? `：${result.deleted.join('、')}` : ''}。${refused ? `没有删：${refused}` : ''}` }
+    })
+  del.disabled = plan.delete.length === 0
+  // A deny-list entry that silently protects nothing is exactly what must be said out loud.
+  const dropped = status.protectDropped && status.protectDropped.length
+    ? el('div', { class: 'banner' }, '.pilot.yml 的 protect_patterns 里有项不起作用：',
+      status.protectDropped.map((d, i) => [i ? '；' : '', el('code', {}, d.item), `（${d.reason}）`]).flat())
+    : null
+  return el('section', { class: 'panel repo' },
+    el('h3', {}, '仓库状态'),
+    summary,
+    dropped,
+    el('h4', {}, `可以删除的已合并分支（${plan.delete.length}）`),
+    plan.delete.length ? el('div', { class: 'branch-list' }, boxes) : el('p', { class: 'muted' }, '没有：已合并的分支都清理过了。'),
+    el('div', { class: 'actions' }, del, recheck),
+    plan.manual.length ? el('details', {}, el('summary', {}, `需要你手动处理（${plan.manual.length}）`),
+      el('ul', { class: 'plain' }, plan.manual.map(m => el('li', {}, m.reason, '：', el('code', {}, m.command))))) : null,
+    el('details', {}, el('summary', {}, `保留的分支（${plan.keep.length}）`),
+      el('ul', { class: 'plain' }, plan.keep.map(k => el('li', {}, el('span', { class: 'mono' }, k.name), ' — ', k.reason)))),
+    el('p', { class: 'note' }, '只会执行 git branch -d。强制删除、删远程分支、删 worktree 都只列出命令，由你决定。'))
+}
+
 function renderProject(p) {
   const canPause = p.armed && !p.halted && !p.error
   const head = el('div', { class: 'head' },
@@ -586,9 +661,9 @@ function renderProject(p) {
     removeButton(p))
   const sub = el('div', { class: 'path' }, p.root)
   if (p.error) return [back(), head, sub, el('div', { class: 'banner bad' }, p.error)]
-  if (!p.armed) return [back(), head, sub, flashNode(), startPanel(p), docsPanel(p)]
+  if (!p.armed) return [back(), head, sub, flashNode(), startPanel(p), repoPanel(p), docsPanel(p)]
   const main = [gatePanel(p), haltPanel(p), tasksPanel(p), docsPanel(p)]
-  const side = [budgetPanel(p), eventsPanel(p)]
+  const side = [budgetPanel(p), repoPanel(p), eventsPanel(p)]
   return [back(), head, sub, flashNode(),
     el('div', { class: 'kv' },
       el('span', {}, '最近动作 ', el('b', {}, p.lastAction || '—')),
@@ -711,6 +786,6 @@ function start() {
   timer = setInterval(() => { if (!document.hidden) void load() }, REFRESH_MS)
 }
 
-window.addEventListener('hashchange', () => { flash = null; closePicker(); window.scrollTo(0, 0); clearInterval(timer); void load(true); timer = setInterval(() => { if (!document.hidden) void load() }, REFRESH_MS) })
+window.addEventListener('hashchange', () => { flash = null; closePicker(); repoViews.clear(); window.scrollTo(0, 0); clearInterval(timer); void load(true); timer = setInterval(() => { if (!document.hidden) void load() }, REFRESH_MS) })
 document.addEventListener('visibilitychange', () => { if (!document.hidden) void load() })
 start()
