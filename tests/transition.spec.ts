@@ -11,12 +11,14 @@ describe('agent result transitions', () => {
       kind: 'plan',
       tasks: [{
         id: 'T-1', title: 'Do it', tier: 'T1', risk: 'low',
-        allowedPaths: ['src/**'], acceptance: ['tests pass'],
+        allowedPaths: ['src/**'], acceptance: ['tests pass'], estimate: { lines: 120, files: 3 },
       }],
     }, { agent: 'codex/planner' })
     // The planner is recorded on every task it created, beside implementer and
     // reviewer, so all three roles of a routed run can be read back from STATE.
     expect(next.tasks[0]).toMatchObject({ id: 'T-1', status: 'ready', attempts: 0, planner: 'codex/planner' })
+    // The planner's estimate reaches the task, where the PR log reads it beside the checker's count.
+    expect(next.tasks[0]?.estimate).toEqual({ lines: 120, files: 3 })
   })
 
   it('moves a completed implementation to SHA-bound review', () => {

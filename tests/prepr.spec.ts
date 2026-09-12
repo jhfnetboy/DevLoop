@@ -131,6 +131,15 @@ describe.skipIf(!existsSync(REAL))('against the installed PR-daemon checker', ()
     // The default profile only notes size: over, and still a pass.
     expect(await runPreprCheck(['bash', REAL], 'default', root, base, 60_000)).toMatchObject({ status: 'passed', band: 'over' })
 
+    // Inside the elastic band: a pass, the size noted rather than blocked.
+    await git(root, 'reset', '-q', '--hard', 'HEAD~1')
+    await writeFile(join(root, 'mid.ts'), Array.from({ length: 230 }, (_, i) => `export const m${i} = ${i}`).join('\n') + '\n', 'utf8')
+    await git(root, 'add', '.')
+    await git(root, 'commit', '-q', '-m', 'mid')
+    const mid = await runPreprCheck(['bash', REAL], 'devloop', root, base, 60_000)
+    expect(mid).toMatchObject({ status: 'passed', band: 'elastic', limits: { max_lines: 200, elastic_lines: 260 } })
+    expect(mid.findings.filter(f => f.rule === 'SZ-1').map(f => f.severity)).toEqual(['review'])
+
     // A small change that brings a CI file along: refused by SZ-4 whatever its size, and not as over budget.
     const mixed = await mkdtemp(join(tmpdir(), 'prepr-real-'))
     await git(mixed, 'init', '-q', '-b', 'main')
