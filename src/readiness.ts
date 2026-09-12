@@ -209,13 +209,17 @@ function protectList(text: string): { items: string[], dropped: ProtectDrop[] } 
     const item = entry.replace(/\s*#.*$/, '').trim().replace(/^["']/, '').replace(/["']$/, '')
     if (item === '') continue
     if (isBranchName(item)) items.push(item)
-    else dropped.push({ item, reason: /[*?[]/.test(item) ? '通配符不起作用：保护按字面前缀匹配' : '不是合法的分支名' })
+    else dropped.push(/[*?[]/.test(item)
+      ? { item, code: 'glob', reason: '通配符不起作用：保护按字面前缀匹配' }
+      : { item, code: 'invalid', reason: '不是合法的分支名' })
   }
   return { items, dropped }
 }
 
 export interface ProtectDrop {
   readonly item: string
+  /** `glob` or `invalid`, for a page to say in its reader's language; `reason` is the server's own words. */
+  readonly code: 'glob' | 'invalid'
   readonly reason: string
 }
 

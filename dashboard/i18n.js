@@ -302,4 +302,8 @@ const STRINGS = {
   'cleanup.notMerged': ['git refused: the branch is not fully merged', 'git 拒绝：分支没有完全合并', 'git ปฏิเสธ: สาขายังรวมไม่ครบ'],
   'cleanup.checkedOut': ['git refused: the branch is checked out by a worktree', 'git 拒绝：分支被某个 worktree 检出', 'git ปฏิเสธ: สาขาถูกเช็กเอาต์โดย worktree'],
   'cleanup.gitRefused': ['git refused to delete this branch', 'git 拒绝删除这个分支', 'git ปฏิเสธการลบสาขานี้'],
+
+  // Why a .pilot.yml protect_patterns entry has no effect (src/readiness.ts).
+  'protect.glob': ['wildcards have no effect: protection matches a literal prefix', '通配符不起作用：保护按字面前缀匹配', 'ไวลด์การ์ดไม่มีผล: การป้องกันจับคู่คำนำหน้าตามตัวอักษร'],
+  'protect.invalid': ['not a valid branch name', '不是合法的分支名', 'ไม่ใช่ชื่อสาขาที่ถูกต้อง'],
 }

@@ -683,7 +683,7 @@ function repoPanel(p) {
   // A deny-list entry that silently protects nothing is exactly what must be said out loud.
   const dropped = status.protectDropped && status.protectDropped.length
     ? el('div', { class: 'banner' }, t('repo.protectDropped'),
-      status.protectDropped.map((d, i) => [i ? t('impact.sep') : '', el('code', {}, d.item), t('repo.paren', { text: d.reason })]).flat())
+      status.protectDropped.map((d, i) => [i ? t('impact.sep') : '', el('code', {}, d.item), t('repo.paren', { text: serverText('protect', d.code, {}, d.reason) })]).flat())
     : null
   return el('section', { class: 'panel repo' },
     el('h3', {}, t('repo.title')),
