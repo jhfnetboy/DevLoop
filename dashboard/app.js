@@ -53,7 +53,8 @@ function time(iso) {
 
 function ago(iso) {
   if (!iso) return ''
-  const s = Math.round((Date.now() - new Date(iso).getTime()) / 1000)
+  // Clamped: a clock a little ahead of this one would otherwise read as "-3 秒前".
+  const s = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000))
   if (!Number.isFinite(s)) return ''
   if (s < 60) return `${s} 秒前`
   if (s < 3600) return `${Math.round(s / 60)} 分钟前`
@@ -174,7 +175,8 @@ function renderHome(value) {
     parts.push(...setup, el('div', { class: 'empty' }, '还没有项目。点上面的「浏览仓库…」选一个 git 仓库来添加。'))
   }
   for (const [lane, title, hint] of LANES) {
-    const here = value.projects.filter(p => (p.lane || 'running') === lane)
+    // A lane this page does not know (a newer server) is shown with the running ones rather than dropped.
+    const here = value.projects.filter(p => (LANES.some(([known]) => known === p.lane) ? p.lane : 'running') === lane)
     if (!here.length) continue
     parts.push(el('section', { class: `lane lane-${lane}` },
       el('h2', {}, title, el('span', { class: 'count' }, String(here.length))),
@@ -345,20 +347,40 @@ function removeButton(p) {
     })
 }
 
+// What an answer costs, in the words a person decides in. Empty for a server that does not say.
+function impactText(o) {
+  if (!o.impact) return ''
+  if (!o.impact.spends && !o.impact.discards) return '不花钱，不动已有的改动'
+  return [o.impact.spends ? '会再调用一次模型，产生费用' : '不花钱', o.impact.discards ? '丢弃这次的改动，从头再做' : '保留已有的改动'].join('；')
+}
+
+function answerRow(p, o, tone) {
+  const label = ANSWER_LABEL[o.key] || o.key
+  const impact = impactText(o)
+  return el('div', { class: 'option' },
+    actionButton(label, tone, `回答「${label}」：${impact || o.summary}。继续？`,
+      () => postJson(`${API}/projects/${p.id}/answer`, { revision: p.revision, choice: o.key })),
+    el('span', {}, impact ? el('b', {}, impact) : null, impact ? el('br') : null, el('span', { class: 'muted' }, el('code', {}, o.key), ' ', o.summary)))
+}
+
+// One primary answer, with its cost said up front; the rest folded away. A gate
+// whose only answer is to leave it leads with what the person has to do instead.
 function gatePanel(p) {
   const g = p.gate
   if (!g) return null
+  const options = g.options || []
+  const primary = options.find(o => o.key === g.recommended) || null
+  const rest = options.filter(o => o !== primary)
   return el('section', { class: 'panel gate' },
     el('h3', {}, '等你回答'),
     el('p', { class: 'q' }, g.question),
     g.evidence && g.evidence.length ? el('ul', { class: 'plain' }, g.evidence.map(e => el('li', {}, e))) : null,
-    g.options && g.options.length ? el('div', { class: 'options' },
-      g.options.map(o => el('div', { class: 'option' },
-        actionButton(ANSWER_LABEL[o.key] || o.key, o.key === 'stop' ? '' : 'primary',
-          `回答「${ANSWER_LABEL[o.key] || o.key}」：${o.summary}`,
-          () => postJson(`${API}/projects/${p.id}/answer`, { revision: p.revision, choice: o.key })),
-        el('span', {}, el('code', {}, o.key), ' ', o.summary)))) : null,
-    g.manual ? el('p', { class: 'note' }, g.manual) : null,
+    !primary && g.manual ? el('div', { class: 'manual' }, el('b', {}, '要你做的事：'), g.manual) : null,
+    primary ? el('div', { class: 'options' }, answerRow(p, primary, 'primary')) : null,
+    rest.length ? (primary
+      ? el('details', { class: 'more' }, el('summary', {}, `其他选项（${rest.length}）`), el('div', { class: 'options' }, rest.map(o => answerRow(p, o, ''))))
+      : el('div', { class: 'options' }, rest.map(o => answerRow(p, o, '')))) : null,
+    primary && g.manual ? el('p', { class: 'note' }, g.manual) : null,
   )
 }
 
