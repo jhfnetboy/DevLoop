@@ -24,11 +24,21 @@ export interface PreprResult {
   readonly status: 'passed' | 'blocked' | 'unavailable'
   readonly findings: readonly PreprFinding[]
   readonly size: { readonly lines: number, readonly files: number, readonly countedTopDirs: readonly string[] } | null
+  /**
+   * Where the size falls against the budget: `elastic` is over the budget but
+   * reviewable, `over` is refused. Null when the checker could not say.
+   */
+  readonly band: SizeBand | null
+  /** The budget the checker applied (`max_lines`, `elastic_lines`, …), when it names it. */
+  readonly limits: Readonly<Record<string, number>> | null
   /** Which rules judged this change, for the PR log. */
   readonly checker: { readonly rulesVersion: string | null, readonly gitSha: string | null, readonly dirty: boolean | null } | null
   /** Why the checker could not say, when it could not. */
   readonly detail: string | null
 }
+
+export type SizeBand = 'normal' | 'elastic' | 'over'
+const BANDS = new Set<string>(['normal', 'elastic', 'over'])
 
 const MAX_FINDINGS = 200
 const MAX_TEXT = 500
@@ -57,7 +67,11 @@ export async function runPreprCheck(
   const blocks = parsed.findings.filter(f => f.severity === 'block')
   if (run.code === 1 && blocks.length === 0) return unavailable('checker exited 1 without a blocking finding')
   if (run.code === 0 && blocks.length > 0) return unavailable('checker exited 0 with a blocking finding')
-  return { ...parsed, status: run.code === 1 ? 'blocked' : 'passed', detail: null }
+  // A checker older than the band says only whether a size rule blocked.
+  const sizeBlocked = blocks.some(f => f.rule.startsWith('SZ-'))
+  const band = parsed.band ?? (sizeBlocked ? 'over' : 'normal')
+  if ((band === 'over') !== sizeBlocked) return unavailable(`checker put the size in the ${band} band but ${sizeBlocked ? 'blocked' : 'did not block'} it`)
+  return { ...parsed, band, status: run.code === 1 ? 'blocked' : 'passed', detail: null }
 }
 
 /** True when every blocking finding is a size rule: splitting the task, not fixing it, is the answer. */
@@ -67,7 +81,7 @@ export function blockedOnlyBySize(result: PreprResult): boolean {
 }
 
 function unavailable(detail: string): PreprResult {
-  return { status: 'unavailable', findings: [], size: null, checker: null, detail }
+  return { status: 'unavailable', findings: [], size: null, band: null, limits: null, checker: null, detail }
 }
 
 function expandHome(part: string): string {
@@ -118,13 +132,15 @@ function parseOutput(stdout: string): Omit<PreprResult, 'status' | 'detail'> | n
     }]
   })
   const findings = [...parsed.filter(f => f.severity === 'block'), ...parsed.filter(f => f.severity !== 'block')].slice(0, MAX_FINDINGS)
-  const size = raw.size as { lines?: unknown, files?: unknown, counted_top_dirs?: unknown } | undefined
+  const size = raw.size as { lines?: unknown, files?: unknown, counted_top_dirs?: unknown, band?: unknown, limits?: unknown } | undefined
   const checker = raw.checker as { rules_version?: unknown, git_sha?: unknown, dirty?: unknown } | undefined
   return {
     findings,
     size: size && typeof size.lines === 'number' && typeof size.files === 'number'
       ? { lines: size.lines, files: size.files, countedTopDirs: Array.isArray(size.counted_top_dirs) ? size.counted_top_dirs.filter((d): d is string => typeof d === 'string') : [] }
       : null,
+    band: typeof size?.band === 'string' && BANDS.has(size.band) ? size.band as SizeBand : null,
+    limits: limitsOf(size?.limits),
     checker: checker
       ? {
           rulesVersion: typeof checker.rules_version === 'string' ? checker.rules_version : null,
@@ -133,4 +149,10 @@ function parseOutput(stdout: string): Omit<PreprResult, 'status' | 'detail'> | n
         }
       : null,
   }
+}
+
+function limitsOf(value: unknown): Readonly<Record<string, number>> | null {
+  if (typeof value !== 'object' || value === null) return null
+  const entries = Object.entries(value).filter(([key, n]) => /^[a-z_]{1,32}$/.test(key) && typeof n === 'number' && Number.isFinite(n))
+  return entries.length > 0 ? Object.fromEntries(entries.slice(0, 16)) : null
 }

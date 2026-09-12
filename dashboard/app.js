@@ -653,6 +653,9 @@ function repoPanel(p) {
 // it is placed as text, like every other field here.
 const CHECK_LABEL = { passed: ['通过', 'ok'], blocked: ['拦下', 'bad'], unavailable: ['无结论', 'warn'] }
 
+// Normal needs no mark: the budget is only worth pointing at where it was stretched or broken.
+const BAND_LABEL = { elastic: ['弹性', 'warn'], over: ['超限', 'bad'] }
+
 function prLogPanel(p) {
   const entries = (p.prLog || []).slice().reverse()
   if (!entries.length) {
@@ -665,7 +668,8 @@ function prLogPanel(p) {
       el('td', { class: 'mono' }, time(e.at)),
       el('td', { class: 'mono' }, e.taskId),
       el('td', {}, badge(label, tone, true)),
-      el('td', { class: 'num' }, e.kind === 'check' && e.size ? `${e.size.lines} 行 / ${e.size.files} 文件` : '—'),
+      el('td', { class: 'num' }, e.kind === 'check' && e.size ? `${e.size.lines} 行 / ${e.size.files} 文件` : '—',
+        e.kind === 'check' && BAND_LABEL[e.band] ? [' ', badge(...BAND_LABEL[e.band], true)] : null),
       el('td', { class: 'mono' }, e.kind === 'check' ? (e.blocking.length ? e.blocking.join(' ') : e.rules.join(' ') || '—') : (e.reviewer || '—')),
       el('td', { class: 'mono' }, e.kind === 'check' && e.checker ? `${e.checker.rulesVersion || '?'}${e.checker.dirty ? '*' : ''}` : ''),
       el('td', { class: 'mono' }, e.head ? e.head.slice(0, 7) : ''))
@@ -675,7 +679,7 @@ function prLogPanel(p) {
     el('div', { class: 'table-wrap' }, el('table', {},
       el('thead', {}, el('tr', {}, ['时间', '任务', '结果', '大小', '规则 / 评审者', '规则版本', '提交'].map(h => el('th', {}, h)))),
       el('tbody', {}, rows))),
-    el('p', { class: 'note' }, '上限（试行）：每个 PR ≤200 行、≤5 个文件、≤2 个顶层目录。拦下时标出的是阻断规则，否则是提示规则；规则版本带 * 表示检查器有未提交的改动。'))
+    el('p', { class: 'note' }, '上限（试行）：每个 PR ≤200 行、≤5 个文件、≤2 个顶层目录；略超（弹性）照常评审并在这里标出，超出更多（超限）打回重拆。拦下时标出的是阻断规则，否则是提示规则；规则版本带 * 表示检查器有未提交的改动。'))
 }
 
 function renderProject(p) {

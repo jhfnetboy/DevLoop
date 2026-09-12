@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { appendPrLog, readPrLog } from '../src/prlog.ts'
+import { appendPrLog, checkEntry, readPrLog } from '../src/prlog.ts'
 
 const review = (taskId: string) => ({ kind: 'review' as const, at: '2026-09-12T00:00:00Z', taskId, head: null, verdict: 'PASS', reviewer: null })
 
@@ -69,9 +69,15 @@ describe('the PR log', () => {
       { kind: 'review', at: 'x', taskId: 'B4', head: null },
       { ...good, taskId: 'B5', head: 7 }, // the page slices head
       { ...good, taskId: 'B6', at: undefined },
+      { ...good, taskId: 'B7', band: 'huge' },
     ]
-    await writeFile(join(root, '.devloop', 'PR-LOG.jsonl'), [good, ...bad, review('R')].map(e => JSON.stringify(e)).join('\n') + '\n', 'utf8')
-    expect((await readPrLog(root)).map(e => e.taskId)).toEqual(['OK', 'R'])
+    await writeFile(join(root, '.devloop', 'PR-LOG.jsonl'), [good, ...bad, { ...good, taskId: 'E', band: 'elastic' }, review('R')].map(e => JSON.stringify(e)).join('\n') + '\n', 'utf8')
+    expect((await readPrLog(root)).map(e => e.taskId)).toEqual(['OK', 'E', 'R'])
+  })
+
+  it('records the size band of a check, so the budget can be judged on how often it was stretched', () => {
+    const result = { status: 'passed', findings: [{ rule: 'SZ-1', file: null, line: null, message: '', severity: 'review' }], size: { lines: 230, files: 4, countedTopDirs: ['src'] }, band: 'elastic', limits: null, checker: null, detail: null } as const
+    expect(checkEntry('T1', null, result, 0)).toMatchObject({ kind: 'check', band: 'elastic', rules: ['SZ-1'], blocking: [] })
   })
 
   it('keeps only the newest entries', async () => {

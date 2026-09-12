@@ -17,9 +17,9 @@ setTimeout(() => { process.stdout.write(${JSON.stringify(out)}); process.exit(${
   return { argv: ['node', script], seen }
 }
 
-const json = (findings: object[]) => JSON.stringify({
+const json = (findings: object[], size: object = {}) => JSON.stringify({
   checker: { rules_version: '1.1.0', git_sha: 'abc', dirty: false },
-  size: { lines: 12, files: 2, counted_top_dirs: ['src'] },
+  size: { lines: 12, files: 2, counted_top_dirs: ['src'], ...size },
   findings,
 })
 const block = (rule: string) => ({ rule, file: null, line: null, message: `${rule} hit`, severity: 'block' })
@@ -56,6 +56,19 @@ describe('running the pre-PR checker', () => {
     expect(blockedOnlyBySize(clean)).toBe(false)
   })
 
+  it('takes the size band and budget from the checker, and works the band out from the blocks when an older checker gives none', async () => {
+    const limits = { max_lines: 200, elastic_lines: 260, max_files: 5, elastic_files: 6 }
+    const elastic = await runPreprCheck((await fakeChecker(json([review('SZ-1')], { band: 'elastic', limits: { ...limits, note: 'x' } }), 0)).argv, 'devloop', tmpdir(), 'b', 5_000)
+    expect(elastic).toMatchObject({ status: 'passed', band: 'elastic', limits })
+    const over = await runPreprCheck((await fakeChecker(json([block('SZ-1')], { band: 'over' }), 1)).argv, 'devloop', tmpdir(), 'b', 5_000)
+    expect(over).toMatchObject({ status: 'blocked', band: 'over', limits: null })
+
+    const old = async (findings: object[], code: number) => (await runPreprCheck((await fakeChecker(json(findings), code)).argv, 'devloop', tmpdir(), 'b', 5_000)).band
+    expect(await old([block('SZ-2')], 1)).toBe('over')
+    expect(await old([block('B2')], 1)).toBe('normal')
+    expect(await old([review('B1')], 0)).toBe('normal')
+  })
+
   // Anything the checker cannot vouch for is unavailable, never a pass.
   it.each([
     ['exit 2 (usage or git error)', json([]), 2],
@@ -63,6 +76,8 @@ describe('running the pre-PR checker', () => {
     ['exit 0 with a blocking finding', json([block('B2')]), 0],
     ['output that is not JSON', 'Traceback (most recent call last)', 0],
     ['JSON without findings', JSON.stringify({ checker: {} }), 0],
+    ['an over band that did not block', json([review('SZ-1')], { band: 'over' }), 0],
+    ['an elastic band with a size block', json([block('SZ-1')], { band: 'elastic' }), 1],
   ])('reports %s as unavailable', async (_case, out, code) => {
     const result = await runPreprCheck((await fakeChecker(out, code)).argv, 'devloop', tmpdir(), 'b', 5_000)
     expect(result.status).toBe('unavailable')
@@ -102,6 +117,7 @@ describe.skipIf(!existsSync(REAL))('against the installed PR-daemon checker', ()
     const big = await runPreprCheck(['bash', REAL], 'devloop', root, base, 60_000)
     expect(big.status).toBe('blocked')
     expect(blockedOnlyBySize(big)).toBe(true)
+    expect(big.band).toBe('over')
     expect(big.checker?.rulesVersion).toMatch(/^\d+\.\d+\.\d+$/)
   })
 })

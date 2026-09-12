@@ -20,6 +20,8 @@ export type PrLogEntry =
       readonly head: string | null
       readonly status: PreprResult['status']
       readonly size: PreprResult['size']
+      /** Absent on lines written before the band existed. */
+      readonly band?: PreprResult['band']
       readonly rules: readonly string[]
       readonly blocking: readonly string[]
       readonly checker: PreprResult['checker']
@@ -44,6 +46,7 @@ export function checkEntry(taskId: string, head: string | null, result: PreprRes
     head,
     status: result.status,
     size: result.size,
+    band: result.band,
     rules: [...new Set(result.findings.map(f => f.rule))],
     blocking: [...new Set(result.findings.filter(f => f.severity === 'block').map(f => f.rule))],
     checker: result.checker,
@@ -97,6 +100,7 @@ export async function readPrLog(root: string, limit = 100): Promise<PrLogEntry[]
 }
 
 const STATUSES = new Set(['passed', 'blocked', 'unavailable'])
+const BANDS = new Set(['normal', 'elastic', 'over'])
 const text = (v: unknown): v is string => typeof v === 'string'
 const texts = (v: unknown): v is string[] => Array.isArray(v) && v.every(text)
 const nullableText = (v: unknown): v is string | null => v === null || text(v)
@@ -114,6 +118,7 @@ function asEntry(value: unknown): PrLogEntry | null {
     return text(v.verdict) && nullableText(v.reviewer) ? v as unknown as PrLogEntry : null
   }
   if (v.kind !== 'check' || !text(v.status) || !STATUSES.has(v.status) || !texts(v.rules) || !texts(v.blocking)) return null
+  if (v.band !== undefined && v.band !== null && !BANDS.has(v.band as string)) return null
   const size = v.size as Record<string, unknown> | null
   if (size !== null && (typeof size !== 'object' || typeof size.lines !== 'number' || typeof size.files !== 'number' || !texts(size.countedTopDirs))) return null
   const checker = v.checker as Record<string, unknown> | null
