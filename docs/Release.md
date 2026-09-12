@@ -1,8 +1,43 @@
-# Release 0.6.2
+# Release 0.6.3
 
-Bounded autonomous engineering loop: structured model results, deterministic state transitions, host-enforced write scope, SHA-bound independent review, durable recovery, and role/tier routing. Tag `v0.6.2` and the GitHub Release are created **after** this commit is on `main`; steps: [Deploy.md](./Deploy.md).
+Bounded autonomous engineering loop: structured model results, deterministic state transitions, host-enforced write scope, SHA-bound independent review, durable recovery, and role/tier routing. Tag `v0.6.3` and the GitHub Release are created **after** this commit is on `main`; steps: [Deploy.md](./Deploy.md).
 
-Package version: **0.6.2**. This document is the release note, not a second semver.
+Package version: **0.6.3**. This document is the release note, not a second semver.
+
+## New in 0.6.3
+
+The page speaks English, Chinese and Thai. A switch at the top right
+(EN · 中 · ไทย) changes every word the page draws, in place, and is
+remembered on that browser; **English is the default**.
+
+- **The page's own words** ([#77](https://github.com/jhfnetboy/DevLoop/pull/77)–[#82](https://github.com/jhfnetboy/DevLoop/pull/82)).
+  `dashboard/i18n.js` holds each string as `[English, 中文, ไทย]`, served at
+  `/devloop/i18n.js` behind the page's authentication. Headers, the home
+  lanes, cards, the start panel, the gate and halt panels, tasks, budget,
+  events, documents, the guide, repository status and the PR record all go
+  through it; times use the reader's locale (Thai dates show the Buddhist
+  year). A missing translation falls back to English and an unknown key
+  shows as itself.
+- **What the server says, by code** ([#83](https://github.com/jhfnetboy/DevLoop/pull/83)–[#90](https://github.com/jhfnetboy/DevLoop/pull/90)).
+  Readiness checks, cleanup reasons, protect_patterns warnings, every gate's
+  question, evidence and steps, and the halt reasons now carry a stable code
+  and the values their sentence uses; the page says them in the reader's
+  language and falls back to the server's own words for a code it does not
+  know. The CLI and the server's messages are unchanged.
+- **Tests keep it whole.** Every key the page asks for, every code the server
+  can send and every gate family in `gate.ts` must have all three languages;
+  a key defined twice fails the suite.
+- Fix: a saved language is taken only when it is one of the three by own
+  property (a stored `constructor` used to break every date on the page).
+
+Not translated, on purpose: what models and people wrote (task titles,
+GOAL.md, planning documents) and raw identifiers (reason codes, commands,
+branch names).
+
+New fields: readiness `code`/`params`, cleanup `code`, `ProtectDrop.code`,
+gate `key`/`vars`, halt `details` (`haltDetails` on a project). No config or
+STATE change. 0.6.x numbers follow the release plan rather than strict
+semver.
 
 ## New in 0.6.2
 
@@ -365,4 +400,4 @@ Host-side checks (`dsh plugin add`, `--dump-config`) are listed in [UserCaseTest
 - Token/cost melt the circuit only when the backend fills `AgentRunResult`; otherwise the loop uses wall-clock `lastProgressAt`. Session cost resets after the first successful STATE persist of this process; daily cost resets at UTC midnight.
 - The automated E2E uses a scripted provider, and the release candidate also completed a real-provider plan → implement → exact-SHA review → merge run without operator state edits.
 - The operator UI is the dashboard; it sees only the spend backends report, and cannot edit an existing goal.
-- npm registry: `@jhfnetboy/dsh-devloop@0.6.2` is published. GitHub and the Release tarball remain supported. See [Install.md](./Install.md).
+- npm registry: `@jhfnetboy/dsh-devloop@0.6.3` is published. GitHub and the Release tarball remain supported. See [Install.md](./Install.md).
