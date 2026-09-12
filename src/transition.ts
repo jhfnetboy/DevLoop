@@ -65,6 +65,7 @@ function applyImplementation(
     implementer: options.agent,
     lastReviewVerdict: undefined,
     reviewer: undefined,
+    reviewNotes: undefined,
   }))
 }
 
@@ -95,6 +96,8 @@ function applyReview(
     reviewCycles: state.usage.reviewCycles[taskId] ?? entry.reviewCycles,
     lastReviewVerdict: result.verdict,
     reviewer: options.agent,
+    // Only a request for rework is instructions; a pass's notes are commentary, and nothing follows a replan or a block here.
+    reviewNotes: result.verdict === 'REWORK' && result.notes ? result.notes : undefined,
   }))
   if (result.verdict !== 'REPLAN') return next
   return {

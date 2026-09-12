@@ -51,6 +51,25 @@ describe('agent result transitions', () => {
     expect(small.tasks[0]?.overBudget).toBeUndefined()
   })
 
+  it('keeps a request for rework\'s notes for the next attempt, and drops them once that attempt is handed in', () => {
+    const sha = 'a'.repeat(40)
+    const reviewing = {
+      ...emptyState(0),
+      tasks: [makeTask({ id: 'T-1', status: 'review_pending', implementationSha: sha, implementer: 'dsh/flash' })],
+      lastAction: { type: 'review' as const, taskId: 'T-1' },
+    }
+    const review = (verdict: 'REWORK' | 'PASS_WITH_NOTES', notes?: string) => applyAgentResult(reviewing, reviewing.lastAction, {
+      version: 1, kind: 'review', taskId: 'T-1', reviewedSha: sha, verdict, ...(notes ? { notes } : {}),
+    }, { agent: 'github:clestons' }).tasks[0]
+    expect(review('REWORK', 'Split the parser out.')?.reviewNotes).toBe('Split the parser out.')
+    expect(review('REWORK')?.reviewNotes).toBeUndefined()
+    expect(review('PASS_WITH_NOTES', 'nice')?.reviewNotes).toBeUndefined()
+
+    const redo = { ...reviewing, tasks: [{ ...review('REWORK', 'Split the parser out.')!, status: 'ready' as const }], lastAction: { type: 'delegate' as const, taskId: 'T-1' } }
+    const handedIn = applyAgentResult(redo, redo.lastAction, { version: 1, kind: 'implementation', taskId: 'T-1', outcome: 'completed', summary: 'split' }, { agent: 'dsh/flash', implementationSha: 'b'.repeat(40) })
+    expect(handedIn.tasks[0]?.reviewNotes).toBeUndefined()
+  })
+
   it('rejects stale and same-identity review results', () => {
     const sha = 'a'.repeat(40)
     const state = {
