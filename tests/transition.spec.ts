@@ -68,6 +68,11 @@ describe('agent result transitions', () => {
     const redo = { ...reviewing, tasks: [{ ...review('REWORK', 'Split the parser out.')!, status: 'ready' as const }], lastAction: { type: 'delegate' as const, taskId: 'T-1' } }
     const handedIn = applyAgentResult(redo, redo.lastAction, { version: 1, kind: 'implementation', taskId: 'T-1', outcome: 'completed', summary: 'split' }, { agent: 'dsh/flash', implementationSha: 'b'.repeat(40) })
     expect(handedIn.tasks[0]?.reviewNotes).toBeUndefined()
+    // An attempt that failed or blocked is retried, and the retry still needs them.
+    for (const outcome of ['failed', 'blocked'] as const) {
+      const notHandedIn = applyAgentResult(redo, redo.lastAction, { version: 1, kind: 'implementation', taskId: 'T-1', outcome, summary: 'no' }, { agent: 'dsh/flash' })
+      expect(notHandedIn.tasks[0]?.reviewNotes, outcome).toBe('Split the parser out.')
+    }
   })
 
   it('rejects stale and same-identity review results', () => {

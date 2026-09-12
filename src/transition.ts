@@ -65,7 +65,8 @@ function applyImplementation(
     implementer: options.agent,
     lastReviewVerdict: undefined,
     reviewer: undefined,
-    reviewNotes: undefined,
+    // Spent only by an attempt that was handed in: a failed or blocked one is retried, and still needs them.
+    ...(result.outcome === 'completed' ? { reviewNotes: undefined } : {}),
   }))
 }
 

@@ -524,7 +524,7 @@ function isTaskShape(value: unknown): boolean {
     && (task.implementationSha === undefined || (typeof task.implementationSha === 'string' && /^[0-9a-f]{40}$/i.test(task.implementationSha)))
     && (task.overBudget === undefined || (typeof task.overBudget === 'string' && task.overBudget.length > 0 && task.overBudget.length <= MAX_OVER_BUDGET))
     && (task.estimate === undefined || sizeEstimate(task.estimate) !== null)
-    && (task.reviewNotes === undefined || (typeof task.reviewNotes === 'string' && task.reviewNotes.length > 0 && task.reviewNotes.length <= MAX_REVIEW_NOTES))
+    && (task.reviewNotes === undefined || (typeof task.reviewNotes === 'string' && task.reviewNotes.length > 0 && task.reviewNotes.length <= MAX_REVIEW_NOTES && !task.reviewNotes.includes('\0')))
     && (task.planner === undefined || (typeof task.planner === 'string' && task.planner.length > 0))
     && (task.implementer === undefined || (typeof task.implementer === 'string' && task.implementer.length > 0))
     && (task.reviewer === undefined || (typeof task.reviewer === 'string' && task.reviewer.length > 0))
