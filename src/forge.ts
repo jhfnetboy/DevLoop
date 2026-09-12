@@ -691,6 +691,14 @@ export class ForgePrBackend implements AgentBackend {
     const changes = words.filter(word => word.state === 'CHANGES_REQUESTED')
     const said = changes[0] ?? words.find(word => word.state === 'APPROVED')
     if (said === undefined) return null
+    // An approval is a pass only once this commit's checks have passed too: a red build is rework, a running one is a wait.
+    if (said.state === 'APPROVED') {
+      const checks = await this.readChecks(root, repo, number, ctx)
+      if (checks === 'pending') return null
+      if (checks !== 'passed') {
+        return { author: said.author, result: { version: 1, kind: 'review', taskId, reviewedSha: sha, verdict: 'REWORK', notes: `Approved, but these checks failed: ${checks.join(', ')}`.slice(0, MAX_NOTES) } }
+      }
+    }
     const notes = truncated(said.state === 'CHANGES_REQUESTED'
       ? changes.map(word => changes.length > 1 ? `${word.author}: ${word.body.trim()}` : word.body.trim()).filter(Boolean).join('\n\n')
       : said.body.trim())
@@ -705,6 +713,31 @@ export class ForgePrBackend implements AgentBackend {
         ...(notes === '' ? {} : { notes }),
       },
     }
+  }
+
+  /**
+   * The pull request's checks at its head, which the binding already holds at
+   * the reviewed commit: passed (none failing and none running — a repository
+   * with no checks has passed), still running, or the names of those that failed.
+   */
+  private async readChecks(root: string, repo: ForgeRepo, number: number, ctx: RunCtx): Promise<'passed' | 'pending' | string[]> {
+    const raw = await this.forge(root, ['pr', 'view', String(number), '--repo', repoSlug(repo), '--json', 'statusCheckRollup'], ctx)
+    const view: unknown = parseJson(raw, 'forge_pr: pr checks')
+    const rollup = isRecord(view) ? view.statusCheckRollup : undefined
+    if (!Array.isArray(rollup)) throw new Error('forge_pr: pr checks did not return a list')
+    const failed: string[] = []
+    let running = false
+    for (const check of rollup) {
+      if (!isRecord(check)) throw new Error('forge_pr: a check is not an object')
+      // A check run reports status and conclusion; a commit status reports state.
+      const outcome = String(check.conclusion ?? check.state ?? '').toUpperCase()
+      const name = String(check.name ?? check.context ?? 'a check').slice(0, 100)
+      if (outcome === 'SUCCESS' || outcome === 'NEUTRAL' || outcome === 'SKIPPED') continue
+      if (outcome === '' || outcome === 'PENDING' || outcome === 'EXPECTED' || outcome === 'QUEUED' || outcome === 'IN_PROGRESS') running = true
+      else failed.push(name)
+    }
+    if (failed.length > 0) return failed
+    return running ? 'pending' : 'passed'
   }
 
   /**
