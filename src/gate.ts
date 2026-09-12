@@ -389,7 +389,11 @@ export function applyAnswer(
  */
 function afterAnswer(task: Task, key: 'review' | 'accept'): Task {
   const { lastReviewVerdict: _verdict, reviewer: _reviewer, ...rest } = task
-  if (key === 'accept') return { ...rest, status: 'done' }
+  // Accepted is done: no attempt follows, so a review's requests would only go stale.
+  if (key === 'accept') {
+    const { reviewNotes: _notes, ...accepted } = rest
+    return { ...accepted, status: 'done' }
+  }
   return { ...rest, status: 'review_pending' }
 }
 
