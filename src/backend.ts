@@ -127,19 +127,21 @@ export function runInputFor(
   if (!task) {
     return { action, contract: null, workspaceRoot, worktreeRoot: null }
   }
+  const contract = contractForTask(
+    task.id,
+    task.title,
+    task.tier,
+    task.allowedPaths,
+    task.acceptance,
+    limits.taskTimeoutMinutes,
+    limits.maxTaskAttempts,
+    task.baseSha,
+    task.implementationSha,
+  )
   return {
     action,
-    contract: contractForTask(
-      task.id,
-      task.title,
-      task.tier,
-      task.allowedPaths,
-      task.acceptance,
-      limits.taskTimeoutMinutes,
-      limits.maxTaskAttempts,
-      task.baseSha,
-      task.implementationSha,
-    ),
+    // Only the review is told: the worker's prompt already states the budget.
+    contract: action.type === 'review' && task.overBudget !== undefined ? { ...contract, overBudget: task.overBudget } : contract,
     workspaceRoot,
     worktreeRoot: null,
   }

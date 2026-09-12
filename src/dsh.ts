@@ -41,6 +41,11 @@ export function headlessPrompt(input: AgentRunInput): string {
   if (input.action.type === 'review' && input.contract) {
     return [
       `Review task ${input.contract.taskId} (${input.contract.title}) at exact commit ${input.contract.implementationSha ?? 'UNKNOWN'}. Acceptance: ${input.contract.acceptance.join('; ')}`,
+      ...(input.contract.overBudget === undefined ? [] : [
+        `This change is over the pull request size budget, inside the band allowed for review (${input.contract.overBudget}).`
+        + ' Besides the acceptance criteria, judge its size: return REWORK naming what to cut if it carries changes the task did not need,'
+        + ' or REPLAN if it bundles work that should be separate tasks; a size the task genuinely needs is not a reason to refuse it.',
+      ]),
       resultInstructions('review', input.contract.taskId, input.contract.implementationSha),
     ].join('\n')
   }
