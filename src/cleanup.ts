@@ -25,6 +25,9 @@ const KEEP_REASON: Record<NonNullable<RepoStatus['branches'][number]['protectedB
   active_task: '循环里还没完成的任务',
 }
 
+/** Every protection a kept branch can name as its code. */
+export const PROTECTIONS = Object.keys(KEEP_REASON)
+
 export function planCleanup(status: RepoStatus): CleanupPlan {
   const del: string[] = []
   const keep: { name: string, code: string, reason: string }[] = []
@@ -96,7 +99,7 @@ export function refusalReason(error: unknown): string {
   return refusal(error).reason
 }
 
-function refusal(error: unknown): { code: string, reason: string } {
+export function refusal(error: unknown): { code: string, reason: string } {
   const stderr = String((error as { stderr?: unknown } | null)?.stderr ?? '')
   if (/not fully merged/.test(stderr)) return { code: 'notMerged', reason: 'git 拒绝：分支没有完全合并' }
   if (/(checked out|used by worktree)/.test(stderr)) return { code: 'checkedOut', reason: 'git 拒绝：分支被某个 worktree 检出' }

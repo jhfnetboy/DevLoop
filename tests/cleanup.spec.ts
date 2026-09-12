@@ -3,7 +3,7 @@ import { realpath, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { describe, expect, it } from 'vitest'
-import { applyCleanup, planCleanup, refusalReason } from '../src/cleanup.ts'
+import { applyCleanup, planCleanup, refusal, refusalReason } from '../src/cleanup.ts'
 import { scanRepo } from '../src/status.ts'
 import type { RepoStatus } from '../src/status.ts'
 import { initWorkRepo, mkdtempInRepo } from './helpers.ts'
@@ -59,6 +59,8 @@ describe('applying a cleanup', () => {
     const result = await applyCleanup(root, ['merged-a', 'release/2', 'moved', 'work', 'merged-a'])
     expect(result.deleted).toEqual(['merged-a'])
     expect(result.refused.map(r => r.name)).toEqual(['release/2', 'moved', 'work'])
+    // None of them was on offer at the moment of acting: one code, whatever made it so.
+    expect(result.refused.map(r => r.code)).toEqual(['notOffered', 'notOffered', 'notOffered'])
     // Reasons are ours, never git's raw message with its command line and paths.
     for (const r of result.refused) expect(r.reason).not.toContain(root)
     const left = (await git(root, 'for-each-ref', '--format=%(refname:short)', 'refs/heads')).stdout
@@ -107,14 +109,16 @@ describe('applying a cleanup', () => {
 
   it('maps every git refusal to our own words, never its stderr or a path', () => {
     const leak = '/Users/someone/repo'
-    const cases: [string, string][] = [
-      [`error: the branch 'x' is not fully merged\nhint: run 'git branch -D x' in ${leak}`, 'git 拒绝：分支没有完全合并'],
-      [`error: cannot delete branch 'x' used by worktree at '${leak}'`, 'git 拒绝：分支被某个 worktree 检出'],
-      [`fatal: something else in ${leak}`, 'git 拒绝删除这个分支'],
+    const cases: [string, string, string][] = [
+      [`error: the branch 'x' is not fully merged\nhint: run 'git branch -D x' in ${leak}`, 'git 拒绝：分支没有完全合并', 'notMerged'],
+      [`error: cannot delete branch 'x' used by worktree at '${leak}'`, 'git 拒绝：分支被某个 worktree 检出', 'checkedOut'],
+      [`fatal: something else in ${leak}`, 'git 拒绝删除这个分支', 'gitRefused'],
     ]
-    for (const [stderr, reason] of cases) {
-      const said = refusalReason(Object.assign(new Error(`Command failed: git -C ${leak} branch -d -- x`), { stderr }))
+    for (const [stderr, reason, code] of cases) {
+      const error = Object.assign(new Error(`Command failed: git -C ${leak} branch -d -- x`), { stderr })
+      const said = refusalReason(error)
       expect(said).toBe(reason)
+      expect(refusal(error)).toEqual({ code, reason })
       expect(said).not.toContain(leak)
       expect(said).not.toMatch(/error:|fatal:|hint:/)
     }
