@@ -46,6 +46,13 @@ export interface Config {
    */
   readonly acceptance: string[][]
   readonly acceptanceTimeoutMinutes: number
+  /**
+   * PR-daemon's pre-PR checker as argv, run on every finished task before review
+   * (DevLoop appends --base/--repo/--profile/--json-only). Empty: not run.
+   */
+  readonly prePrCheck: string[]
+  readonly prePrProfile: string
+  readonly prePrTimeoutMinutes: number
   readonly enabled: boolean
   readonly tickIntervalMs: number
   readonly agentBackend: 'noop' | 'routed' | 'dsh' | 'claude' | 'codex'
@@ -75,6 +82,9 @@ export const ConfigSchema: s<Config> = s.object({
   root: s.string().default(process.cwd()),
   acceptance: s.array(s.array(s.string())).default([]),
   acceptanceTimeoutMinutes: s.number().step(1).min(1).max(600).default(15),
+  prePrCheck: s.array(s.string()).default([]),
+  prePrProfile: s.string().default('devloop'),
+  prePrTimeoutMinutes: s.number().step(1).min(1).max(60).default(5),
   enabled: s.boolean().default(true),
   tickIntervalMs: s.number().step(1).min(500).default(2000),
   maxCostUsdPerDayAllProjects: s.number().min(0).default(0),

@@ -75,6 +75,10 @@ export type HoldReason =
   // Carries which check failed, so the gate can name it. Matched by prefix,
   // the same way the budget circuits' interpolated reasons are.
   | `acceptance_failed:${string}`
+  // The pre-PR checker: over the PR budget (split it), other blocking rules, or no verdict.
+  | `task_over_budget:${string}`
+  | `prepr_blocked:${string}`
+  | `prepr_unavailable:${string}`
 
 /**
  * Reasons a budget circuit trips. Closed for the same reason `HoldReason` is:

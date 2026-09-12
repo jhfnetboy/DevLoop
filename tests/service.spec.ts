@@ -1416,3 +1416,70 @@ describe('saving a result while the state lock is busy', () => {
     await expect(readFile(join(root, '.devloop', 'PENDING_HOLD'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
   })
 })
+
+describe('the pre-PR checker gates the review', () => {
+  const services: DevloopService[] = []
+  afterEach(() => { for (const service of services.splice(0)) service.stop() })
+
+  /** A stand-in checker printing `findings` and exiting `code`; records the argv it got. */
+  async function checker(findings: object[], code: number): Promise<{ argv: string[], seen: string }> {
+    const dir = await mkdtemp(join(tmpdir(), 'prepr-svc-'))
+    const seen = join(dir, 'argv.json')
+    await writeFile(join(dir, 'check.mjs'), `import { writeFileSync } from 'node:fs'
+writeFileSync(${JSON.stringify(seen)}, JSON.stringify(process.argv.slice(2)))
+process.stdout.write(${JSON.stringify(JSON.stringify({ checker: { rules_version: '1.1.0' }, size: { lines: 340, files: 7, counted_top_dirs: ['src'] }, findings }))})
+process.exit(${code})
+`, 'utf8')
+    return { argv: ['node', join(dir, 'check.mjs')], seen }
+  }
+
+  async function runWith(prePrCheck: string[]): Promise<{ root: string, reviews: number }> {
+    const root = await mkdtempInRepo('devloop-prepr-svc-')
+    await mkdir(join(root, '.devloop'))
+    await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
+    await initWorkRepo(root)
+    await saveState(root, { ...emptyState(Date.now()), tasks: [makeTask({ id: 'd1', status: 'ready', allowedPaths: ['src/**'] })] })
+    let reviews = 0
+    const backend: AgentBackend = {
+      async run(input: AgentRunInput): Promise<AgentRunResult> {
+        if (input.action.type === 'review') {
+          reviews += 1
+          return { status: 'started', agent: 'test/reviewer', outcome: { version: 1, kind: 'review', taskId: 'd1', reviewedSha: input.contract?.implementationSha ?? '', verdict: 'PASS' } }
+        }
+        await mkdir(join(input.worktreeRoot ?? root, 'src'), { recursive: true })
+        await writeFile(join(input.worktreeRoot ?? root, 'src', 'added.ts'), 'export const x = 1\n', 'utf8')
+        return { status: 'started', agent: 'test/worker', outcome: { version: 1, kind: 'implementation', taskId: 'd1', outcome: 'completed', summary: 'done' } }
+      },
+      async cancel() {},
+      async health() { return 'ok' },
+    }
+    const service = new DevloopService(new Context(), resolveConfig({ root, enabled: false, prePrCheck }), backend)
+    services.push(service)
+    await service.tick()
+    await service.tick()
+    return { root, reviews }
+  }
+
+  it('lets a passing change through to review, and gives the checker the task\'s own diff', async () => {
+    const { argv, seen } = await checker([{ rule: 'B1', severity: 'review', message: 'answer it' }], 0)
+    const { root, reviews } = await runWith(argv)
+    expect(reviews).toBe(1)
+    expect((await loadState(root, Date.now())).tasks[0]?.status).toBe('merge_ready')
+    const args = JSON.parse(await readFile(seen, 'utf8')) as string[]
+    expect(args[args.indexOf('--repo') + 1]).toBe(join(root, '.devloop', 'worktrees', 'd1'))
+    expect(args[args.indexOf('--base') + 1]).toMatch(/^[0-9a-f]{40}$/)
+    expect(args[args.indexOf('--profile') + 1]).toBe('devloop')
+  })
+
+  it.each([
+    ['over the size budget', [{ rule: 'SZ-1', severity: 'block' }], 1, /^task_over_budget:340 lines, 7 files$/],
+    ['blocked by another rule', [{ rule: 'SZ-2', severity: 'block' }, { rule: 'B2', severity: 'block' }], 1, /^prepr_blocked:SZ-2,B2$/],
+    ['without a verdict', [], 2, /^prepr_unavailable:checker exited 2$/],
+  ])('holds a change %s, and never pays a reviewer for it', async (_case, findings, code, reason) => {
+    const { root, reviews } = await runWith((await checker(findings, code)).argv)
+    expect(reviews).toBe(0)
+    const state = await loadState(root, Date.now())
+    expect(state.supervisor?.reason).toMatch(reason)
+    expect(state.tasks[0]?.status).not.toBe('review_pending')
+  })
+})
