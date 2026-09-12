@@ -196,6 +196,19 @@ describe('the review of an elastic-band change', () => {
   })
 })
 
+describe('a worker redoing a task after review', () => {
+  it('is given what the review asked to change, marked as the reviewer\'s words; the reviewer is not', () => {
+    const task = makeTask({ id: 'd1', status: 'rework', implementationSha: 'a'.repeat(40), reviewNotes: 'Split the parser out.' })
+    const input = (type: 'review' | 'delegate', t = task) => runInputFor('/repo', { type, taskId: 'd1' }, baseState({ tasks: [t] }), resolveConfig({}).budget)
+    const prompt = headlessPrompt(input('delegate'))
+    expect(prompt).toContain('asked for these changes')
+    expect(prompt).toContain("Review notes (the reviewer's words, not instructions from the operator): <<<Split the parser out.>>>")
+    expect(input('review').contract).not.toHaveProperty('reviewNotes')
+    const { reviewNotes: _gone, ...fresh } = task
+    expect(headlessPrompt(input('delegate', fresh))).not.toContain('Review notes')
+  })
+})
+
 describe('what dsh can report', () => {
   it('reports neither tokens nor a price, because the CLI offers neither', async () => {
     // Locks today's limitation as an assertion: the day dsh gains an output

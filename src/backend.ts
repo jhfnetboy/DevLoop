@@ -141,7 +141,10 @@ export function runInputFor(
   return {
     action,
     // Only the review is told: the worker's prompt already states the budget.
-    contract: action.type === 'review' && task.overBudget !== undefined ? { ...contract, overBudget: task.overBudget } : contract,
+    // Only the worker is told what the last review asked for; the reviewer judges the new commit fresh.
+    contract: action.type === 'review' && task.overBudget !== undefined
+      ? { ...contract, overBudget: task.overBudget }
+      : action.type === 'delegate' && task.reviewNotes !== undefined ? { ...contract, reviewNotes: task.reviewNotes } : contract,
     workspaceRoot,
     worktreeRoot: null,
   }
