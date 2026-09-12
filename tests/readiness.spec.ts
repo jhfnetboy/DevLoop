@@ -64,6 +64,14 @@ describe('readiness to start a loop', () => {
     expect(check(r, 'trunk')).toMatchObject({ ok: false, blocking: true })
   })
 
+  it('takes the trunk from origin/HEAD even when a local branch shadows its short name', async () => {
+    const root = await repoOn('work', 'ready-origin-head-')
+    await git(root, 'update-ref', 'refs/remotes/origin/develop', 'HEAD')
+    await git(root, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/develop')
+    await git(root, 'branch', 'origin/develop') // makes `--short` answer `remotes/origin/develop`
+    expect((await inspectReadiness(root)).base).toBe('develop')
+  })
+
   it('refuses a detached HEAD', async () => {
     const root = await repoOn('work', 'ready-detached-')
     await git(root, 'switch', '-q', '--detach')
