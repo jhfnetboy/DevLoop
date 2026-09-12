@@ -40,7 +40,7 @@ export async function scanRepo(root: string, options: ScanOptions = {}): Promise
   const base = await baseBranch(root, await readPilotConfig(root))
   const trunks = await trunkBranches(root)
   const { patterns, dropped } = await protectedPrefixes(root)
-  const branch = await optional(root, ['symbolic-ref', '--quiet', '--short', 'HEAD'])
+  const branch = (await optional(root, ['symbolic-ref', '--quiet', 'HEAD']))?.replace(/^refs\/heads\//, '') || null
   const worktrees = await listWorktrees(root)
   // Case-folded: on APFS `git switch Feature` over a loose `feature` ref makes
   // HEAD `Feature`; an exact match would offer the current branch for deletion.
@@ -48,8 +48,8 @@ export async function scanRepo(root: string, options: ScanOptions = {}): Promise
   const current = branch === null ? null : fold(branch)
   const checkedOut = new Set(worktrees.map(w => w.branch).filter((b): b is string => b !== null).map(fold))
   const active = new Set([...(options.activeBranches ?? [])].map(fold))
-  const merged = new Set(lines(await optional(root, ['branch', '--merged', 'HEAD', '--format=%(refname:short)']) ?? ''))
-  const names = lines(await git(root, ['for-each-ref', '--format=%(refname:short)', 'refs/heads']))
+  const merged = new Set(lines(await optional(root, ['branch', '--merged', 'HEAD', '--format=%(refname:lstrip=2)']) ?? ''))
+  const names = lines(await git(root, ['for-each-ref', '--format=%(refname:lstrip=2)', 'refs/heads']))
 
   const branches = names.map((name): BranchStatus => {
     let protectedBy: BranchStatus['protectedBy'] = null

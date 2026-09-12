@@ -18,7 +18,7 @@ async function commitOn(root: string, branch: string, file: string): Promise<voi
 describe('scanning a repository', () => {
   it('marks what branch -d would take, and every reason a branch is kept', async () => {
     const root = await realpath(await mkdtempInRepo('status-scan-'))
-    await initWorkRepo(root) // on `work`, at main's commit
+    await initWorkRepo(root)
     await commitOn(root, 'feature/done', 'a.txt')
     await git(root, 'switch', '-q', 'work')
     await git(root, 'merge', '-q', '--no-edit', 'feature/done')
@@ -27,6 +27,7 @@ describe('scanning a repository', () => {
     await git(root, 'branch', 'release/1.0')
     await git(root, 'branch', 'devloop/T1')
     await git(root, 'branch', 'parked')
+    await git(root, 'tag', 'main') // a tag named like the trunk must not rename branches to heads/main
     await git(root, 'worktree', 'add', '-q', join(root, '.devloop-wt'), 'parked')
     await writeFile(join(root, '.devloop-wt', 'scratch.txt'), 'x\n', 'utf8')
 
