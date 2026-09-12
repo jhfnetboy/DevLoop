@@ -68,16 +68,26 @@ export async function runPreprCheck(
   if (run.code === 1 && blocks.length === 0) return unavailable('checker exited 1 without a blocking finding')
   if (run.code === 0 && blocks.length > 0) return unavailable('checker exited 0 with a blocking finding')
   // A checker older than the band says only whether a size rule blocked.
-  const sizeBlocked = blocks.some(f => f.rule.startsWith('SZ-'))
+  const sizeBlocked = blocks.some(isBandRule)
   const band = parsed.band ?? (sizeBlocked ? 'over' : 'normal')
-  if ((band === 'over') !== sizeBlocked) return unavailable(`checker put the size in the ${band} band but ${sizeBlocked ? 'blocked' : 'did not block'} it`)
+  // Only this direction is impossible: a profile whose size rules are notes reports `over` without blocking.
+  if (band !== 'over' && sizeBlocked) return unavailable(`checker put the size in the ${band} band but blocked it on size`)
   return { ...parsed, band, status: run.code === 1 ? 'blocked' : 'passed', detail: null }
 }
 
 /** True when every blocking finding is a size rule: splitting the task, not fixing it, is the answer. */
 export function blockedOnlyBySize(result: PreprResult): boolean {
   const blocks = result.findings.filter(f => f.severity === 'block')
-  return blocks.length > 0 && blocks.every(f => f.rule.startsWith('SZ-'))
+  return blocks.length > 0 && blocks.every(isBandRule)
+}
+
+/**
+ * The rules the band measures: lines, files, directories. SZ-4 (high-risk
+ * content mixed with other changes) is not one — it blocks in every band, and
+ * its answer is to move those files out, not to make the change smaller.
+ */
+function isBandRule(finding: PreprFinding): boolean {
+  return /^SZ-[123]$/.test(finding.rule)
 }
 
 function unavailable(detail: string): PreprResult {

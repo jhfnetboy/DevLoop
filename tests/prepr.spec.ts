@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs'
-import { mkdtemp, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -67,6 +67,15 @@ describe('running the pre-PR checker', () => {
     expect(await old([block('SZ-2')], 1)).toBe('over')
     expect(await old([block('B2')], 1)).toBe('normal')
     expect(await old([review('B1')], 0)).toBe('normal')
+
+    // SZ-4 is not a size: it blocks in any band, and a block by it alone is not "over budget".
+    const risky = await runPreprCheck((await fakeChecker(json([block('SZ-4')], { band: 'normal' }), 1)).argv, 'devloop', tmpdir(), 'b', 5_000)
+    expect(risky).toMatchObject({ status: 'blocked', band: 'normal' })
+    expect(blockedOnlyBySize(risky)).toBe(false)
+    expect(await old([block('SZ-4')], 1)).toBe('normal')
+    // A profile whose size rules are only notes reports over without blocking.
+    const noted = await runPreprCheck((await fakeChecker(json([review('SZ-1')], { band: 'over' }), 0)).argv, 'default', tmpdir(), 'b', 5_000)
+    expect(noted).toMatchObject({ status: 'passed', band: 'over' })
   })
 
   // Anything the checker cannot vouch for is unavailable, never a pass.
@@ -76,8 +85,8 @@ describe('running the pre-PR checker', () => {
     ['exit 0 with a blocking finding', json([block('B2')]), 0],
     ['output that is not JSON', 'Traceback (most recent call last)', 0],
     ['JSON without findings', JSON.stringify({ checker: {} }), 0],
-    ['an over band that did not block', json([review('SZ-1')], { band: 'over' }), 0],
     ['an elastic band with a size block', json([block('SZ-1')], { band: 'elastic' }), 1],
+    ['a normal band with a size block', json([block('SZ-3')], { band: 'normal' }), 1],
   ])('reports %s as unavailable', async (_case, out, code) => {
     const result = await runPreprCheck((await fakeChecker(out, code)).argv, 'devloop', tmpdir(), 'b', 5_000)
     expect(result.status).toBe('unavailable')
@@ -119,5 +128,22 @@ describe.skipIf(!existsSync(REAL))('against the installed PR-daemon checker', ()
     expect(blockedOnlyBySize(big)).toBe(true)
     expect(big.band).toBe('over')
     expect(big.checker?.rulesVersion).toMatch(/^\d+\.\d+\.\d+$/)
+    // The default profile only notes size: over, and still a pass.
+    expect(await runPreprCheck(['bash', REAL], 'default', root, base, 60_000)).toMatchObject({ status: 'passed', band: 'over' })
+
+    // A small change that brings a CI file along: refused by SZ-4 whatever its size, and not as over budget.
+    const mixed = await mkdtemp(join(tmpdir(), 'prepr-real-'))
+    await git(mixed, 'init', '-q', '-b', 'main')
+    await git(mixed, 'commit', '-q', '--allow-empty', '-m', 'base')
+    const mixedBase = (await git(mixed, 'rev-parse', 'HEAD')).stdout.trim()
+    await mkdir(join(mixed, '.github', 'workflows'), { recursive: true })
+    await writeFile(join(mixed, '.github', 'workflows', 'ci.yml'), 'on: push\njobs: {}\n', 'utf8')
+    await writeFile(join(mixed, 'small.ts'), 'export const one = 1\n', 'utf8')
+    await git(mixed, 'add', '.')
+    await git(mixed, 'commit', '-q', '-m', 'mixed')
+    const risky = await runPreprCheck(['bash', REAL], 'devloop', mixed, mixedBase, 60_000)
+    expect(risky).toMatchObject({ status: 'blocked', band: 'normal' })
+    expect(risky.findings.filter(f => f.severity === 'block').map(f => f.rule)).toEqual(['SZ-4'])
+    expect(blockedOnlyBySize(risky)).toBe(false)
   })
 })
