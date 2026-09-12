@@ -99,6 +99,8 @@ interface StubOptions {
   /** Where the forge's work branch stands against the task's base, answering `merge-base --is-ancestor`. */
   remoteIs?: 'behind' | 'ahead'
   headRef?: string
+  /** Successive answers to `pr list`, the last one repeating. */
+  prLists?: unknown[][]
   prList?: unknown
   prView?: unknown
   rewrittenUrl?: string
@@ -127,6 +129,7 @@ function commentLines(comments: readonly unknown[]): string {
 /** Answers the fixed call sequence run() makes. */
 function stubRunner(stub: StubOptions): HeadlessRunner {
   let views = 0
+  let lists = 0
   let added = ''
   return async (request: HeadlessRun) => {
     const call: Recorded = {
@@ -169,6 +172,11 @@ function stubRunner(stub: StubOptions): HeadlessRunner {
       return { stdout: commentLines(rolling ?? stub.comments ?? []), stderr: '' }
     }
     if (joined.startsWith('api')) return { stdout: `${stub.login ?? SELF}\n`, stderr: '' }
+    if (joined.startsWith('pr list') && stub.prLists) {
+      const at = Math.min(lists, stub.prLists.length - 1)
+      lists += 1
+      return { stdout: JSON.stringify(stub.prLists[at]), stderr: '' }
+    }
     if (joined.startsWith('pr list')) {
       const listed = stub.prList ?? [pr()]
       // A raw string models gh printing something that is not JSON at all.
@@ -498,6 +506,7 @@ describe('ForgePrBackend publishing', () => {
       if (joined.startsWith('api')) return { stdout: `${SELF}\n`, stderr: '' }
       if (joined.startsWith('pr list')) {
         listed += 1
+        // Without a work branch there is no stray check: the lookup is the one list before the create.
         return { stdout: JSON.stringify(listed === 1 ? [] : [pr({ number: 11, baseRefName: 'develop' })]), stderr: '' }
       }
       if (joined.startsWith('pr view')) {
@@ -1318,6 +1327,29 @@ describe('ForgePrBackend against the loop\'s work branch', () => {
     }
     const noBase = { ...reviewInput(), workBranch: WORK, contract: { ...reviewInput().contract!, baseSha: undefined } }
     expect((await backend({ verdictSource: 'reviews' }).run(noBase)).detail).toMatch(/needs the task's base commit/)
+  })
+
+  it('moves an open pull request from this head on another base to the work branch instead of opening a second', async () => {
+    const { run, calls } = onWork({ prList: [pr({ baseRefName: 'main' })], prLists: [[pr({ baseRefName: 'main' })], [pr({ baseRefName: WORK })]] })
+    expect(await run).toMatchObject({ status: 'started' })
+    const edits = calls.filter(call => call.argv[0] === 'pr' && call.argv[1] === 'edit' && call.argv.includes('--base'))
+    expect(edits.map(call => call.argv[call.argv.indexOf('--base') + 1])).toEqual([WORK])
+    expect(calls.some(call => call.argv[0] === 'pr' && call.argv[1] === 'create')).toBe(false)
+  })
+
+  it('reuses the one already on the work branch, leaving a trunk sibling alone rather than retargeting it into a duplicate', async () => {
+    const both = [pr({ number: 5, baseRefName: 'main' }), pr({ number: 7, baseRefName: WORK })]
+    const { run, calls } = onWork({ prList: both, prLists: [both] })
+    expect(await run).toMatchObject({ status: 'started' })
+    expect(calls.some(call => call.argv[0] === 'pr' && call.argv[1] === 'edit' && call.argv.includes('--base'))).toBe(false)
+    expect(calls.some(call => call.argv[0] === 'pr' && call.argv[1] === 'create')).toBe(false)
+    expect(calls.some(call => call.argv[0] === 'pr' && call.argv[1] === 'edit' && call.argv[2] === '7')).toBe(true)
+  })
+
+  it('moves nothing without a work branch, where the only place to move a pull request to is trunk', async () => {
+    const calls: Recorded[] = []
+    await backend({ verdictSource: 'reviews' }, { calls, prList: [pr({ baseRefName: WORK })], reviews: [] }).run(reviewInput())
+    expect(calls.some(call => call.argv[0] === 'pr' && call.argv[1] === 'edit' && call.argv.includes('--base'))).toBe(false)
   })
 
   it('opens nothing while the checkout is off the work branch', async () => {
