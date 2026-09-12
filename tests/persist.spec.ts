@@ -173,11 +173,18 @@ describe('persist and tick', () => {
     expect((await loadState(bad, 1)).supervisor?.reason).toBe('invalid_state')
   })
 
-  it('keeps a task\'s elastic-band size across a save, and treats an empty or overlong one as invalid', async () => {
+  it('keeps a task\'s elastic-band size and estimate across a save, and treats a malformed one as invalid', async () => {
     const root = await mkdtemp(join(tmpdir(), 'devloop-'))
     await mkdir(join(root, '.devloop'))
     await saveState(root, { ...emptyState(0), tasks: [{ ...sampleTask(), overBudget: '230 lines, 6 files' }] })
     expect((await loadState(root, 1)).tasks[0]?.overBudget).toBe('230 lines, 6 files')
+
+    await saveState(root, { ...emptyState(0), tasks: [{ ...sampleTask(), estimate: { lines: 120, files: 3 } }] })
+    expect((await loadState(root, 1)).tasks[0]?.estimate).toEqual({ lines: 120, files: 3 })
+    const odd = await mkdtemp(join(tmpdir(), 'devloop-'))
+    await mkdir(join(odd, '.devloop'))
+    await writeFile(join(odd, '.devloop', 'STATE.json'), JSON.stringify({ ...emptyState(0), tasks: [{ ...sampleTask(), estimate: { lines: 'many', files: 3 } }] }), 'utf8')
+    expect((await loadState(odd, 1)).supervisor?.reason).toBe('invalid_state')
 
     for (const overBudget of ['', 'x'.repeat(201)]) {
       const bad = await mkdtemp(join(tmpdir(), 'devloop-'))

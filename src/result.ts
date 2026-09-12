@@ -9,6 +9,13 @@ export interface PlannedTask {
   readonly risk: Risk
   readonly allowedPaths: readonly string[]
   readonly acceptance: readonly string[]
+  /** The planner's guess at the change's size, kept to judge the estimates against the checker's count. */
+  readonly estimate?: SizeEstimate
+}
+
+export interface SizeEstimate {
+  readonly lines: number
+  readonly files: number
 }
 
 export interface PlanResult {
@@ -76,7 +83,7 @@ export function validateDevloopResult(value: unknown): DevloopResult {
 
 export function resultInstructions(kind: DevloopResult['kind'], taskId?: string, reviewedSha?: string): string {
   if (kind === 'plan') {
-    return 'Finish with exactly one <devloop_result>{"version":1,"kind":"plan","tasks":[{"id":"TASK-001","title":"...","tier":"T1","risk":"low","allowedPaths":["src/**"],"acceptance":["..."]}]}</devloop_result> envelope.'
+    return 'Finish with exactly one <devloop_result>{"version":1,"kind":"plan","tasks":[{"id":"TASK-001","title":"...","tier":"T1","risk":"low","allowedPaths":["src/**"],"acceptance":["..."],"estimate":{"lines":120,"files":3}}]}</devloop_result> envelope. estimate is your guess at the changed lines and files.'
   }
   if (kind === 'implementation') {
     return `Finish with exactly one <devloop_result>{"version":1,"kind":"implementation","taskId":${JSON.stringify(taskId ?? '')},"outcome":"completed","summary":"..."}</devloop_result> envelope. Use outcome blocked or failed when appropriate.`
@@ -108,6 +115,7 @@ function validatePlannedTask(value: unknown, index: number): PlannedTask {
   if (!RISKS.has(value.risk as Risk)) throw new Error(`plan task ${id} has invalid risk`)
   const allowedPaths = stringList(value.allowedPaths, `plan task ${id} allowedPaths`, 1, 64)
   const acceptance = stringList(value.acceptance, `plan task ${id} acceptance`, 1, 32)
+  const estimate = sizeEstimate(value.estimate)
   return {
     id,
     title,
@@ -115,7 +123,17 @@ function validatePlannedTask(value: unknown, index: number): PlannedTask {
     risk: value.risk as Risk,
     allowedPaths,
     acceptance,
+    ...(estimate === null ? {} : { estimate }),
   }
+}
+
+const MAX_ESTIMATE = 1_000_000
+
+/** A usable estimate or null. Lenient: an estimate is only recorded, so a bad one costs the record, not the plan. */
+export function sizeEstimate(value: unknown): SizeEstimate | null {
+  if (!isRecord(value)) return null
+  const count = (n: unknown) => typeof n === 'number' && Number.isInteger(n) && n >= 0 && n <= MAX_ESTIMATE
+  return count(value.lines) && count(value.files) ? { lines: value.lines as number, files: value.files as number } : null
 }
 
 function validateImplementation(value: Record<string, unknown>): ImplementationResult {

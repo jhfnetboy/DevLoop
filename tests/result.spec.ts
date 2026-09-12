@@ -19,6 +19,16 @@ describe('DevLoop result envelope', () => {
     expect(result.kind === 'plan' && result.tasks[0]?.id).toBe('T-1')
   })
 
+  it('keeps a task\'s size estimate, and drops a malformed one without failing the plan', () => {
+    const task = { id: 'T-1', title: 't', tier: 'T1', risk: 'low', allowedPaths: ['src/**'], acceptance: ['tests pass'] }
+    const plan = (estimate: unknown) => validateDevloopResult({ version: 1, kind: 'plan', tasks: [{ ...task, estimate }] })
+    expect(plan({ lines: 120, files: 3 })).toMatchObject({ tasks: [{ estimate: { lines: 120, files: 3 } }] })
+    for (const bad of [undefined, 'small', { lines: 120 }, { lines: -1, files: 1 }, { lines: 1.5, files: 1 }, { lines: 2_000_000, files: 1 }]) {
+      const result = plan(bad)
+      expect(result.kind === 'plan' && 'estimate' in result.tasks[0]!).toBe(false)
+    }
+  })
+
   it('rejects unwrapped, duplicate-id, and unsafe plan output', () => {
     expect(() => parseDevloopResult('{"version":1,"kind":"plan"}')).toThrow('missing')
     expect(() => validateDevloopResult({

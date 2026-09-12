@@ -40,6 +40,8 @@ export interface Task {
    * it is bigger than asked, to judge whether it should have been split.
    */
   readonly overBudget?: string
+  /** The planner's size estimate, recorded to judge estimates by; nothing refuses a task for missing it. */
+  readonly estimate?: { readonly lines: number, readonly files: number }
   /** Provider/model identity that planned this task; the plan has no task of its own to carry it. */
   readonly planner?: string
   /** Provider/model identity that produced the implementation. */
