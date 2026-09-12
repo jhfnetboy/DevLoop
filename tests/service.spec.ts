@@ -16,7 +16,7 @@ import { resumeLoop } from '../src/operator.ts'
 import { emptyState, loadState, saveState, statePath, withStateLock, workspaceArmed } from '../src/persist.ts'
 import { contractForTask } from '../src/router.ts'
 import type { Task } from '../src/types.ts'
-import DevloopService, { persistAgentHold, persistAgentTransition } from '../src/service.ts'
+import DevloopService, { forgeMergers, persistAgentHold, persistAgentTransition } from '../src/service.ts'
 import { readPrLog } from '../src/prlog.ts'
 import { planWorktreePath, prepareDelegateWorktree, readContractBaseSha, taskWorktreeHeadSha, worktreePath } from '../src/worktree.ts'
 import { initGitRepo, initWorkRepo, makeTask, mkdtempInRepo } from './helpers.ts'
@@ -1584,5 +1584,75 @@ describe('a forge review without a recorded work branch', () => {
     expect(state.workBranch).toBeUndefined()
     // No review ran, so none was spent.
     expect(state.usage.reviewCycles.d1 ?? 0).toBe(0)
+  })
+})
+
+describe('merging on the forge', () => {
+  const services: DevloopService[] = []
+  const realCreate = forgeMergers.create
+  afterEach(() => {
+    for (const service of services.splice(0)) service.stop()
+    forgeMergers.create = realCreate
+  })
+  const g = (root: string, ...args: string[]) => promisify(execFile)('git', ['-C', root, '-c', 'user.email=t@t', '-c', 'user.name=t', ...args]).then(r => r.stdout.trim())
+
+  /** A checkout on `work` whose task the forge has merged: the merge commit is fetched but not yet the checkout's. */
+  async function merged(): Promise<{ root: string, merge: string, task: string }> {
+    const root = await mkdtempInRepo('devloop-forge-merge-')
+    await mkdir(join(root, '.devloop'))
+    await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
+    await initWorkRepo(root)
+    const base = await g(root, 'rev-parse', 'HEAD')
+    const forge = await mkdtempInRepo('devloop-forge-bare-')
+    await promisify(execFile)('git', ['clone', '-q', '--bare', root, forge])
+    const side = await mkdtempInRepo('devloop-forge-side-')
+    await promisify(execFile)('git', ['clone', '-q', '-b', 'work', forge, side])
+    await g(side, 'switch', '-q', '-c', 'devloop/d1')
+    await writeFile(join(side, 'task.txt'), 'done\n', 'utf8')
+    await g(side, 'add', '.')
+    await g(side, 'commit', '-q', '-m', 'task')
+    const task = await g(side, 'rev-parse', 'HEAD')
+    await g(side, 'switch', '-q', 'work')
+    await g(side, 'merge', '-q', '--no-ff', '-m', 'Merge pull request #7', 'devloop/d1')
+    const merge = await g(side, 'rev-parse', 'HEAD')
+    // Fetched ahead of time, so the test needs no network: the fast-forward finds the commit present.
+    await g(root, 'fetch', '-q', side, 'work')
+    await saveState(root, {
+      ...emptyState(Date.now()),
+      workBranch: 'work',
+      tasks: [makeTask({ id: 'd1', status: 'merge_ready', baseSha: base, implementationSha: task, lastReviewVerdict: 'PASS', implementer: 'dsh/flash', reviewer: 'forge/pr' })],
+    })
+    return { root, merge, task }
+  }
+
+  function forgeService(root: string): DevloopService {
+    const service = new DevloopService(new Context(), resolveConfig({
+      root, enabled: false, agentBackend: 'routed',
+      reviewerRoute: { tier: 'T3', backend: 'forge', model: 'pr' },
+      forge: { pushUrl: 'git@github.com:acme/widgets.git', reviewers: ['clestons'] },
+    } as never), new RecordingBackend())
+    services.push(service)
+    return service
+  }
+
+  it('merges the reviewed pull request on the forge, then fast-forwards the checkout to its merge commit', async () => {
+    const { root, merge, task } = await merged()
+    const asked: unknown[] = []
+    forgeMergers.create = () => ({ async mergeTask(request) { asked.push(request); return { number: 7, mergeCommit: merge } } })
+    await forgeService(root).tick()
+    expect(asked).toEqual([{ workspaceRoot: root, taskId: 'd1', sha: task, workBranch: 'work' }])
+    expect(await g(root, 'rev-parse', 'HEAD')).toBe(merge)
+    expect((await loadState(root, Date.now())).tasks[0]?.status).toBe('done')
+  })
+
+  it('holds for a review again when the approval is gone, and as a wedged merge for any other forge refusal', async () => {
+    for (const [message, reason] of [['forge_review_gone: pull request 7 is no longer approved', 'no_review_pass'], ['forge_pr: pull request 7 no longer targets work', 'merge_wedged']] as const) {
+      const { root } = await merged()
+      forgeMergers.create = () => ({ async mergeTask() { throw new Error(message) } })
+      await forgeService(root).tick()
+      const state = await loadState(root, Date.now())
+      expect(state.supervisor?.reason, message).toBe(reason)
+      expect(state.tasks[0]?.status).not.toBe('done')
+    }
   })
 })
