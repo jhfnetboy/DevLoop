@@ -462,6 +462,84 @@ export class ForgePrBackend implements AgentBackend {
     return { number: merged.number, mergeCommit: merged.mergeCommit }
   }
 
+  /**
+   * Open the release pull request, the work branch into the trunk, or find the
+   * one already open. Every task in it was reviewed and merged on its own, so
+   * its body is a summary for the reviewer to check against those, not a diff
+   * to review from scratch.
+   */
+  async openRelease(request: { workspaceRoot: string, workBranch: string, title: string, body: string }): Promise<{ number: number }> {
+    const { root, repo, ctx } = this.releaseContext(request.workspaceRoot, request.workBranch)
+    const existing = await this.releaseOf(root, repo, request.workBranch, ctx)
+    if (existing !== null) return { number: existing.number }
+    await this.ensureLabel(root, repo, ctx)
+    await this.forge(root, [
+      'pr', 'create', '--repo', repoSlug(repo), '--head', request.workBranch, '--base', this.options.base,
+      '--label', DEVLOOP_LABEL, '--title', request.title.slice(0, 200), '--body', request.body,
+    ], ctx)
+    const created = await this.releaseOf(root, repo, request.workBranch, ctx)
+    if (created === null) throw new Error('forge_release: the release pull request was created but cannot be found')
+    return { number: created.number }
+  }
+
+  /**
+   * Where the release stands, and merge it once it may be: approved by a
+   * reviewer at its head, with green checks. One look, no waiting — the loop
+   * asks again on its next tick. Merged into the trunk on the forge only; the
+   * checkout is never moved onto the trunk.
+   */
+  async advanceRelease(request: { workspaceRoot: string, workBranch: string }): Promise<{ state: 'merged', number: number, mergeCommit: string } | { state: 'waiting' | 'changes', number: number, notes?: string }> {
+    const { root, repo, ctx } = this.releaseContext(request.workspaceRoot, request.workBranch)
+    const self = await this.authenticatedLogin(root, repo, ctx)
+    const found = await this.releaseOf(root, repo, request.workBranch, ctx, true)
+    if (found === null) throw new Error(`forge_release: no release pull request from ${request.workBranch}`)
+    if (found.state === 'MERGED') return { state: 'merged', number: found.number, mergeCommit: found.mergeCommit }
+    const verdict = await this.readReviewVerdict(root, repo, found.number, 'release', found.head, self, ctx)
+    if (verdict === null) return { state: 'waiting', number: found.number }
+    if (verdict.result.kind !== 'review' || verdict.result.verdict !== 'PASS') {
+      return { state: 'changes', number: found.number, ...(verdict.result.kind === 'review' && verdict.result.notes ? { notes: verdict.result.notes } : {}) }
+    }
+    const neutral = await mkdtemp(join(tmpdir(), 'devloop-merge-'))
+    try {
+      await this.forge(neutral, ['pr', 'merge', String(found.number), '--repo', repoSlug(repo), '--merge', '--match-head-commit', found.head], ctx)
+    } finally {
+      await rm(neutral, { recursive: true, force: true })
+    }
+    const merged = await this.releaseOf(root, repo, request.workBranch, ctx, true)
+    if (merged?.state !== 'MERGED') throw new Error(`forge_release: pull request ${found.number} is not merged after merging it`)
+    return { state: 'merged', number: merged.number, mergeCommit: merged.mergeCommit }
+  }
+
+  private releaseContext(workspaceRoot: string, workBranch: string): { root: string, repo: ForgeRepo, ctx: RunCtx } {
+    if (!isValidBranchName(workBranch) || workBranch.toLowerCase() === this.options.base.toLowerCase()) {
+      throw new Error('forge_release: the work branch is missing, invalid or the trunk')
+    }
+    if (this.options.reviewers.length === 0 || this.options.pushUrl.length === 0) throw new Error('forge_release: forge is not configured to decide or merge')
+    const ctx: RunCtx = { deadline: Date.now() + MERGE_BUDGET_MS, budgetMs: MERGE_BUDGET_MS, base: this.options.base }
+    return { root: resolve(workspaceRoot), repo: parseRemoteUrl(this.options.pushUrl), ctx }
+  }
+
+  /** The release pull request: same-repo, the work branch into the trunk; open, or also merged when asked. */
+  private async releaseOf(root: string, repo: ForgeRepo, workBranch: string, ctx: RunCtx, orMerged = false): Promise<{ number: number, head: string, state: 'OPEN' | 'MERGED', mergeCommit: string } | null> {
+    const raw = await this.forge(root, [
+      'pr', 'list', '--repo', repoSlug(repo), '--head', workBranch, '--base', this.options.base, '--state', orMerged ? 'all' : 'open',
+      '--json', `${PR_FIELDS},state,mergeCommit`, '--limit', '20',
+    ], ctx)
+    const listed: unknown = parseJson(raw, 'forge_pr: pr list')
+    if (!Array.isArray(listed)) throw new Error('forge_pr: pr list did not return an array')
+    const matching = listed.filter(entry => isRecord(entry) && (entry.state === 'OPEN' || (orMerged && entry.state === 'MERGED')))
+      .map(entry => ({ entry: entry as Record<string, unknown>, pr: readPullRequest(entry) }))
+      .filter(({ pr }) => !pr.isCrossRepository && pr.baseRefName === this.options.base && pr.headRefName === workBranch)
+    const open = matching.filter(({ entry }) => entry.state === 'OPEN')
+    if (open.length > 1) throw new Error(`forge_release: ${open.length} open release pull requests from ${workBranch}`)
+    const chosen = open[0] ?? matching.find(({ entry }) => entry.state === 'MERGED')
+    if (chosen === undefined) return null
+    if (chosen.entry.state === 'OPEN') return { number: chosen.pr.number, head: chosen.pr.headRefOid.toLowerCase(), state: 'OPEN', mergeCommit: '' }
+    const oid = isRecord(chosen.entry.mergeCommit) ? chosen.entry.mergeCommit.oid : undefined
+    if (typeof oid !== 'string' || !SHA.test(oid)) throw new Error(`forge_release: pull request ${chosen.pr.number} is merged but names no merge commit`)
+    return { number: chosen.pr.number, head: chosen.pr.headRefOid.toLowerCase(), state: 'MERGED', mergeCommit: oid.toLowerCase() }
+  }
+
   /** The one pull request for this task against the work branch at the reviewed commit: open, or merged at it. */
   private async pullRequestOf(root: string, repo: ForgeRepo, branch: string, base: string, sha: string, ctx: RunCtx): Promise<{ number: number, state: 'OPEN' | 'MERGED', mergeCommit: string }> {
     const raw = await this.forge(root, [

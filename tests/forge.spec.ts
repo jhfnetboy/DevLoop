@@ -1454,3 +1454,42 @@ describe('ForgePrBackend merging a task', () => {
     expect(cwds[0]).toContain('devloop-merge-')
   })
 })
+
+describe('ForgePrBackend releasing the work branch', () => {
+  const WORK = 'devloop/feature'
+  const release = (overrides: Record<string, unknown> = {}) => pr({ number: 9, baseRefName: 'main', headRefName: WORK, headRefOid: HEAD_SHA, state: 'OPEN', mergeCommit: null, ...overrides })
+  const request = { workspaceRoot: '/repo', workBranch: WORK }
+  const releaser = (stub: StubOptions) => backend({ verdictSource: 'reviews' }, stub)
+  const calls = (stub: StubOptions & { calls: Recorded[] }, verb: string) => stub.calls.filter(call => call.argv[0] === 'pr' && call.argv[1] === verb)
+
+  it('opens the release pull request into the trunk, labelled, with the summary it is given; or finds the open one', async () => {
+    const stub = { prLists: [[], [release()]], calls: [] as Recorded[] }
+    expect(await releaser(stub).openRelease({ ...request, title: 'DevLoop release: feature', body: 'T1 #7 APPROVE' })).toEqual({ number: 9 })
+    const create = calls(stub, 'create')[0]?.argv ?? []
+    expect([create[create.indexOf('--head') + 1], create[create.indexOf('--base') + 1], create[create.indexOf('--label') + 1]]).toEqual([WORK, 'main', DEVLOOP_LABEL])
+    expect(create[create.indexOf('--body') + 1]).toBe('T1 #7 APPROVE')
+    const again = { prLists: [[release()]], calls: [] as Recorded[] }
+    expect(await releaser(again).openRelease({ ...request, title: 't', body: 'b' })).toEqual({ number: 9 })
+    expect(calls(again, 'create')).toHaveLength(0)
+  })
+
+  it('waits for a review, returns a request for changes, and merges an approved, green release at its head', async () => {
+    expect(await releaser({ prLists: [[release()]], reviews: [] }).advanceRelease(request)).toEqual({ state: 'waiting', number: 9 })
+    expect(await releaser({ prLists: [[release()]], reviews: [{ author: REVIEWER, state: 'CHANGES_REQUESTED', commit: HEAD_SHA, body: 'T2 skipped review' }] }).advanceRelease(request))
+      .toEqual({ state: 'changes', number: 9, notes: 'T2 skipped review' })
+    expect(await releaser({ prLists: [[release()]], reviews: [{ author: REVIEWER, state: 'APPROVED', commit: HEAD_SHA, body: '' }], checks: [{ context: 'ci', state: 'PENDING' }] }).advanceRelease(request))
+      .toEqual({ state: 'waiting', number: 9 })
+    const approved = { prLists: [[release()], [release({ state: 'MERGED', mergeCommit: { oid: OTHER_SHA } })]], reviews: [{ author: REVIEWER, state: 'APPROVED', commit: HEAD_SHA, body: '' }], calls: [] as Recorded[] }
+    expect(await releaser(approved).advanceRelease(request)).toEqual({ state: 'merged', number: 9, mergeCommit: OTHER_SHA })
+    expect(calls(approved, 'merge')[0]?.argv).toEqual(['pr', 'merge', '9', '--repo', 'github.com/acme/widgets', '--merge', '--match-head-commit', HEAD_SHA])
+  })
+
+  it('does not merge a release twice, and releases only a work branch', async () => {
+    const done = { prLists: [[release({ state: 'MERGED', mergeCommit: { oid: OTHER_SHA } })]], calls: [] as Recorded[] }
+    expect(await releaser(done).advanceRelease(request)).toEqual({ state: 'merged', number: 9, mergeCommit: OTHER_SHA })
+    expect(calls(done, 'merge')).toHaveLength(0)
+    await expect(releaser({}).advanceRelease({ ...request, workBranch: 'main' })).rejects.toThrow(/the trunk/)
+    await expect(releaser({}).openRelease({ ...request, workBranch: '-x', title: 't', body: 'b' })).rejects.toThrow(/invalid/)
+    await expect(releaser({ prLists: [[]] }).advanceRelease(request)).rejects.toThrow(/no release pull request/)
+  })
+})
