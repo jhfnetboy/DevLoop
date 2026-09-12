@@ -500,6 +500,9 @@ const REVIEW_VERDICTS = new Set<ReviewVerdict>([
   'BLOCKED',
 ])
 
+/** Room for the checker's size summary ("230 lines, 6 files"); anything longer was not written by us. */
+const MAX_OVER_BUDGET = 200
+
 function isTaskShape(value: unknown): boolean {
   if (typeof value !== 'object' || value === null) return false
   const task = value as Record<string, unknown>
@@ -516,6 +519,7 @@ function isTaskShape(value: unknown): boolean {
     && (task.lastReviewVerdict === undefined || REVIEW_VERDICTS.has(task.lastReviewVerdict as ReviewVerdict))
     && (task.baseSha === undefined || (typeof task.baseSha === 'string' && /^[0-9a-f]{40}$/i.test(task.baseSha)))
     && (task.implementationSha === undefined || (typeof task.implementationSha === 'string' && /^[0-9a-f]{40}$/i.test(task.implementationSha)))
+    && (task.overBudget === undefined || (typeof task.overBudget === 'string' && task.overBudget.length > 0 && task.overBudget.length <= MAX_OVER_BUDGET))
     && (task.planner === undefined || (typeof task.planner === 'string' && task.planner.length > 0))
     && (task.implementer === undefined || (typeof task.implementer === 'string' && task.implementer.length > 0))
     && (task.reviewer === undefined || (typeof task.reviewer === 'string' && task.reviewer.length > 0))

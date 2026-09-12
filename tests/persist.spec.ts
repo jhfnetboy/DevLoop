@@ -173,6 +173,20 @@ describe('persist and tick', () => {
     expect((await loadState(bad, 1)).supervisor?.reason).toBe('invalid_state')
   })
 
+  it('keeps a task\'s elastic-band size across a save, and treats an empty or overlong one as invalid', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'devloop-'))
+    await mkdir(join(root, '.devloop'))
+    await saveState(root, { ...emptyState(0), tasks: [{ ...sampleTask(), overBudget: '230 lines, 6 files' }] })
+    expect((await loadState(root, 1)).tasks[0]?.overBudget).toBe('230 lines, 6 files')
+
+    for (const overBudget of ['', 'x'.repeat(201)]) {
+      const bad = await mkdtemp(join(tmpdir(), 'devloop-'))
+      await mkdir(join(bad, '.devloop'))
+      await writeFile(join(bad, '.devloop', 'STATE.json'), JSON.stringify({ ...emptyState(0), tasks: [{ ...sampleTask(), overBudget }] }), 'utf8')
+      expect((await loadState(bad, 1)).supervisor?.reason).toBe('invalid_state')
+    }
+  })
+
   it('halts when persisted attempts are negative', async () => {
     const root = await mkdtemp(join(tmpdir(), 'devloop-'))
     await mkdir(join(root, '.devloop'))

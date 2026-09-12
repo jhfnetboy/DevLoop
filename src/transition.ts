@@ -6,6 +6,8 @@ import type { HoldReason, LoopState, Task, TaskStatus } from './types.js'
 export interface ApplyAgentResultOptions {
   readonly agent: string
   readonly implementationSha?: string
+  /** The checker's size, when the commit is inside the elastic band. */
+  readonly overBudget?: string
 }
 
 /** Pure, fail-closed conversion from a validated model result to domain state. */
@@ -58,6 +60,8 @@ function applyImplementation(
     status,
     attempts: state.usage.taskAttempts[taskId] ?? task.attempts,
     ...(options.implementationSha === undefined ? {} : { implementationSha: options.implementationSha }),
+    // Per commit: a new attempt is judged on its own size, not the last one's.
+    overBudget: options.overBudget,
     implementer: options.agent,
     lastReviewVerdict: undefined,
     reviewer: undefined,

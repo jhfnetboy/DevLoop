@@ -34,6 +34,12 @@ export interface Task {
   readonly baseSha?: string
   /** Host-created implementation commit that the independent review must bind to. */
   readonly implementationSha?: string
+  /**
+   * Set when that commit is over the PR size budget but inside its elastic band:
+   * it goes to review rather than back to planning, and the reviewer is told why
+   * it is bigger than asked, to judge whether it should have been split.
+   */
+  readonly overBudget?: string
   /** Provider/model identity that planned this task; the plan has no task of its own to carry it. */
   readonly planner?: string
   /** Provider/model identity that produced the implementation. */
