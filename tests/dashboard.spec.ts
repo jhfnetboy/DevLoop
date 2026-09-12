@@ -306,11 +306,11 @@ describe('dashboard assets', () => {
 })
 
 describe('dashboard strings', () => {
-  async function strings(): Promise<{ STRINGS: Record<string, string[]>, t: (key: string, vars?: object) => string, setLang: (l: string) => void }> {
+  async function strings(saved: string | null = null): Promise<{ STRINGS: Record<string, string[]>, t: (key: string, vars?: object) => string, setLang: (l: string) => void, locale: () => string }> {
     const { runInNewContext } = await import('node:vm')
     const assets = await loadDashboardAssets(dashboardAssetsDir())
-    const context = { localStorage: { getItem: () => null, setItem() {} }, document: { documentElement: {} } }
-    runInNewContext(`${assets.i18n}\n;globalThis.out = { STRINGS, t, setLang }`, context)
+    const context = { localStorage: { getItem: () => saved, setItem() {} }, document: { documentElement: {} } }
+    runInNewContext(`${assets.i18n}\n;globalThis.out = { STRINGS, t, setLang, locale }`, context)
     return (context as unknown as { out: Awaited<ReturnType<typeof strings>> }).out
   }
 
@@ -325,6 +325,8 @@ describe('dashboard strings', () => {
     for (const verb of ['plan', 'delegate', 'review', 'merge']) asked.add(`doing.${verb}`)
     for (const key of ['retry', 'review', 'accept', 'stop']) asked.add(`answer.${key}`)
     for (const col of ['id', 'title', 'status', 'tier', 'attempts', 'reviews', 'verdict']) asked.add(`tasks.col.${col}`)
+    for (const doc of ['roadmap', 'tasks', 'progress', 'acceptance', 'architecture', 'spec', 'research']) asked.add(`docs.${doc}.md`)
+    for (const step of ['prepare', 'branch', 'add', 'start', 'watch', 'finish']) asked.add(`guide.${step}`).add(`guide.${step}.text`)
     expect(asked.size).toBeGreaterThan(40)
     for (const key of asked) {
       expect(STRINGS[key], key).toHaveLength(3)
@@ -341,6 +343,16 @@ describe('dashboard strings', () => {
     setLang('th')
     expect(t('doing.review', { task: 'T-2' })).toBe('กำลังรีวิว T-2')
     expect(t('no.such.key')).toBe('no.such.key')
+  })
+
+  it('takes a saved choice only when it is one of the three languages', async () => {
+    expect((await strings('th')).t('lane.done')).toBe('เสร็จแล้ว')
+    // Inherited names are not languages: without an own-property check, `constructor` passed as one.
+    // The locale matters as much as the words: time() hands it to toLocaleString, which throws on a function.
+    for (const saved of ['constructor', 'toString', 'fr']) expect((await strings(saved)).locale(), saved).toBe('en-US')
+    const { locale, setLang } = await strings()
+    setLang('__proto__')
+    expect(locale()).toBe('en-US')
   })
 })
 
