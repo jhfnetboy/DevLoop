@@ -447,6 +447,10 @@ export class ForgePrBackend implements AgentBackend {
     if (verdict === null || verdict.result.kind !== 'review' || !isApproval(verdict.result.verdict)) {
       throw new Error(`forge_review_gone: pull request ${found.number} is no longer approved with green checks at ${sha}`)
     }
+    // A review verdict already waited for green checks; a comment verdict never looked, so look now.
+    if (this.options.verdictSource === 'comments' && await this.readChecks(root, repo, found.number, ctx) !== 'passed') {
+      throw new Error(`forge_review_gone: pull request ${found.number} is approved, but its checks at ${sha} are not green`)
+    }
     const neutral = await mkdtemp(join(tmpdir(), 'devloop-merge-'))
     try {
       await this.forge(neutral, ['pr', 'merge', String(found.number), '--repo', repoSlug(repo), '--merge', '--match-head-commit', sha], ctx)

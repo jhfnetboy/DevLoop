@@ -1425,6 +1425,18 @@ describe('ForgePrBackend merging a task', () => {
     await expect(merger({ prLists: [[pr({ baseRefName: 'main', state: 'OPEN' })]], reviews: approved }).mergeTask(request)).rejects.toThrow(/0 pull requests/)
   })
 
+  it('merges a comment-approved pull request only once its checks are green too', async () => {
+    const envelopeApproval = [comment(REVIEWER, envelope('TASK-1', HEAD_SHA, 'PASS'))]
+    for (const checks of [[{ name: 'test', conclusion: 'FAILURE' }], [{ context: 'ci', state: 'PENDING' }]]) {
+      const calls: Recorded[] = []
+      const fromComments = backend({ verdictSource: 'comments' }, { prLists: [[open]], comments: envelopeApproval, checks, prView: pr({ baseRefName: WORK }), calls })
+      await expect(fromComments.mergeTask(request)).rejects.toThrow(/^forge_review_gone: .* checks .* are not green/)
+      expect(mergeCalls(calls)).toHaveLength(0)
+    }
+    const green = backend({ verdictSource: 'comments' }, { prLists: [[open], [merged]], comments: envelopeApproval, checks: [{ name: 'test', conclusion: 'SUCCESS' }], prView: pr({ baseRefName: WORK }) })
+    expect(await green.mergeTask(request)).toEqual({ number: 7, mergeCommit: OTHER_SHA })
+  })
+
   it('merges only into a work branch, never the trunk', async () => {
     await expect(merger({ prLists: [[open]], reviews: approved }).mergeTask({ ...request, workBranch: 'main' })).rejects.toThrow(/the trunk/)
     await expect(merger({ prLists: [[open]], reviews: approved }).mergeTask({ ...request, workBranch: '-x' })).rejects.toThrow(/invalid/)
