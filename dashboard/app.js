@@ -217,20 +217,20 @@ function redrawPicker() {
 
 function addProject(root) {
   return async () => {
-    if (!root) throw new Error('先选一个仓库')
+    if (!root) throw new Error(t('add.pickFirst'))
     const value = await postJson(`${API}/projects`, { root })
     closePicker()
-    return { text: `已添加：${value.root}。它还没有目标，点进去写一个就会开始。` }
+    return { text: t('add.done', { root: value.root }) }
   }
 }
 
 function addProjectPanel() {
-  const note = el('p', { class: 'note' }, '一个项目就是一个需求：一个 git 仓库，写好目标后它的循环会把目标拆成任务逐个完成。')
+  const note = el('p', { class: 'note' }, t('add.note'))
   if (!picker.open) {
-    const open = el('button', { type: 'button', class: 'btn primary' }, '浏览仓库…')
+    const open = el('button', { type: 'button', class: 'btn primary' }, t('btn.browse'))
     open.addEventListener('click', () => void browseTo([]))
     return el('section', { class: 'panel add', id: 'add-panel' },
-      el('h3', {}, '添加项目'), el('div', { class: 'actions' }, open), note)
+      el('h3', {}, t('add.title')), el('div', { class: 'actions' }, open), note)
   }
 
   const listing = picker.listing
@@ -243,9 +243,9 @@ function addProjectPanel() {
   })
 
   let body
-  if (picker.loading) body = el('p', { class: 'muted' }, '读取中…')
+  if (picker.loading) body = el('p', { class: 'muted' }, t('add.reading'))
   else if (picker.error) body = el('div', { class: 'banner bad' }, picker.error)
-  else if (!listing.entries.length) body = el('p', { class: 'muted' }, '这里没有子目录。')
+  else if (!listing.entries.length) body = el('p', { class: 'muted' }, t('add.empty'))
   else {
     body = el('div', { class: 'picker-list' }, listing.entries.map((entry) => {
       const selected = picker.selected === entry.root
@@ -257,7 +257,7 @@ function addProjectPanel() {
       },
       el('span', { class: 'pick-icon' }, entry.repo ? '⎇' : '▸'),
       el('span', { class: 'pick-name' }, entry.name),
-      entry.registered ? badge('已添加', 'ok', true) : entry.repo ? badge('git 仓库', 'accent', true) : el('span', { class: 'muted' }, '打开 ›'))
+      entry.registered ? badge(t('add.added'), 'ok', true) : entry.repo ? badge(t('add.repo'), 'accent', true) : el('span', { class: 'muted' }, t('add.open')))
       row.addEventListener('click', () => {
         if (!entry.repo) return void browseTo([...picker.path, entry.name])
         picker.selected = selected ? null : entry.root
@@ -267,60 +267,60 @@ function addProjectPanel() {
     }))
   }
 
-  const add = actionButton('添加', 'primary', null, addProject(picker.selected))
+  const add = actionButton(t('add.add'), 'primary', null, addProject(picker.selected))
   add.disabled = !picker.selected
-  const cancel = el('button', { type: 'button', class: 'btn' }, '取消')
+  const cancel = el('button', { type: 'button', class: 'btn' }, t('btn.cancel'))
   cancel.addEventListener('click', () => { closePicker(); void load(true) })
 
   return el('section', { class: 'panel add', id: 'add-panel' },
-    el('h3', {}, '添加项目'),
+    el('h3', {}, t('add.title')),
     el('div', { class: 'crumbs' }, crumbs.flatMap((c, i) => i ? [el('span', { class: 'muted' }, ' / '), c] : [c])),
     listing ? el('div', { class: 'path' }, [listing.root, ...picker.path].join('/')) : null,
     body,
-    listing && listing.truncated ? el('p', { class: 'note' }, '目录太多，只列出了前 500 个。') : null,
+    listing && listing.truncated ? el('p', { class: 'note' }, t('add.truncated')) : null,
     el('div', { class: 'actions' },
       add, cancel,
-      el('span', { class: 'path selected-path' }, picker.selected || '点一个 git 仓库选中它')),
+      el('span', { class: 'path selected-path' }, picker.selected || t('add.pickHint'))),
     note)
 }
 
 // Blocking checks refuse a start (the server refuses it too); the rest advise.
 function readinessPanel(r) {
-  if (!r) return el('div', { class: 'banner bad' }, '读不到这个仓库的状态，暂时不能启动。处理后点「重新检查」。')
+  if (!r) return el('div', { class: 'banner bad' }, t('start.unreadable', { recheck: t('start.recheck') }))
   return el('div', { class: 'readiness' },
     el('div', { class: 'readiness-head' },
-      r.ready ? badge('可以启动', 'ok') : badge('先处理红色项', 'bad'),
-      el('span', { class: 'muted' }, ` 主干 ${r.base}`)),
+      r.ready ? badge(t('start.ready'), 'ok') : badge(t('start.fixRed'), 'bad'),
+      el('span', { class: 'muted' }, t('start.trunk', { base: r.base }))),
     el('ul', { class: 'checks' }, r.checks.map(c => el('li', { class: c.ok ? 'ok' : c.blocking ? 'bad' : 'warn' },
       el('span', { class: 'mark' }, c.ok ? '✓' : c.blocking ? '✕' : '!'),
       el('span', { class: 'msg' }, c.message)))))
 }
 
 function startPanel(p) {
-  const area = el('textarea', { class: 'goal-input', rows: '8', placeholder: '# 目标\n\n对应哪个 Feature / Task（如 docs/agent/tasks.md 里的 T1.2.x）、做到什么程度算完成（验收命令）、范围、不做什么……' })
+  const area = el('textarea', { class: 'goal-input', rows: '8', placeholder: t('start.placeholder') })
   area.value = goalDrafts.get(p.id) || ''
   area.addEventListener('input', () => goalDrafts.set(p.id, area.value))
   // Unknown is not ready: a readiness the server could not read is refused there too.
   const ready = Boolean(p.readiness && p.readiness.ready)
-  const start = actionButton('写入 GOAL.md 并启动', 'primary',
-    '启动这个项目的循环？之后它会按配置调用模型、花费预算，并在当前分支上合并任务。目标写入后不能从页面修改。',
+  const start = actionButton(t('start.button'), 'primary',
+    t('start.confirm'),
     async () => {
       const goal = area.value.trim()
-      if (!goal) throw new Error('目标是空的')
+      if (!goal) throw new Error(t('start.emptyGoal'))
       await postJson(`${API}/projects/${p.id}/start`, { goal })
       goalDrafts.delete(p.id)
-      return { text: '已写入 GOAL.md，循环已唤醒。' }
+      return { text: t('start.done') }
     })
   start.disabled = !ready
-  const recheck = el('button', { type: 'button', class: 'btn' }, '重新检查')
+  const recheck = el('button', { type: 'button', class: 'btn' }, t('start.recheck'))
   recheck.addEventListener('click', () => void load(true))
   return el('section', { class: 'panel start' },
-    el('h3', {}, '启动循环'),
-    el('p', {}, '写下这个需求的目标。保存为 .devloop/GOAL.md 后，循环会先规划出一系列任务，再逐个交给模型实现、评审、合并。'),
+    el('h3', {}, t('start.title')),
+    el('p', {}, t('start.intro')),
     readinessPanel(p.readiness),
     area,
     el('div', { class: 'actions' }, start, recheck),
-    el('p', { class: 'note' }, '建议先在 Claude Code 里用 pilot status 清理、pilot plan 写好 docs/agent/，规划器会读它们。已有的目标只能在本机手工修改：正在跑的循环按旧目标规划的任务不会因为目标被替换而自动作废。'))
+    el('p', { class: 'note' }, t('start.note')))
 }
 
 // A half-typed goal survives the rebuild that a failed start or a re-check causes.
@@ -329,12 +329,12 @@ const goalDrafts = new Map()
 function removeButton(p) {
   if (p.own) return null
   if (p.armed && !p.halted) return null
-  return actionButton('移除项目', '',
-    '把这个项目从列表里移除？它的循环会停下；仓库里的 .devloop、worktree 和分支都原样保留，随时可以重新添加。',
+  return actionButton(t('remove.button'), '',
+    t('remove.confirm'),
     async () => {
       await postJson(`${API}/projects/${p.id}/unregister`, {})
       location.hash = '#/'
-      return { text: `已移除：${p.name}` }
+      return { text: t('remove.done', { name: p.name }) }
     })
 }
 
