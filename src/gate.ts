@@ -109,7 +109,7 @@ export function gateFor(state: LoopState, limits: BudgetLimits, now: number): Ga
       `the recorded reason is ${reason}`,
     ], taskId === null ? [STOP] : [RETRY, STOP]), key: 'generic', vars }
   }
-  return { ...compose({ reason, taskId, task, limits, base }), key: base, vars }
+  return { key: base, ...compose({ reason, taskId, task, limits, base }), vars }
 }
 
 interface GateContext {
@@ -131,7 +131,10 @@ interface GateContext {
  */
 type KnownReasonBase = BaseReason<HoldReason> | BaseReason<CircuitReason>
 
-const KNOWN_GATES: Record<KnownReasonBase, (ctx: GateContext) => Omit<Gate, 'key' | 'vars'>> = {
+/** A family may name its own translation key when one reason asks different questions at different stages. */
+type ComposeGate = (ctx: GateContext) => Omit<Gate, 'key' | 'vars'> & Partial<Pick<Gate, 'key'>>
+
+const KNOWN_GATES: Record<KnownReasonBase, ComposeGate> = {
   empty_task: ({ reason, taskId }) =>
     gate(reason, taskId, 'The task branch has no commits, but review passed it. Did it need any change?', [
       `${label(taskId)} is still at the commit it started from`,
@@ -194,17 +197,26 @@ const KNOWN_GATES: Record<KnownReasonBase, (ctx: GateContext) => Omit<Gate, 'key
   // The task itself is fine and still merge_ready; only where it would land is
   // wrong. Redoing it would pay for the same change again, so the answer is to
   // move the checkout and resume, which merges on the next tick.
-  merge_onto_trunk: ({ reason, taskId }) =>
-    gate(reason, taskId, 'The checkout is on a trunk branch, so the reviewed task was not merged. Move it back to the work branch, then resume?', [
+  merge_onto_trunk: ({ reason, taskId, task }) => task?.status === 'merge_ready'
+    ? gate(reason, taskId, 'The checkout is on a trunk branch, so the reviewed task was not merged. Move it back to the work branch, then resume?', [
       `${label(taskId)} passed review and is waiting to merge`,
       'DevLoop merges into the checked-out branch locally, and never into main, master or the configured base',
-    ], [STOP], 'Switch the checkout back to the branch the loop was started on (e.g. git switch <work-branch>), then resume (恢复循环 on the page, or devloop resume); the task merges on the next tick.'),
+    ], [STOP], 'Switch the checkout back to the branch the loop was started on (e.g. git switch <work-branch>), then resume (恢复循环 on the page, or devloop resume); the task merges on the next tick.')
+    // Held before the review: nothing has passed yet, and no pull request was opened.
+    : { ...gate(reason, taskId, 'The checkout is on a trunk branch, so the task\'s pull request was not opened. Move it back to the work branch, then resume?', [
+      `${label(taskId)} is ready for review, and its pull request would target the checked-out branch`,
+      'DevLoop never opens a task pull request into main, master or the configured base',
+    ], [STOP], 'Switch the checkout back to the branch the loop was started on (e.g. git switch <work-branch>), then resume (恢复循环 on the page, or devloop resume); the task is reviewed on the next tick.'), key: 'merge_onto_trunk_review' },
 
-  merge_detached_head: ({ reason, taskId }) =>
-    gate(reason, taskId, 'The checkout has no branch, so the reviewed task was not merged. Check out the work branch, then resume?', [
+  merge_detached_head: ({ reason, taskId, task }) => task?.status === 'merge_ready'
+    ? gate(reason, taskId, 'The checkout has no branch, so the reviewed task was not merged. Check out the work branch, then resume?', [
       `${label(taskId)} passed review and is waiting to merge`,
       'HEAD is detached, and there is no branch to merge into',
-    ], [STOP], 'Check out the branch the loop was started on (e.g. git switch <work-branch>), then resume (恢复循环 on the page, or devloop resume); the task merges on the next tick.'),
+    ], [STOP], 'Check out the branch the loop was started on (e.g. git switch <work-branch>), then resume (恢复循环 on the page, or devloop resume); the task merges on the next tick.')
+    : { ...gate(reason, taskId, 'The checkout has no branch, so the task\'s pull request was not opened. Check out the work branch, then resume?', [
+      `${label(taskId)} is ready for review, and its pull request would target the checked-out branch`,
+      'HEAD is detached, and there is no branch for it to target',
+    ], [STOP], 'Check out the branch the loop was started on (e.g. git switch <work-branch>), then resume (恢复循环 on the page, or devloop resume); the task is reviewed on the next tick.'), key: 'merge_detached_head_review' },
 
   dispatch_refused: ({ reason, taskId, limits }) =>
     gate(reason, taskId, 'The provider refused to start this task, so nothing has run. Fix the route, or leave it?', [
