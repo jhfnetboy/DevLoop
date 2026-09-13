@@ -84,6 +84,8 @@ export type HoldReason =
   | 'unknown_base'
   | 'merge_onto_trunk'
   | 'merge_detached_head'
+  // A task's branch name is taken by a branch with work of its own; nothing was reset over it.
+  | 'task_branch_taken'
   | 'missing_agent_result'
   | 'invalid_agent_result'
   | 'result_transition_failed'
