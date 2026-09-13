@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { homedir } from 'node:os'
-import { taskGitEnv } from './worktree.js'
+import { NULL_DEVICE, repoNeutralEnv, taskGitEnv } from './worktree.js'
 
 /**
  * PR-daemon's mechanical pre-PR rules, run against one task's change.
@@ -108,14 +108,14 @@ interface Execution {
 async function execute(command: string, args: readonly string[], cwd: string, timeoutMs: number): Promise<Execution> {
   // The checker reads the repository through git; nothing inherited may point it elsewhere, and in a
   // task worktree the host's own paths are pinned so a rewritten commondir cannot either.
-  const { GIT_DIR: _dir, GIT_WORK_TREE: _tree, GIT_INDEX_FILE: _index, GIT_COMMON_DIR: _common, ...inherited } = process.env
   let pinned: Record<string, string> | null
   try {
     pinned = await taskGitEnv(cwd)
   } catch (error) {
     return { code: null, stdout: '', error: error instanceof Error ? error.message : 'worktree gitdir check failed' }
   }
-  const env = { ...inherited, ...pinned, GIT_CONFIG_PARAMETERS: "'core.fsmonitor=false'" }
+  // The checker only reads, so no hook of the worktree's has reason to run for it.
+  const env = { ...repoNeutralEnv(), ...pinned, GIT_CONFIG_PARAMETERS: `'core.fsmonitor=false' 'core.hooksPath=${NULL_DEVICE}'` }
   return new Promise((resolve) => {
     execFile(command, args, { cwd, timeout: timeoutMs, maxBuffer: MAX_OUTPUT, env, encoding: 'utf8' }, (error, stdout) => {
       if (error === null) return resolve({ code: 0, stdout, error: null })

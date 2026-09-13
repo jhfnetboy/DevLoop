@@ -636,21 +636,35 @@ function isNotFound(error: unknown): boolean {
   return error instanceof Error && 'code' in error && error.code === 'ENOENT'
 }
 
-async function git(root: string, args: readonly string[]): Promise<string> {
-  const hooksPath = process.platform === 'win32' ? 'NUL' : '/dev/null'
+function git(root: string, args: readonly string[]): Promise<string> {
+  return hostGit(root, args)
+}
+
+/**
+ * Every git this host runs in a repository or a task worktree. `-C root` alone
+ * loses to an inherited GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE or GIT_COMMON_DIR,
+ * so those are dropped; a task worktree's git directories are the host's
+ * (`taskGitEnv`); a configured fsmonitor never runs; nothing prompts, pages or
+ * takes an optional lock. Hooks are off, except that `repoHooks` keeps them in
+ * a repository itself, never in a task worktree.
+ */
+export async function hostGit(root: string, args: readonly string[], options: { readonly timeoutMs?: number, readonly repoHooks?: boolean } = {}): Promise<string> {
   const pinned = await taskGitEnv(root)
-  const { stdout } = await execFileAsync('git', ['-C', root, '-c', `core.hooksPath=${hooksPath}`, '-c', 'core.fsmonitor=false', ...args], {
+  const noHooks = options.repoHooks && pinned === null ? [] : ['-c', `core.hooksPath=${NULL_DEVICE}`]
+  const { stdout } = await execFileAsync('git', ['-C', root, '-c', 'core.fsmonitor=false', ...noHooks, ...args], {
     encoding: 'utf8',
-    timeout: 30_000,
-    env: {
-      ...process.env,
-      GIT_PAGER: 'cat',
-      GIT_TERMINAL_PROMPT: '0',
-      GIT_OPTIONAL_LOCKS: '0',
-      ...pinned,
-    },
+    timeout: options.timeoutMs ?? 30_000,
+    env: { ...repoNeutralEnv(), GIT_PAGER: 'cat', GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0', ...pinned },
   })
   return stdout
+}
+
+export const NULL_DEVICE = process.platform === 'win32' ? 'NUL' : '/dev/null'
+
+/** The process environment without the variables that point git at a repository. */
+export function repoNeutralEnv(): NodeJS.ProcessEnv {
+  const { GIT_DIR: _dir, GIT_WORK_TREE: _tree, GIT_INDEX_FILE: _index, GIT_COMMON_DIR: _common, ...rest } = process.env
+  return rest
 }
 
 /**

@@ -1,9 +1,8 @@
-import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { constants, lstat, mkdir, open, readdir, readFile, realpath, rename, stat, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path'
-import { promisify } from 'node:util'
+import { hostGit } from './worktree.js'
 
 /**
  * The projects an operator has asked the dashboard to show.
@@ -134,8 +133,6 @@ export class ProjectError extends Error {
   }
 }
 
-const execFileAsync = promisify(execFile)
-
 /** Resolve and check a candidate root. Returns its realpath. */
 export async function validateProjectRoot(root: string): Promise<string> {
   if (typeof root !== 'string' || !isAbsolute(root)) throw new ProjectError('root must be an absolute path')
@@ -149,8 +146,8 @@ export async function validateProjectRoot(root: string): Promise<string> {
   if (!meta.isDirectory()) throw new ProjectError(`${real} is not a directory`)
   let toplevel: string
   try {
-    const { stdout } = await execFileAsync('git', ['-C', real, 'rev-parse', '--show-toplevel'], { timeout: 5_000 })
-    toplevel = await realpath(stdout.trim())
+    // An inherited GIT_WORK_TREE would otherwise name a toplevel that is not this folder's.
+    toplevel = await realpath((await hostGit(real, ['rev-parse', '--show-toplevel'], { timeoutMs: 5_000 })).trim())
   } catch {
     throw new ProjectError(`${real} is not a git repository`)
   }
