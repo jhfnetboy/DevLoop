@@ -213,7 +213,14 @@ export interface LoopState {
    * and a reviewer's request for changes, if one stands.
    */
   readonly release?: Release
+  /** Which of the project's goals this is; absent means the first. Set when a finished goal hands over to the next. */
+  readonly goal?: GoalMark
   readonly updatedAt: string
+}
+
+export interface GoalMark {
+  readonly number: number
+  readonly startedAt: string
 }
 
 export interface TaskContract {

@@ -446,6 +446,7 @@ function isLoopState(value: unknown): value is LoopState {
   // Loose here, strict where it is used: the forge checks it against git's rules before it names it to gh.
   if (record.workBranch !== undefined && !(typeof record.workBranch === 'string' && /^(?!-)[^\x00-\x20\x7f]{1,255}$/.test(record.workBranch))) return false
   if (record.release !== undefined && !isReleaseShape(record.release)) return false
+  if (record.goal !== undefined && !(isNonNegInt(record.goal.number) && record.goal.number >= 2 && typeof record.goal.startedAt === 'string' && record.goal.startedAt.length > 0)) return false
   if (record.tasks.some(task => {
     const entry = task as { id: string; status: string }
     return entry.status === 'running' && !Object.hasOwn((record.usage as { taskStartedAt: object }).taskStartedAt, entry.id)
