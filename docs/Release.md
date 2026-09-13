@@ -1,8 +1,28 @@
-# Release 0.6.6
+# Release 0.6.7
 
-Bounded autonomous engineering loop: structured model results, deterministic state transitions, host-enforced write scope, SHA-bound independent review, durable recovery, and role/tier routing. Tag `v0.6.6` and the GitHub Release are created **after** this commit is on `main`; steps: [Deploy.md](./Deploy.md).
+Bounded autonomous engineering loop: structured model results, deterministic state transitions, host-enforced write scope, SHA-bound independent review, durable recovery, and role/tier routing. Tag `v0.6.7` and the GitHub Release are created **after** this commit is on `main`; steps: [Deploy.md](./Deploy.md).
 
-Package version: **0.6.6**. This document is the release note, not a second semver.
+Package version: **0.6.7**. This document is the release note, not a second semver.
+
+## New in 0.6.7
+
+DeepSeek work defaults to **DeepSeek V4.1 Flash**, by the API id DeepSeek
+published for it (notice of 2026-09-10) and DeepSeek Harness 0.1.5's own
+default agent model: `deepseek-flash`.
+
+- **Default routes** ([#144](https://github.com/jhfnetboy/DevLoop/pull/144)).
+  `routing.T1` and `routing.T2` default to `deepseek-flash` instead of
+  `deepseek-v4-flash` (deprecated, routed to V4.1 Flash for now) and
+  `deepseek-v4-pro` (served by V4.1 Flash from 2026-09-14 12:00 Beijing
+  time). A profile that names its routes is unchanged.
+- **Prices** ([#143](https://github.com/jhfnetboy/DevLoop/pull/143)).
+  `deepseek-flash` is priced from the V4.1 Flash card; `deepseek-v4-flash`
+  and `deepseek-v4-pro` at the same card, each with a note saying why; all
+  are billed as `deepseek-flash`. docs/Pricing.md lists the ids.
+
+The model id passes through to DeepSeek's API, so dsh builds before 0.1.5
+use `deepseek-flash` too (as a text-only route); dsh 0.1.5 adds its image
+input and in-history system prompt updates.
 
 ## New in 0.6.6
 
