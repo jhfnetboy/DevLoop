@@ -147,19 +147,19 @@ export const ConfigSchema: s<Config> = s.object({
     T0: routeSchema('T0', 'local', 'qwen-coder-7b').default({
       tier: 'T0', backend: 'local', model: 'qwen-coder-7b',
     }),
-    T1: routeSchema('T1', 'dsh', 'deepseek-v4-flash').default({
-      tier: 'T1', backend: 'dsh', model: 'deepseek-v4-flash',
+    T1: routeSchema('T1', 'dsh', 'deepseek-flash').default({
+      tier: 'T1', backend: 'dsh', model: 'deepseek-flash',
     }),
-    T2: routeSchema('T2', 'dsh', 'deepseek-v4-pro').default({
-      tier: 'T2', backend: 'dsh', model: 'deepseek-v4-pro',
+    T2: routeSchema('T2', 'dsh', 'deepseek-flash').default({
+      tier: 'T2', backend: 'dsh', model: 'deepseek-flash',
     }),
     T3: routeSchema('T3', 'codex', 'gpt-5.4').default({
       tier: 'T3', backend: 'codex', model: 'gpt-5.4',
     }),
   }).default({
     T0: { tier: 'T0', backend: 'local', model: 'qwen-coder-7b' },
-    T1: { tier: 'T1', backend: 'dsh', model: 'deepseek-v4-flash' },
-    T2: { tier: 'T2', backend: 'dsh', model: 'deepseek-v4-pro' },
+    T1: { tier: 'T1', backend: 'dsh', model: 'deepseek-flash' },
+    T2: { tier: 'T2', backend: 'dsh', model: 'deepseek-flash' },
     T3: { tier: 'T3', backend: 'codex', model: 'gpt-5.4' },
   }),
 })

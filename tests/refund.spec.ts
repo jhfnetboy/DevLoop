@@ -75,7 +75,7 @@ describe('which failures say they never reached a provider', () => {
   })
 
   it('a reviewer route that matches the implementer', async () => {
-    const config = resolveConfig({ reviewerRoute: { tier: 'T3', backend: 'dsh', model: 'deepseek-v4-flash' } })
+    const config = resolveConfig({ reviewerRoute: { tier: 'T3', backend: 'dsh', model: 'deepseek-flash' } })
     const routed = new RoutedBackend({
       planner: config.plannerRoute,
       reviewer: config.reviewerRoute,
