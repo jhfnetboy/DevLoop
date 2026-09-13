@@ -67,7 +67,10 @@ export async function scanRepo(root: string, options: ScanOptions = {}): Promise
     return { name, merged: merged.has(name), protectedBy }
   })
 
-  const counts = await optional(root, ['rev-list', '--left-right', '--count', `refs/heads/${base}...HEAD`])
+  // Against the trunk as the remote has it when there is one: a local trunk nobody pulls lags behind it.
+  const remoteBase = `refs/remotes/origin/${base}`
+  const against = await optional(root, ['rev-parse', '--verify', '--quiet', remoteBase]) === null ? `refs/heads/${base}` : remoteBase
+  const counts = await optional(root, ['rev-list', '--left-right', '--count', `${against}...HEAD`])
   const [behind, ahead] = counts === null ? [null, null] : counts.trim().split(/\s+/).map(Number)
   return {
     branch,

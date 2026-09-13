@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { mkdir, mkdtemp, readFile, realpath, symlink, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, realpath, symlink, writeFile } from 'node:fs/promises'
 import { promisify } from 'node:util'
 import { tmpdir } from 'node:os'
 import type { IncomingMessage, ServerResponse } from 'node:http'
@@ -139,6 +139,30 @@ describe('arming a project', () => {
     const root = await repo('arm-ok-')
     await armProject(root, '  Add a /healthz endpoint  ')
     expect(await readFile(join(root, '.devloop', 'GOAL.md'), 'utf8')).toBe('Add a /healthz endpoint\n')
+  })
+
+  it('keeps .devloop out of the operator\'s commits through the local exclude file, once', async () => {
+    const root = await repo('arm-exclude-')
+    await armProject(root, 'Add a /healthz endpoint')
+    const exclude = join(root, '.git', 'info', 'exclude')
+    expect((await readFile(exclude, 'utf8')).split('\n').filter(line => line === '/.devloop/')).toHaveLength(1)
+    const { stdout } = await execFileAsync('git', ['-C', root, 'status', '--porcelain', '--untracked-files=all'])
+    expect(stdout).not.toContain('.devloop')
+    // An operator's own entry, in any spelling, is left as the only one.
+    const other = await repo('arm-exclude2-')
+    await mkdir(join(other, '.git', 'info'), { recursive: true })
+    await writeFile(join(other, '.git', 'info', 'exclude'), '*.log\n.devloop\n', 'utf8')
+    await armProject(other, 'goal')
+    expect(await readFile(join(other, '.git', 'info', 'exclude'), 'utf8')).toBe('*.log\n.devloop\n')
+    // One that cannot be read is never written over, and the start goes on.
+    const locked = await repo('arm-exclude3-')
+    await mkdir(join(locked, '.git', 'info'), { recursive: true })
+    await writeFile(join(locked, '.git', 'info', 'exclude'), 'secret-pattern\n', 'utf8')
+    await chmod(join(locked, '.git', 'info', 'exclude'), 0o200)
+    await armProject(locked, 'goal')
+    await chmod(join(locked, '.git', 'info', 'exclude'), 0o600)
+    expect(await readFile(join(locked, '.git', 'info', 'exclude'), 'utf8')).toBe('secret-pattern\n')
+    expect(await readFile(join(locked, '.devloop', 'GOAL.md'), 'utf8')).toBe('goal\n')
   })
 
   it('never replaces a goal a loop may already be working toward', async () => {
