@@ -369,7 +369,7 @@ async function stampBaseSha(worktreeRoot: string, contract: TaskContract): Promi
  * Host-side commit after a T3 delegate. The sandbox must not write hooks,
  * objects, or `refs/heads/main`; git metadata updates stay in this process.
  */
-export async function commitDirtyTaskWorktree(worktreeRoot: string, taskId: string): Promise<void> {
+export async function commitDirtyTaskWorktree(worktreeRoot: string, taskId: string, title = ''): Promise<void> {
   const token = worktreeTaskToken(taskId)
   if (!token) throw new Error(`unsafe task id for worktree: ${taskId}`)
   const expected = `refs/heads/${WORKTREE_BRANCH_PREFIX}${token}`
@@ -392,7 +392,15 @@ export async function commitDirtyTaskWorktree(worktreeRoot: string, taskId: stri
     }
     return
   }
-  await git(worktreeRoot, ['commit', '--no-verify', '-m', 'devloop: delegate'])
+  // Named for the task, so the repository's history says which task made which change.
+  await git(worktreeRoot, ['commit', '--no-verify', '-m', taskCommitMessage(taskId, title)])
+}
+
+/** `<task id>: <title>`, one line, cut to fit a log; the title is the planner's, so no newline of it survives. */
+export function taskCommitMessage(taskId: string, title: string): string {
+  const oneLine = title.replace(/\s+/g, ' ').trim()
+  const subject = oneLine === '' ? `${taskId}: DevLoop task` : `${taskId}: ${oneLine}`
+  return subject.length <= 72 ? subject : `${subject.slice(0, 71)}…`
 }
 
 /**

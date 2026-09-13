@@ -9,6 +9,7 @@ import { contractForTask } from '../src/router.ts'
 import {
   mergeTaskWorktree,
   deleteMergedTaskBranch,
+  taskCommitMessage,
   prepareDelegateWorktree,
   preparePlanWorktree,
   removePlanWorktree,
@@ -150,12 +151,13 @@ describe('prepareDelegateWorktree', () => {
     const root = await gitWorkspace()
     const dest = await prepareDelegateWorktree(root, contractFor('d1'))
     await writeFile(join(dest, 'src.txt'), 'worker\n', 'utf8')
-    await commitDirtyTaskWorktree(dest, 'd1')
+    await commitDirtyTaskWorktree(dest, 'd1', 'Add the\nsrc file')
     const { stdout } = await execFileAsync('git', ['-C', dest, 'show', '--name-only', '--pretty=format:', 'HEAD'], { encoding: 'utf8' })
     expect(stdout).toContain('src.txt')
     expect(stdout).not.toContain('CONTRACT.json')
-    const { stdout: log } = await execFileAsync('git', ['-C', dest, 'log', '-1', '--pretty=%s'], { encoding: 'utf8' })
-    expect(log.trim()).toBe('devloop: delegate')
+    // Named for its task, on one line: history says which task made which change.
+    const { stdout: log } = await execFileAsync('git', ['-C', dest, 'log', '-1', '--pretty=%B'], { encoding: 'utf8' })
+    expect(log.trim()).toBe('d1: Add the src file')
   })
 
   it('host commit does not run worktree-configured hooks', async () => {
@@ -170,7 +172,7 @@ describe('prepareDelegateWorktree', () => {
     await writeFile(join(dest, 'src.txt'), 'worker\n', 'utf8')
     await commitDirtyTaskWorktree(dest, 'd1')
     const { stdout: log } = await execFileAsync('git', ['-C', dest, 'log', '-1', '--pretty=%s'], { encoding: 'utf8' })
-    expect(log.trim()).toBe('devloop: delegate')
+    expect(log.trim()).toBe('d1: DevLoop task')
   })
 
   it('refuses a host commit when HEAD is not the task branch', async () => {
@@ -284,6 +286,16 @@ describe('preparePlanWorktree', () => {
     expect(again).toBe(planWorktreePath(root))
     await removePlanWorktree(root)
   }, 30_000)
+})
+
+describe('taskCommitMessage', () => {
+  it('is the task id and its title on one line, cut to fit a log', () => {
+    expect(taskCommitMessage('T-1', '  Add  a\tparser\n')).toBe('T-1: Add a parser')
+    expect(taskCommitMessage('T-1', '')).toBe('T-1: DevLoop task')
+    const long = taskCommitMessage('g2-TASK-001', 'x'.repeat(200))
+    expect(long).toHaveLength(72)
+    expect(long.endsWith('…')).toBe(true)
+  })
 })
 
 describe('mergeTaskWorktree', () => {
@@ -672,7 +684,7 @@ describe('a task worktree whose gitdir a worker could write', () => {
     const tree = await prepareDelegateWorktree(root, contractFor('ok1'))
     await writeFile(join(tree, 'src.txt'), 'work\n', 'utf8')
     await commitDirtyTaskWorktree(tree, 'ok1')
-    expect((await execFileAsync('git', ['-C', tree, 'log', '-1', '--format=%s'])).stdout.trim()).toBe('devloop: delegate')
+    expect((await execFileAsync('git', ['-C', tree, 'log', '-1', '--format=%s'])).stdout.trim()).toBe('ok1: DevLoop task')
   })
 })
 

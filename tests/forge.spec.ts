@@ -533,6 +533,8 @@ describe('ForgePrBackend publishing', () => {
     expect(argv[argv.indexOf('--head') + 1]).toBe(BRANCH)
     expect(argv[argv.indexOf('--title') + 1]).toBe('DevLoop TASK-1: a title')
     expect(argv[argv.indexOf('--body') + 1]).toContain(HEAD_SHA)
+    // The contract the reviewer judges against, not only how to decide.
+    expect(argv[argv.indexOf('--body') + 1]).toContain('**Acceptance:**\n- tests pass\n\n**Allowed paths:** `src/**`')
   })
 })
 
@@ -1298,6 +1300,18 @@ describe('ForgePrBackend verdicts from GitHub reviews', () => {
   it('reads reviews unless configured otherwise', () => {
     expect(resolveConfig({}).forge.verdictSource).toBe('reviews')
     expect(resolveConfig({ forge: { pushUrl: PUSH_URL, reviewers: [REVIEWER] } } as never).forge.verdictSource).toBe('reviews')
+  })
+
+  it('puts the task\'s contract in the body, one bounded line each, pinging no one', () => {
+    const task = { acceptance: ['npm test\npasses', 'cc @someone', 'x'.repeat(400)], allowedPaths: ['src/**', 'te`st/**'] }
+    for (const source of ['reviews', 'comments'] as const) {
+      const body = pullRequestBody('TASK-1', HEAD_SHA, [REVIEWER], source, task)
+      expect(body, source).toContain('**Acceptance:**\n- npm test passes\n- cc @\u200bsomeone\n')
+      expect(body).toContain(`- ${'x'.repeat(300)}\n`)
+      expect(body).not.toContain('x'.repeat(301))
+      expect(body).toContain('**Allowed paths:** `src/**`, `test/**`')
+    }
+    expect(pullRequestBody('TASK-1', HEAD_SHA, [REVIEWER])).not.toContain('**Acceptance:**')
   })
 
   it('tells the reviewer to decide with a review of this commit, and that comments are not read', () => {
