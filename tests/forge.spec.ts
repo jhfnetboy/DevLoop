@@ -1427,6 +1427,16 @@ describe('ForgePrBackend merging a task', () => {
     expect(mergeCalls(calls)).toHaveLength(0)
   })
 
+  it('says who merged it when that was not this host, and nothing when it was', async () => {
+    const by = (login: unknown) => merger({ prLists: [[{ ...merged, mergedBy: login === undefined ? undefined : { login } }]], reviews: [] }).mergeTask(request)
+    // Someone pressed Merge: the re-check DevLoop makes before merging never ran.
+    expect(await by('a-person')).toEqual({ number: 7, mergeCommit: OTHER_SHA, mergedBy: 'a-person' })
+    // This host's own merge, cut short before it was recorded; or nothing readable.
+    for (const quiet of [SELF, SELF.toUpperCase(), undefined, 'not a login!']) {
+      expect(await by(quiet), String(quiet)).toEqual({ number: 7, mergeCommit: OTHER_SHA })
+    }
+  })
+
   it('refuses when the approval is gone, the checks turned red, or it is no longer the reviewed head', async () => {
     for (const stub of [
       { prLists: [[open]], reviews: [] },

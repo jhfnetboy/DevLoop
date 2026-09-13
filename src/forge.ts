@@ -435,7 +435,7 @@ export class ForgePrBackend implements AgentBackend {
    * at the reviewed commit is not merged again: a host that merged it and then
    * failed before recording that picks up the merge commit it made.
    */
-  async mergeTask(request: { workspaceRoot: string, taskId: string, sha: string, workBranch: string, signal?: AbortSignal }): Promise<{ number: number, mergeCommit: string }> {
+  async mergeTask(request: { workspaceRoot: string, taskId: string, sha: string, workBranch: string, signal?: AbortSignal }): Promise<{ number: number, mergeCommit: string, mergedBy?: string }> {
     const token = worktreeTaskToken(request.taskId)
     const sha = request.sha.toLowerCase()
     if (!token || !SHA.test(sha)) throw new Error('forge_merge: needs a safe task id and the reviewed commit')
@@ -449,7 +449,12 @@ export class ForgePrBackend implements AgentBackend {
     const repo = parseRemoteUrl(this.options.pushUrl)
     const self = await this.authenticatedLogin(root, repo, ctx)
     const found = await this.pullRequestOf(root, repo, branch, request.workBranch, sha, ctx)
-    if (found.state === 'MERGED') return { number: found.number, mergeCommit: found.mergeCommit }
+    if (found.state === 'MERGED') {
+      // Found merged: this host's own earlier attempt, cut short before it was recorded, or someone
+      // else's Merge, which skipped the re-check below. Only the second is worth the operator's notice.
+      const outside = found.mergedBy !== null && found.mergedBy.toLowerCase() !== self.toLowerCase()
+      return { number: found.number, mergeCommit: found.mergeCommit, ...(outside && found.mergedBy !== null ? { mergedBy: found.mergedBy } : {}) }
+    }
     // The same reading the review made, binding included, from whichever source is configured.
     const verdict = await this.readVerdict(root, repo, found.number, branch, request.taskId, sha, self, ctx)
     if (verdict === null || verdict.result.kind !== 'review' || !isApproval(verdict.result.verdict)) {
@@ -551,10 +556,10 @@ export class ForgePrBackend implements AgentBackend {
   }
 
   /** The one pull request for this task against the work branch at the reviewed commit: open, or merged at it. */
-  private async pullRequestOf(root: string, repo: ForgeRepo, branch: string, base: string, sha: string, ctx: RunCtx): Promise<{ number: number, state: 'OPEN' | 'MERGED', mergeCommit: string }> {
+  private async pullRequestOf(root: string, repo: ForgeRepo, branch: string, base: string, sha: string, ctx: RunCtx): Promise<{ number: number, state: 'OPEN' | 'MERGED', mergeCommit: string, mergedBy: string | null }> {
     const raw = await this.forge(root, [
       'pr', 'list', '--repo', repoSlug(repo), '--head', branch, '--state', 'all',
-      '--json', `${PR_FIELDS},state,mergeCommit`, '--limit', '20',
+      '--json', `${PR_FIELDS},state,mergeCommit,mergedBy`, '--limit', '20',
     ], ctx)
     const listed: unknown = parseJson(raw, 'forge_pr: pr list')
     if (!Array.isArray(listed)) throw new Error('forge_pr: pr list did not return an array')
@@ -563,10 +568,11 @@ export class ForgePrBackend implements AgentBackend {
     if (matching.length !== 1) throw new Error(`forge_merge: ${matching.length} pull requests for ${branch} into ${base} at ${sha}`)
     const entry = matching[0] as Record<string, unknown>
     const number = readPullRequest(entry).number
-    if (entry.state === 'OPEN') return { number, state: 'OPEN', mergeCommit: '' }
+    if (entry.state === 'OPEN') return { number, state: 'OPEN', mergeCommit: '', mergedBy: null }
     const oid = isRecord(entry.mergeCommit) ? entry.mergeCommit.oid : undefined
     if (typeof oid !== 'string' || !SHA.test(oid)) throw new Error(`forge_merge: pull request ${number} is merged but names no merge commit`)
-    return { number, state: 'MERGED', mergeCommit: oid.toLowerCase() }
+    const login = isRecord(entry.mergedBy) ? entry.mergedBy.login : undefined
+    return { number, state: 'MERGED', mergeCommit: oid.toLowerCase(), mergedBy: typeof login === 'string' && LOGIN.test(login) ? login : null }
   }
 
   async cancel(_taskId: string): Promise<void> {}
