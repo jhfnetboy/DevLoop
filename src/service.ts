@@ -634,7 +634,8 @@ export class ProjectLoop {
  */
 export function forgeReview(config: Config, registry: Readonly<Record<string, AgentBackend>>): AgentBackend {
   const forge = new ForgePrBackend(config.forge)
-  const local = config.forge.localReview
+  // Absent as well as null: the schema drops a null default, so a profile that never names it has none.
+  const local = config.forge.localReview ?? null
   if (local === null) return forge
   if (local.backend === 'forge') throw new Error('forge_config: localReview must be a local reviewer, not the forge')
   if (Object.values(config.routing).some(worker => sameAgentRoute(worker, local))) {
@@ -778,7 +779,11 @@ export default class DevloopService extends Service {
         else loop.poke()
       },
       control: {
-        addProject: root => this.addProject(root),
+        addProject: root => this.addProject(root, null),
+        setProjectForge: (root, pushUrl) => {
+          this.removeProject(root)
+          this.addProject(root, pushUrl)
+        },
         removeProject: root => this.removeProject(root),
         spend: now => ({ costUsdDay: this.shared.spentToday(now), cap: this.shared.cap() }),
       },
@@ -828,16 +833,20 @@ export default class DevloopService extends Service {
     try {
       const list = await listProjects(this.config.root, dshHome())
       if (list.registryError) this.ctx.logger.error(`[dsh-devloop] ${list.registryError}`)
-      for (const project of list.projects) if (!project.own) this.addProject(project.root)
+      for (const project of list.projects) if (!project.own) this.addProject(project.root, project.pushUrl)
     } catch (error) {
       this.ctx.logger.error('[dsh-devloop] project registry unreadable; only the own root runs', error)
     }
   }
 
-  private addProject(root: string): void {
+  private addProject(root: string, pushUrl: string | null): void {
     if (!this.started || this.disposed || this.others.has(root) || root === this.ownRealRoot) return
     const name = root.split(/[\\/]/).filter(Boolean).at(-1) ?? root
-    const loop = new ProjectLoop(prefixed(this.ctx.logger, name), { ...this.config, root }, this.backend, this.shared)
+    const config = projectConfig(this.config, root, pushUrl)
+    // Where the forge reviews, each project's pull requests go to its own repository, so its
+    // backend is its own too; otherwise every loop shares one.
+    const backend = mergesOnForge(this.config) ? createBackend(this.ctx, config) : this.backend
+    const loop = new ProjectLoop(prefixed(this.ctx.logger, name), config, backend, this.shared)
     this.others.set(root, loop)
     this.shared.add(loop)
     loop.start()
@@ -1305,6 +1314,16 @@ function finitePositive(value: number | undefined): value is number {
 }
 
 /** Where a task's merge happens: on the forge, when the forge is the review route; in the checkout otherwise. */
+/**
+ * A registered project's configuration: the profile's, at its own root, with
+ * the forge repository the operator confirmed for it. None confirmed leaves
+ * the push URL empty, which the forge refuses to review or merge with, rather
+ * than the profile's, which is some other repository.
+ */
+export function projectConfig(config: Config, root: string, pushUrl: string | null): Config {
+  return { ...config, root, forge: { ...config.forge, pushUrl: pushUrl ?? '' } }
+}
+
 function mergesOnForge(config: Config): boolean {
   return config.agentBackend === 'routed' && config.reviewerRoute.backend === 'forge'
 }
