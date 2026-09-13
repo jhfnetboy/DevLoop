@@ -125,6 +125,12 @@ export interface ForgeOptions {
    * envelope. Exactly one is read, so the two can never disagree.
    */
   readonly verdictSource: 'reviews' | 'comments'
+  /**
+   * Whether a commit must report at least one check before its checks count as
+   * green. Off, a repository with no CI passes; on, a commit that reports none
+   * yet (CI not configured, or not registered right after a push) keeps waiting.
+   */
+  readonly requireChecks: boolean
 }
 
 export const DEFAULT_FORGE_OPTIONS: ForgeOptions = {
@@ -135,6 +141,7 @@ export const DEFAULT_FORGE_OPTIONS: ForgeOptions = {
   pollIntervalMs: DEFAULT_POLL_INTERVAL_MS,
   maxWaitMs: 0,
   verdictSource: 'reviews',
+  requireChecks: false,
 }
 
 export function assertForgeOptions(options: ForgeOptions): void {
@@ -164,6 +171,7 @@ export function assertForgeOptions(options: ForgeOptions): void {
       throw new Error(`forge_config: ${name} must be an integer between 0 and ${MAX_TIMER_MS}`)
     }
   }
+  if (typeof options.requireChecks !== 'boolean') throw new Error('forge_config: requireChecks must be true or false')
   if (options.pollIntervalMs <= 0) throw new Error('forge_config: pollIntervalMs must be positive')
 }
 
@@ -865,13 +873,15 @@ export class ForgePrBackend implements AgentBackend {
   /**
    * The pull request's checks at its head, which the binding already holds at
    * the reviewed commit: passed (none failing and none running — a repository
-   * with no checks has passed), still running, or the names of those that failed.
+   * with no checks has passed unless `requireChecks`), still running, or the
+   * names of those that failed.
    */
   private async readChecks(root: string, repo: ForgeRepo, number: number, ctx: RunCtx): Promise<'passed' | 'pending' | string[]> {
     const raw = await this.forge(root, ['pr', 'view', String(number), '--repo', repoSlug(repo), '--json', 'statusCheckRollup'], ctx)
     const view: unknown = parseJson(raw, 'forge_pr: pr checks')
     const rollup = isRecord(view) ? view.statusCheckRollup : undefined
     if (!Array.isArray(rollup)) throw new Error('forge_pr: pr checks did not return a list')
+    if (rollup.length === 0 && this.options.requireChecks) return 'pending'
     const failed: string[] = []
     let running = false
     for (const check of rollup) {

@@ -439,7 +439,10 @@ How a task goes:
    review withdraws it). Any **Request changes** outranks every approval and
    becomes rework, its body handed to the worker for the next attempt. An
    approval is a pass only once the commit's **checks are green**; while they run
-   the review keeps waiting, and a red one is rework. `verdictSource: comments`
+   the review keeps waiting, and a red one is rework. A commit with no checks at
+   all counts as green unless `forge.requireChecks: true`, which makes it wait;
+   turn it on for a repository with CI, so an approval given before CI has
+   registered its checks cannot merge. `verdictSource: comments`
    reads a `<devloop_result>` envelope from a comment instead; exactly one
    source is ever read.
 4. **The merge.** DevLoop reads the verdict and checks again, then runs `gh pr

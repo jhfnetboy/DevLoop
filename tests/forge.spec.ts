@@ -47,6 +47,7 @@ function options(overrides: Partial<ForgeOptions> = {}): ForgeOptions {
     pollIntervalMs: 30_000,
     maxWaitMs: 0,
     verdictSource: 'comments',
+    requireChecks: false,
     ...overrides,
   }
 }
@@ -1265,6 +1266,21 @@ describe('ForgePrBackend verdicts from GitHub reviews', () => {
     expect(red.outcome).toMatchObject({ verdict: 'REWORK', notes: 'Approved, but these checks failed: test, deploy' })
     // A request for changes needs no checks to be rework.
     expect((await backend({ verdictSource: 'reviews' }, { reviews: [review(REVIEWER, 'CHANGES_REQUESTED')], checks: [{ context: 'ci', state: 'PENDING' }] }).run(reviewInput())).outcome).toMatchObject({ verdict: 'REWORK' })
+  })
+
+  it('counts a commit with no checks as green only when checks are not required', async () => {
+    const approved = [review(REVIEWER, 'APPROVED')]
+    expect(resolveConfig({}).forge.requireChecks).toBe(false)
+    expect((await backend({ verdictSource: 'reviews' }, { reviews: approved, checks: [] }).run(reviewInput())).outcome).toMatchObject({ verdict: 'PASS' })
+    // Required: none reported yet is a wait, not a pass; once CI registers and passes, it passes.
+    const none = await backend({ verdictSource: 'reviews', requireChecks: true }, { reviews: approved, checks: [] }).run(reviewInput())
+    expect(none.detail).toMatch(/^forge_timeout:/)
+    const registers = await backend({ verdictSource: 'reviews', requireChecks: true, maxWaitMs: 5_000 }, { reviews: approved, checks: n => n < 3 ? [] : [{ name: 'test', conclusion: 'SUCCESS' }] }).run(reviewInput())
+    expect(registers.outcome).toMatchObject({ verdict: 'PASS' })
+    // A check that ended any other way than passing is a failure, required or not.
+    const ended = await backend({ verdictSource: 'reviews', requireChecks: true }, { reviews: approved, checks: [{ name: 'a', conclusion: 'CANCELLED' }, { name: 'b', conclusion: 'ACTION_REQUIRED' }, { name: 'c', conclusion: 'STALE' }] }).run(reviewInput())
+    expect(ended.outcome).toMatchObject({ verdict: 'REWORK', notes: 'Approved, but these checks failed: a, b, c' })
+    expect(() => backend({ requireChecks: 'yes' as never }, {})).toThrow(/requireChecks must be true or false/)
   })
 
   it('reads reviews unless configured otherwise', () => {

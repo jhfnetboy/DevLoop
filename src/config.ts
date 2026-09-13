@@ -39,6 +39,8 @@ export interface ForgeConfig {
   readonly verdictSource: 'reviews' | 'comments'
   /** A local reviewer to pass the change before the forge opens its pull request; null opens it straight away. */
   readonly localReview: Route | null
+  /** A commit that reports no checks waits instead of counting as green. */
+  readonly requireChecks: boolean
 }
 
 export interface Config {
@@ -139,7 +141,8 @@ export const ConfigSchema: s<Config> = s.object({
     maxWaitMs: s.number().step(1).min(0).max(2_147_483_647).default(0),
     verdictSource: s.union([s.const('reviews'), s.const('comments')]).default('reviews'),
     localReview: s.union([s.const(null), routeSchema('T3', 'claude', 'opus')]).default(null),
-  }).default({ pushUrl: '', base: 'main', command: 'gh', reviewers: [], pollIntervalMs: 30_000, maxWaitMs: 0, verdictSource: 'reviews', localReview: null }),
+    requireChecks: s.boolean().default(false),
+  }).default({ pushUrl: '', base: 'main', command: 'gh', reviewers: [], pollIntervalMs: 30_000, maxWaitMs: 0, verdictSource: 'reviews', localReview: null, requireChecks: false }),
   routing: s.object({
     T0: routeSchema('T0', 'local', 'qwen-coder-7b').default({
       tier: 'T0', backend: 'local', model: 'qwen-coder-7b',
