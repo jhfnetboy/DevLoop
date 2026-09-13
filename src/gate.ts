@@ -183,6 +183,13 @@ const KNOWN_GATES: Record<KnownReasonBase, ComposeGate> = {
       task?.lastReviewVerdict ? `its last verdict was ${task.lastReviewVerdict}` : 'no verdict is recorded',
     ], [RETRY, STOP]),
 
+  // The worker never ran: the name its branch needs holds someone else's commits.
+  task_branch_taken: ({ reason, taskId }) =>
+    gate(reason, taskId, 'A branch with this task\'s name already holds other work. Rename or remove it, then resume?', [
+      `the branch for ${label(taskId)} already exists, with commits the checked-out branch does not have`,
+      'DevLoop did not reset it, and the task has not run',
+    ], [STOP], 'Look at the branch (git log devloop/<task id>). Keep its work under another name (git branch -m devloop/<task id> <new name>) or delete it if it is not wanted, then resume (恢复循环 on the page, or devloop resume).'),
+
   merge_wedged: mergeGate,
   unknown_base: mergeGate,
 

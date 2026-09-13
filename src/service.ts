@@ -286,7 +286,11 @@ export class ProjectLoop {
               }
             } catch (error) {
               this.ctx.logger.error('[dsh-devloop] worktree failed', error)
-              return
+              // Retrying this every tick would never free the name: ask, and give back the attempt nothing ran for.
+              if (!(error instanceof Error && error.message.startsWith('task_branch_taken'))) return
+              const taskId = input.contract.taskId
+              const refunded = { ...result.state, usage: refundAction(result.state.usage, result.action) }
+              result = { ...result, action: { type: 'escalate', taskId, reason: 'task_branch_taken' }, state: holdTask(refunded, taskId, 'task_branch_taken') }
             }
           }
         } else if (!result.skipped && result.action.type === 'plan' && isolatedPlan(this.config.agentBackend)) {

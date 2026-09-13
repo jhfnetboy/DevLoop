@@ -87,6 +87,12 @@ async function checkoutWorktree(root: string, token: string, contract: TaskContr
     return dest
   }
 
+  // `-B` resets a branch of that name to HEAD. One already there with commits HEAD lacks is
+  // someone's work — an earlier run's, or the operator's own — and is never reset over.
+  if (await gitOk(resolvedRoot, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`])
+    && !await gitOk(resolvedRoot, ['merge-base', '--is-ancestor', `refs/heads/${branch}`, 'HEAD'])) {
+    throw new Error(`task_branch_taken: ${branch} already exists with commits the checked-out branch does not have`)
+  }
   await git(resolvedRoot, ['worktree', 'add', '-B', branch, dest])
   await assertInside(pool, dest)
   await writeContractFile(dest, await stampBaseSha(dest, contract))

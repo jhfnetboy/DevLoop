@@ -1560,6 +1560,51 @@ process.exit(${code})
   })
 })
 
+describe('a task whose branch name is already taken', () => {
+  it('holds rather than reset a branch holding other work, runs nothing, and reuses one already merged', async () => {
+    const services: DevloopService[] = []
+    const git = (root: string, ...args: string[]) => promisify(execFile)('git', ['-C', root, '-c', 'user.email=t@t', '-c', 'user.name=t', ...args])
+    const setup = async (unmerged: boolean) => {
+      const root = await mkdtempInRepo('devloop-taken-')
+      await mkdir(join(root, '.devloop'))
+      await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
+      await initWorkRepo(root)
+      await git(root, 'branch', 'devloop/d1')
+      if (unmerged) {
+        await git(root, 'switch', '-q', 'devloop/d1')
+        await writeFile(join(root, 'mine.txt'), 'the operator\'s own work\n', 'utf8')
+        await git(root, 'add', 'mine.txt')
+        await git(root, 'commit', '-q', '-m', 'mine')
+        await git(root, 'switch', '-q', 'work')
+      }
+      await saveState(root, { ...emptyState(Date.now()), tasks: [makeTask({ id: 'd1', status: 'ready', allowedPaths: ['src/**'] })] })
+      const ran: string[] = []
+      const backend: AgentBackend = { async run(input) { ran.push(input.action.type); return { status: 'started' } }, async cancel() {}, async health() { return 'ok' } }
+      const service = new DevloopService(new Context(), resolveConfig({ root, enabled: false }), backend)
+      services.push(service)
+      await service.tick()
+      return { root, ran }
+    }
+    try {
+      const taken = await setup(true)
+      const state = await loadState(taken.root, Date.now())
+      expect(state.supervisor).toEqual({ taskId: 'd1', reason: 'task_branch_taken' })
+      expect(taken.ran).toEqual([])
+      // Not charged: the worker never ran.
+      expect(state.usage.taskAttempts.d1 ?? 0).toBe(0)
+      expect((await git(taken.root, 'log', '-1', '--format=%s', 'devloop/d1')).stdout.trim()).toBe('mine')
+      expect(gateFor(state, resolveConfig({}).budget, Date.now())).toMatchObject({ key: 'task_branch_taken', options: [{ key: 'stop' }] })
+
+      const merged = await setup(false)
+      // An old branch already in HEAD's history holds nothing to lose: it is reused and the worker runs.
+      expect((await loadState(merged.root, Date.now())).supervisor?.reason).not.toBe('task_branch_taken')
+      expect(merged.ran).toEqual(['delegate'])
+    } finally {
+      for (const service of services) service.stop()
+    }
+  })
+})
+
 describe('a mechanical check the commit fails goes back to the worker', () => {
   async function blockedRun(acceptance: string[][] = []) {
     const services: DevloopService[] = []
