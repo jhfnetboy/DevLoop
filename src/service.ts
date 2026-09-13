@@ -325,6 +325,9 @@ export class ProjectLoop {
               if (workBranch === undefined) throw new Error('merge_wedged: no work branch is recorded to merge into')
               if (!task?.implementationSha) throw new Error('unknown_review_sha')
               const merged = await forgeMergers.create(this.config).mergeTask({ workspaceRoot: this.config.root, taskId: mergeTaskId, sha: task.implementationSha, workBranch })
+              if (merged.mergedBy !== undefined) {
+                this.ctx.logger.info(`[dsh-devloop] warning: ${mergeTaskId}'s pull request #${String(merged.number)} was merged by ${merged.mergedBy}, outside DevLoop; its review and checks were not re-checked at merge`)
+              }
               await fastForwardWorkBranch(this.config.root, workBranch, merged.mergeCommit, this.config.forge.pushUrl, { trunks })
             } else {
               await mergeTaskWorktree(this.config.root, mergeTaskId, task?.baseSha ?? null, task?.implementationSha ?? null, { trunks })

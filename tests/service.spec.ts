@@ -1658,6 +1658,19 @@ describe('merging on the forge', () => {
     expect((await loadState(root, Date.now())).tasks[0]?.status).toBe('done')
   })
 
+  it('warns when the reviewed pull request was merged outside DevLoop, and still follows it', async () => {
+    const { root, merge } = await merged()
+    forgeMergers.create = () => ({ async mergeTask() { return { number: 7, mergeCommit: merge, mergedBy: 'a-person' } } })
+    const service = forgeService(root)
+    const logged: string[] = []
+    ;(service as unknown as { ctx: { logger: { info: (m: unknown) => void } } }).ctx.logger.info = (message: unknown): void => { logged.push(String(message)) }
+    await service.tick()
+    expect((await loadState(root, Date.now())).tasks[0]?.status).toBe('done')
+    expect(logged.filter(line => line.includes('outside DevLoop'))).toEqual([
+      "[dsh-devloop] warning: d1's pull request #7 was merged by a-person, outside DevLoop; its review and checks were not re-checked at merge",
+    ])
+  })
+
   it('holds for a review again when the approval is gone, and as a forge refusal for any other forge error', async () => {
     for (const [message, reason] of [
       ['forge_review_gone: pull request 7 is no longer approved', 'no_review_pass'],
