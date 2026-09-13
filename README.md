@@ -453,7 +453,10 @@ How a task goes:
    merge commit by id and fast-forwards the work branch to it — never a local
    merge — before the task is marked done. A pull request already merged at the
    reviewed commit is not merged again. An approval gone by then holds as
-   `no_review_pass`; any other failure as `merge_wedged`.
+   `no_review_pass`; any other forge error (a branch protection rule, gh's
+   login, forge settings) as `forge_merge_refused`, which asks for the fix
+   outside DevLoop and a resume, not another worker run; the checkout failing
+   to follow the merge as `merge_wedged`.
 5. **The release.** Once every task is done, the loop opens the work branch →
    trunk pull request, its body listing each task's head, branch and verdict for
    the reviewer to check the branch against, looks at it each tick, and merges it

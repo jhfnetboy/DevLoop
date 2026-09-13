@@ -13,6 +13,7 @@ import { resolveConfig } from '../src/config.ts'
 import { emptyUsage } from '../src/budget.ts'
 import { gateFor } from '../src/gate.ts'
 import { resumeLoop } from '../src/operator.ts'
+import { resumeState } from '../src/resume.ts'
 import { emptyState, loadState, saveState, statePath, withStateLock, workspaceArmed } from '../src/persist.ts'
 import { contractForTask } from '../src/router.ts'
 import type { Task } from '../src/types.ts'
@@ -1657,13 +1658,16 @@ describe('merging on the forge', () => {
     expect((await loadState(root, Date.now())).tasks[0]?.status).toBe('done')
   })
 
-  it('holds for a review again when the approval is gone, and as a wedged merge for any other forge refusal', async () => {
+  it('holds for a review again when the approval is gone, and as a forge refusal for any other forge error', async () => {
     for (const [message, reason] of [
       ['forge_review_gone: pull request 7 is no longer approved', 'no_review_pass'],
-      ['forge_pr: pull request 7 no longer targets work', 'merge_wedged'],
+      ['forge_pr: pull request 7 no longer targets work', 'forge_merge_refused'],
+      ['forge_merge: forge is not configured to decide or merge', 'forge_merge_refused'],
       // What gh itself throws carries no prefix: an expired login, a missing binary, a timeout.
-      ['Command failed: gh pr merge 7 (exit 1)', 'merge_wedged'],
-      ['backend timeout', 'merge_wedged'],
+      ['Command failed: gh pr merge 7 (exit 1)', 'forge_merge_refused'],
+      ['backend timeout', 'forge_merge_refused'],
+      // The checkout failing to follow the merge is the tree's problem, not the forge's.
+      ['merge_wedged: the workspace has tracked changes; commit or stash them first', 'merge_wedged'],
     ] as const) {
       const { root } = await merged()
       forgeMergers.create = () => ({ async mergeTask() { throw new Error(message) } })
@@ -1672,6 +1676,24 @@ describe('merging on the forge', () => {
       expect(state.supervisor?.reason, message).toBe(reason)
       expect(state.tasks[0]?.status).not.toBe('done')
     }
+  })
+
+  it('asks the operator to fix what the forge refused and resume, never to pay the worker again, and merges on resume', async () => {
+    const { root, merge } = await merged()
+    forgeMergers.create = () => ({ async mergeTask() { throw new Error('Command failed: gh pr merge 7: base branch policy prohibits the merge') } })
+    await forgeService(root).tick()
+    const held = await loadState(root, Date.now())
+    const question = gateFor(held, resolveConfig({}).budget, Date.now())
+    expect(question).toMatchObject({ key: 'forge_merge_refused', taskId: 'd1', recommended: null })
+    expect(question?.options.map(option => option.key)).toEqual(['stop'])
+    expect(question?.evidence.join('\n')).toContain('[dsh-devloop] merge failed')
+    expect(question?.manual).toMatch(/log line.*gh auth status.*resume/s)
+    // Fixed outside DevLoop, then resumed: the same reviewed task merges, with no new attempt.
+    await saveState(root, resumeState(held, {}, Date.now()))
+    forgeMergers.create = () => ({ async mergeTask() { return { number: 7, mergeCommit: merge } } })
+    await forgeService(root).tick()
+    const after = await loadState(root, Date.now())
+    expect(after.tasks[0]).toMatchObject({ status: 'done', attempts: held.tasks[0]?.attempts })
   })
 })
 

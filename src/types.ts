@@ -79,6 +79,8 @@ export type HoldReason =
   | 'repeated_test_failure'
   | 'blocked_task'
   | 'merge_wedged'
+  // The forge would not merge a reviewed pull request: its rules, its login or DevLoop's forge settings.
+  | 'forge_merge_refused'
   | 'unknown_base'
   | 'merge_onto_trunk'
   | 'merge_detached_head'

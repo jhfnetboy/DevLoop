@@ -183,6 +183,14 @@ const KNOWN_GATES: Record<KnownReasonBase, (ctx: GateContext) => Omit<Gate, 'key
   merge_wedged: mergeGate,
   unknown_base: mergeGate,
 
+  // Nothing is wrong with the task or the tree: running the worker again would pay for the same
+  // change and meet the same refusal. The fix is outside DevLoop, then a resume merges it.
+  forge_merge_refused: ({ reason, taskId }) =>
+    gate(reason, taskId, 'The forge did not merge the reviewed pull request. Fix what stopped it, then resume?', [
+      `${label(taskId)} passed review; its pull request was not merged`,
+      'the forge\'s own reason is in the log, on the line "[dsh-devloop] merge failed"',
+    ], [STOP], 'Read that log line. A branch protection rule, an expired gh login (gh auth status), a missing gh, or forge settings (forge.reviewers, forge.pushUrl) are fixed outside DevLoop; then resume (恢复循环 on the page, or devloop resume) and the merge is tried again on the next tick.'),
+
   // The task itself is fine and still merge_ready; only where it would land is
   // wrong. Redoing it would pay for the same change again, so the answer is to
   // move the checkout and resume, which merges on the next tick.
