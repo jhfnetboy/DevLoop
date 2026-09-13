@@ -1,8 +1,48 @@
-# Release 0.6.4
+# Release 0.6.5
 
-Bounded autonomous engineering loop: structured model results, deterministic state transitions, host-enforced write scope, SHA-bound independent review, durable recovery, and role/tier routing. Tag `v0.6.4` and the GitHub Release are created **after** this commit is on `main`; steps: [Deploy.md](./Deploy.md).
+Bounded autonomous engineering loop: structured model results, deterministic state transitions, host-enforced write scope, SHA-bound independent review, durable recovery, and role/tier routing. Tag `v0.6.5` and the GitHub Release are created **after** this commit is on `main`; steps: [Deploy.md](./Deploy.md).
 
-Package version: **0.6.4**. This document is the release note, not a second semver.
+Package version: **0.6.5**. This document is the release note, not a second semver.
+
+## New in 0.6.5
+
+Hardening and polish of 0.6.4's per-task pull requests, from PR-daemon's
+reviews of it. No new mode; local mode gains the git and credential fixes too.
+
+- **Models run without the host's credentials** ([#111](https://github.com/jhfnetboy/DevLoop/pull/111)).
+  Every worker, reviewer and planner (dsh, claude, codex) starts without any
+  inherited `GIT_*`, `GH_*`, `GITHUB_*` or `SSH_*` variable — git's numbered
+  `GIT_CONFIG_KEY_n`/`VALUE_n` included — with `gh` pointed at an empty config
+  and git at no global or system config. dsh is pinned to `workspace-write`.
+  A model's own sandbox is still what stops it reading credential files on disk.
+- **Every host git through one hardened helper** ([#113](https://github.com/jhfnetboy/DevLoop/pull/113), [#114](https://github.com/jhfnetboy/DevLoop/pull/114)).
+  Inherited `GIT_DIR`/`GIT_WORK_TREE`/`GIT_INDEX_FILE`/`GIT_COMMON_DIR` no
+  longer redirect it, fsmonitor and hooks are off; project registration and
+  the pre-PR checker included.
+- **Checks you can require** ([#112](https://github.com/jhfnetboy/DevLoop/pull/112), [#123](https://github.com/jhfnetboy/DevLoop/pull/123)).
+  `forge.requireChecks: true` makes a commit with no checks wait instead of
+  counting as green. Checks are read in the same call as the pull request's
+  head, so a later push cannot lend the reviewed commit its checks.
+- **A forge refusal is its own question** ([#119](https://github.com/jhfnetboy/DevLoop/pull/119), [#124](https://github.com/jhfnetboy/DevLoop/pull/124), [#125](https://github.com/jhfnetboy/DevLoop/pull/125)).
+  Branch protection, an expired `gh` login or empty forge settings hold as
+  `forge_merge_refused`: fix it outside DevLoop and resume; the worker is not
+  run again. The checkout failing to follow the merge stays `merge_wedged`;
+  a pull request pushed to or retargeted since review holds as
+  `no_review_pass`, to be reviewed again.
+- **Gates and bodies that say what happens** ([#114](https://github.com/jhfnetboy/DevLoop/pull/114), [#117](https://github.com/jhfnetboy/DevLoop/pull/117), [#120](https://github.com/jhfnetboy/DevLoop/pull/120), [#121](https://github.com/jhfnetboy/DevLoop/pull/121), [#122](https://github.com/jhfnetboy/DevLoop/pull/122)).
+  The release body says how it is decided (a GitHub review, always) and marks
+  tasks accepted without a change; a trunk or detached checkout held before
+  review no longer says the task "passed review"; a superseded trunk pull
+  request is closed; a task merged by someone else is logged as a warning.
+- **Review notes** ([#115](https://github.com/jhfnetboy/DevLoop/pull/115), [#116](https://github.com/jhfnetboy/DevLoop/pull/116), [#118](https://github.com/jhfnetboy/DevLoop/pull/118)).
+  A local reviewer's long notes are cut at 8192 characters instead of stopping
+  the loop; the PR log names the local reviewer.
+
+New config: `forge.requireChecks` (default `false`). New hold reason:
+`forge_merge_refused` (the only new value STATE can hold). New PR-LOG field:
+`localReviewer`.
+Not in 0.6.5: automatic retry of transient forge merge errors (gh gives no
+signal to tell them from refusals).
 
 ## New in 0.6.4
 
@@ -50,9 +90,9 @@ before. How to turn it on: README, "One pull request per task".
   directories to the host's own paths with fsmonitor and hooks off. This
   predates 0.6.4 and affects local mode too.
 
-Carried to 0.6.5 (from the reviews): workers still inherit this host's `gh`
-login; an empty set of checks counts as green; a few messages and gate texts
-to tighten. 0.6.x numbers follow the release plan rather than strict semver.
+Carried to 0.6.5 (from the reviews), and closed there: workers inherited this
+host's `gh` login; an empty set of checks counted as green; a few messages and
+gate texts to tighten. 0.6.x numbers follow the release plan rather than strict semver.
 
 ## New in 0.6.3
 
