@@ -560,7 +560,8 @@ export class ForgePrBackend implements AgentBackend {
     if (!Array.isArray(listed)) throw new Error('forge_pr: pr list did not return an array')
     const matching = listed.filter(entry => isRecord(entry) && (entry.state === 'OPEN' || entry.state === 'MERGED'))
       .filter(entry => matchesReviewTarget(readPullRequest(entry), base, branch, sha))
-    if (matching.length !== 1) throw new Error(`forge_merge: ${matching.length} pull requests for ${branch} into ${base} at ${sha}`)
+    if (matching.length === 0) throw new Error(`forge_merge: no open or merged pull request for ${branch} into ${base} at ${sha}; it was closed, retargeted or pushed to after review`)
+    if (matching.length > 1) throw new Error(`forge_merge: ${matching.length} pull requests for ${branch} into ${base} at ${sha}`)
     const entry = matching[0] as Record<string, unknown>
     const number = readPullRequest(entry).number
     if (entry.state === 'OPEN') return { number, state: 'OPEN', mergeCommit: '' }
@@ -708,7 +709,9 @@ export class ForgePrBackend implements AgentBackend {
   /**
    * An open pull request from this task's branch against another base — one
    * opened before the work branch was recorded, say — would otherwise sit
-   * beside a second one, still pointing at trunk. It is moved to this base.
+   * beside a second one, still pointing at trunk. It is moved to this base, or,
+   * when this base already has one (GitHub refuses a second for the same head
+   * and base), closed as superseded by it.
    */
   private async retargetStray(root: string, repo: ForgeRepo, branch: string, sha: string, ctx: RunCtx): Promise<void> {
     // Only toward a work branch: without one there is nothing to move a pull request to but trunk.
@@ -718,10 +721,15 @@ export class ForgePrBackend implements AgentBackend {
     const listed: unknown = parseJson(raw, 'forge_pr: pr list')
     if (!Array.isArray(listed)) throw new Error('forge_pr: pr list did not return an array')
     const ours = listed.map(entry => readPullRequest(entry)).filter(pr => !pr.isCrossRepository && pr.headRefName === branch && pr.headRefOid.toLowerCase() === sha)
-    // One already on the work branch is the one to reuse: GitHub refuses a second pull request for the same head and base.
-    if (ours.some(pr => pr.baseRefName === base)) return
+    // One already on the work branch is the one to reuse; the first stray moved there becomes it.
+    let kept = ours.find(pr => pr.baseRefName === base)?.number
     for (const stray of ours.filter(pr => pr.baseRefName !== base)) {
-      await this.forge(root, ['pr', 'edit', String(stray.number), '--repo', repoSlug(repo), '--base', base], ctx)
+      if (kept === undefined) {
+        await this.forge(root, ['pr', 'edit', String(stray.number), '--repo', repoSlug(repo), '--base', base], ctx)
+        kept = stray.number
+      } else {
+        await this.forge(root, ['pr', 'close', String(stray.number), '--repo', repoSlug(repo), '--comment', `Superseded by #${String(kept)}, which targets \`${base}\`.`], ctx)
+      }
     }
   }
 

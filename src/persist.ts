@@ -510,7 +510,7 @@ const MAX_OVER_BUDGET = 200
 const MAX_REVIEW_NOTES = 8_192
 
 /** A reviewer's request for changes, as a review's notes may carry it. */
-const MAX_RELEASE_CHANGES = 8_192
+export const MAX_RELEASE_CHANGES = 8_192
 
 function isReleaseShape(value: unknown): boolean {
   if (typeof value !== 'object' || value === null) return false

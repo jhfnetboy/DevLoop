@@ -1375,13 +1375,25 @@ describe('ForgePrBackend against the loop\'s work branch', () => {
     expect(calls.some(call => call.argv[0] === 'pr' && call.argv[1] === 'create')).toBe(false)
   })
 
-  it('reuses the one already on the work branch, leaving a trunk sibling alone rather than retargeting it into a duplicate', async () => {
+  it('reuses the one already on the work branch, and closes a trunk sibling as superseded rather than retargeting it into a duplicate', async () => {
     const both = [pr({ number: 5, baseRefName: 'main' }), pr({ number: 7, baseRefName: WORK })]
     const { run, calls } = onWork({ prList: both, prLists: [both] })
     expect(await run).toMatchObject({ status: 'started' })
     expect(calls.some(call => call.argv[0] === 'pr' && call.argv[1] === 'edit' && call.argv.includes('--base'))).toBe(false)
     expect(calls.some(call => call.argv[0] === 'pr' && call.argv[1] === 'create')).toBe(false)
     expect(calls.some(call => call.argv[0] === 'pr' && call.argv[1] === 'edit' && call.argv[2] === '7')).toBe(true)
+    const closes = calls.filter(call => call.argv[0] === 'pr' && call.argv[1] === 'close')
+    expect(closes.map(call => call.argv.slice(2))).toEqual([['5', '--repo', 'github.com/acme/widgets', '--comment', `Superseded by #7, which targets \`${WORK}\`.`]])
+  })
+
+  it('moves the first of two strays to the work branch and closes the second as superseded by it', async () => {
+    const strays = [pr({ number: 5, baseRefName: 'main' }), pr({ number: 6, baseRefName: 'release' })]
+    const moved = pr({ number: 5, baseRefName: WORK })
+    const { run, calls } = onWork({ prList: strays, prLists: [strays, [moved]], prView: moved })
+    expect(await run).toMatchObject({ status: 'started' })
+    const edits = calls.filter(call => call.argv[0] === 'pr' && call.argv[1] === 'edit' && call.argv.includes('--base'))
+    expect(edits.map(call => call.argv[2])).toEqual(['5'])
+    expect(calls.filter(call => call.argv[0] === 'pr' && call.argv[1] === 'close').map(call => call.argv[2])).toEqual(['6'])
   })
 
   it('moves nothing without a work branch, where the only place to move a pull request to is trunk', async () => {
@@ -1437,8 +1449,8 @@ describe('ForgePrBackend merging a task', () => {
       await expect(merger({ ...stub, calls }).mergeTask(request)).rejects.toThrow(/^forge_review_gone:/)
       expect(mergeCalls(calls)).toHaveLength(0)
     }
-    await expect(merger({ prLists: [[pr({ baseRefName: WORK, state: 'OPEN', headRefOid: OTHER_SHA })]], reviews: approved }).mergeTask(request)).rejects.toThrow(/0 pull requests/)
-    await expect(merger({ prLists: [[pr({ baseRefName: 'main', state: 'OPEN' })]], reviews: approved }).mergeTask(request)).rejects.toThrow(/0 pull requests/)
+    await expect(merger({ prLists: [[pr({ baseRefName: WORK, state: 'OPEN', headRefOid: OTHER_SHA })]], reviews: approved }).mergeTask(request)).rejects.toThrow(/no open or merged pull request .* closed, retargeted or pushed to after review/)
+    await expect(merger({ prLists: [[pr({ baseRefName: 'main', state: 'OPEN' })]], reviews: approved }).mergeTask(request)).rejects.toThrow(/no open or merged pull request/)
   })
 
   it('merges a comment-approved pull request only once its checks are green too', async () => {
