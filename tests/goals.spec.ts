@@ -80,10 +80,21 @@ describe('the next goal on the same repository', () => {
     await mkdir(join(root, '.devloop'))
     const saved = await saveState(root, { ...finished(), goal: { number: 2, startedAt: '2026-09-13T08:00:00.000Z' } })
     expect((await loadState(root, NOW)).goal).toEqual({ number: 2, startedAt: '2026-09-13T08:00:00.000Z' })
-    for (const goal of [{ number: 1, startedAt: 'x' }, { number: 2.5, startedAt: 'x' }, { number: 2, startedAt: '' }, { number: '2' }]) {
+    for (const goal of [{ number: 1, startedAt: 'x' }, { number: 2.5, startedAt: 'x' }, { number: 2, startedAt: '' }, { number: '2' }, null, 'goal two']) {
       await writeFile(join(root, '.devloop', 'STATE.json'), JSON.stringify({ ...saved, goal }), 'utf8')
       // Not taken as written: the journal's last good state is read back instead.
       expect((await loadState(root, NOW)).goal, JSON.stringify(goal)).toEqual({ number: 2, startedAt: '2026-09-13T08:00:00.000Z' })
+    }
+  })
+
+  it('reads back a task\'s pull request number only when it is one', async () => {
+    const root = await mkdtempInRepo('devloop-goals-')
+    await mkdir(join(root, '.devloop'))
+    const saved = await saveState(root, finished({ tasks: [makeTask({ id: 'T1', status: 'done', pullRequest: 4 })] }))
+    expect((await loadState(root, NOW)).tasks[0]?.pullRequest).toBe(4)
+    for (const pullRequest of [0, -1, 2.5, '4']) {
+      await writeFile(join(root, '.devloop', 'STATE.json'), JSON.stringify({ ...saved, tasks: [{ ...saved.tasks[0], pullRequest }] }), 'utf8')
+      expect((await loadState(root, NOW)).tasks[0]?.pullRequest, String(pullRequest)).toBe(4)
     }
   })
 
