@@ -1508,7 +1508,7 @@ describe('ForgePrBackend merging a task', () => {
 describe('ForgePrBackend releasing the work branch', () => {
   const WORK = 'devloop/feature'
   const release = (overrides: Record<string, unknown> = {}) => pr({ number: 9, baseRefName: 'main', headRefName: WORK, headRefOid: HEAD_SHA, state: 'OPEN', mergeCommit: null, ...overrides })
-  const request = { workspaceRoot: '/repo', workBranch: WORK }
+  const request = { workspaceRoot: '/repo', workBranch: WORK, number: 9 }
   const releaser = (stub: StubOptions) => backend({ verdictSource: 'reviews' }, stub)
   const calls = (stub: StubOptions & { calls: Recorded[] }, verb: string) => stub.calls.filter(call => call.argv[0] === 'pr' && call.argv[1] === verb)
 
@@ -1540,6 +1540,14 @@ describe('ForgePrBackend releasing the work branch', () => {
     expect(await backend({ verdictSource: 'comments' }, { prLists: [[release()]], reviews: [], comments: [envelope] }).advanceRelease(request)).toEqual({ state: 'waiting', number: 9 })
     const approved = { prLists: [[release()], [release({ state: 'MERGED', mergeCommit: { oid: OTHER_SHA } })]], reviews: [{ author: REVIEWER, state: 'APPROVED', commit: HEAD_SHA, body: '' }] }
     expect(await backend({ verdictSource: 'comments' }, approved).advanceRelease(request)).toEqual({ state: 'merged', number: 9, mergeCommit: OTHER_SHA })
+  })
+
+  it('advances only this goal\'s release: an earlier goal\'s merged one from the same work branch is not it', async () => {
+    const earlier = release({ number: 5, state: 'MERGED', mergeCommit: { oid: OTHER_SHA } })
+    // The next goal's release is open beside the earlier, merged one: that is the one read.
+    expect(await releaser({ prLists: [[earlier, release()]], reviews: [] }).advanceRelease(request)).toEqual({ state: 'waiting', number: 9 })
+    // Its own gone (closed unmerged, say): never the earlier goal's merge in its place.
+    await expect(releaser({ prLists: [[earlier]] }).advanceRelease(request)).rejects.toThrow(/no release pull request #9/)
   })
 
   it('does not merge a release twice, and releases only a work branch', async () => {
