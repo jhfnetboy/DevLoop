@@ -1681,7 +1681,10 @@ describe('releasing a finished goal on the forge', () => {
       goalCompleted: true,
       workBranch: 'work',
       lastAction: { type: 'stop', reason: 'goal_complete' },
-      tasks: [makeTask({ id: 'd1', status: 'done', title: 'Add a parser', implementationSha: 'a'.repeat(40), lastReviewVerdict: 'PASS' })],
+      tasks: [
+        makeTask({ id: 'd1', status: 'done', title: 'Add a parser', baseSha: 'c'.repeat(40), implementationSha: 'a'.repeat(40), lastReviewVerdict: 'PASS' }),
+        makeTask({ id: 'd2', status: 'done', title: 'Check only', baseSha: 'c'.repeat(40), implementationSha: 'c'.repeat(40), lastReviewVerdict: 'PASS' }),
+      ],
       ...extra,
     })
     return root
@@ -1713,6 +1716,9 @@ describe('releasing a finished goal on the forge', () => {
     expect(opened).toHaveLength(1)
     expect(opened[0]?.title).toBe('DevLoop release: work')
     expect(opened[0]?.body).toContain('`d1` Add a parser: head `' + 'a'.repeat(40) + '`, from `devloop/d1`, verdict PASS')
+    // A task accepted with no commits of its own had no pull request; the body must not send the reviewer looking for one.
+    expect(opened[0]?.body).toContain('`d2` Check only: no change, accepted without a pull request, verdict PASS')
+    expect(opened[0]?.body).not.toContain('devloop/d2')
     const before = (await loadState(root, Date.now())).revision
     await loop.tick()
     expect((await loadState(root, Date.now())).revision).toBe(before)

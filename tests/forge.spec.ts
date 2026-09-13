@@ -361,7 +361,7 @@ describe('ForgePrBackend publishing', () => {
     for (const call of gitCalls) {
       // cwd is the workspace for reads and the throwaway repo for the push.
       expect(call.argv[0]).toBe('-C')
-      expect(call.argv.slice(2, 4)).toEqual(['-c', `core.hooksPath=${hooksPath}`])
+      expect(call.argv.slice(2, 6)).toEqual(['-c', `core.hooksPath=${hooksPath}`, '-c', 'core.fsmonitor=false'])
       expect(call.env).toMatchObject({
         GIT_PAGER: 'cat',
         GIT_TERMINAL_PROMPT: '0',
@@ -469,7 +469,7 @@ describe('ForgePrBackend publishing', () => {
     // The URL, not the remote name: a remote re-pointed after validation must not redirect the push.
     const hooksPath = process.platform === 'win32' ? 'NUL' : '/dev/null'
     expect(push?.argv.slice(2)).toEqual([
-      '-c', `core.hooksPath=${hooksPath}`,
+      '-c', `core.hooksPath=${hooksPath}`, '-c', 'core.fsmonitor=false',
       'push', '--no-verify', '--no-signed', '--recurse-submodules=no',
       '--', 'devloop-target', `refs/heads/${BRANCH}:refs/heads/${BRANCH}`,
     ])
@@ -1294,8 +1294,8 @@ describe('ForgePrBackend verdicts from GitHub reviews', () => {
     expect(body).toContain(HEAD_SHA)
     expect(body).toContain('Comments are not read')
     expect(body).not.toContain('<devloop_result>')
-    // Nothing at this commit hands the body to the worker, so the pull request must not promise it.
-    expect(body).not.toMatch(/worker is given|next attempt/)
+    // A request for changes becomes the task's review notes, which the worker's next prompt carries.
+    expect(body).toContain('given to the worker for its next attempt')
     // DevLoop merges after re-checking the review and the checks; a person's Merge would skip both.
     expect(body).toContain('do not press Merge here')
   })

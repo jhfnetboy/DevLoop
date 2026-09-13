@@ -442,7 +442,9 @@ How a task goes:
    the review keeps waiting, and a red one is rework. A commit with no checks at
    all counts as green unless `forge.requireChecks: true`, which makes it wait;
    turn it on for a repository with CI, so an approval given before CI has
-   registered its checks cannot merge. `verdictSource: comments`
+   registered its checks cannot merge. It looks only for no checks at all: a
+   commit whose checks all came back skipped or neutral has passed, so
+   path-filtered workflows keep working. `verdictSource: comments`
    reads a `<devloop_result>` envelope from a comment instead; exactly one
    source is ever read.
 4. **The merge.** DevLoop reads the verdict and checks again, then runs `gh pr
