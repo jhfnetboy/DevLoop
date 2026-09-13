@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { constants, lstat, mkdir, open, readdir, readFile, realpath, rename, stat, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path'
+import { parseRemoteUrl } from './forge.js'
 import { hostGit } from './worktree.js'
 
 /**
@@ -26,6 +27,12 @@ export interface Project {
   readonly name: string
   /** The directory this process runs a loop for. */
   readonly own: boolean
+  /**
+   * The forge repository its task pull requests go to, as the operator
+   * confirmed it and the registry keeps it; never re-read from the checkout,
+   * whose remotes can be rewritten. Null when none has been confirmed.
+   */
+  readonly pushUrl: string | null
 }
 
 export interface ProjectList {
@@ -55,16 +62,16 @@ export function projectId(realRoot: string): string {
 export async function listProjects(ownRoot: string, home: string): Promise<ProjectList> {
   const projects: Project[] = []
   const seen = new Set<string>()
-  const add = async (root: string, own: boolean): Promise<void> => {
+  const add = async (root: string, own: boolean, pushUrl: string | null): Promise<void> => {
     const real = await canonical(root)
     if (seen.has(real)) return
     seen.add(real)
-    projects.push({ id: projectId(real), root: real, name: basename(real) || real, own })
+    projects.push({ id: projectId(real), root: real, name: basename(real) || real, own, pushUrl })
   }
 
-  await add(ownRoot, true)
+  await add(ownRoot, true, null)
   const registry = await readRegistry(registryPath(home))
-  for (const root of registry.roots) await add(root, false)
+  for (const { root, pushUrl } of registry.roots) await add(root, false, pushUrl)
   return { projects, registryError: registry.error }
 }
 
@@ -84,7 +91,7 @@ async function canonical(root: string): Promise<string> {
   }
 }
 
-async function readRegistry(file: string): Promise<{ roots: string[], error: string | null }> {
+async function readRegistry(file: string): Promise<{ roots: { root: string, pushUrl: string | null }[], error: string | null }> {
   let text: string
   try {
     text = await readFile(file, 'utf8')
@@ -103,19 +110,27 @@ async function readRegistry(file: string): Promise<{ roots: string[], error: str
     : undefined
   if (!Array.isArray(list)) return { roots: [], error: `${file} needs a "projects" array` }
 
-  const roots: string[] = []
+  const roots: { root: string, pushUrl: string | null }[] = []
   const rejected: number[] = []
+  const badUrls: number[] = []
   list.forEach((entry: unknown, index) => {
-    const root = typeof entry === 'object' && entry !== null ? (entry as { root?: unknown }).root : undefined
+    const record = typeof entry === 'object' && entry !== null ? entry as { root?: unknown, pushUrl?: unknown } : {}
     // Relative paths would resolve against whatever directory DSH was started
     // in, which is not something the file's author chose.
-    if (typeof root === 'string' && isAbsolute(root)) roots.push(root)
-    else rejected.push(index)
+    if (!(typeof record.root === 'string' && isAbsolute(record.root))) {
+      rejected.push(index)
+      return
+    }
+    // A forge URL that does not parse is dropped, not guessed at: the project then has none confirmed.
+    const pushUrl = record.pushUrl === undefined ? null : validPushUrl(record.pushUrl)
+    if (record.pushUrl !== undefined && pushUrl === null) badUrls.push(index)
+    roots.push({ root: record.root, pushUrl })
   })
-  const error = rejected.length === 0
-    ? null
-    : `${file}: entries ${rejected.join(', ')} ignored; each needs an absolute "root"`
-  return { roots, error }
+  const problems = [
+    ...(rejected.length === 0 ? [] : [`entries ${rejected.join(', ')} ignored; each needs an absolute "root"`]),
+    ...(badUrls.length === 0 ? [] : [`entries ${badUrls.join(', ')}: "pushUrl" is not a forge URL and was ignored`]),
+  ]
+  return { roots, error: problems.length === 0 ? null : `${file}: ${problems.join('; ')}` }
 }
 
 // ---- writes -----------------------------------------------------------------
@@ -225,6 +240,40 @@ export async function registerProject(home: string, ownRoot: string, root: strin
   })
 }
 
+/**
+ * Record the forge repository the operator confirmed for a registered
+ * project. Refuses a URL the forge could not use and a project not in the
+ * registry (the own root takes the profile's `forge.pushUrl`).
+ */
+export async function setProjectPushUrl(home: string, realRoot: string, pushUrl: string): Promise<void> {
+  const url = validPushUrl(pushUrl)
+  if (url === null) throw new ProjectError('that is not a forge URL DevLoop can push to (https://host/owner/name or git@host:owner/name)')
+  await serially(() => rewriteRegistry(home, (entries) => {
+    if (!entries.some(entry => entry.root === realRoot)) throw new ProjectError(`${realRoot} is not registered here`)
+    return entries.map(entry => entry.root === realRoot ? { ...entry, pushUrl: url } : entry)
+  }))
+}
+
+/**
+ * The checkout's `remote.origin.url` as configured, for the operator to confirm:
+ * read with `git config`, which does not apply `insteadOf` rewriting, and only
+ * returned when the forge could use it. Null when there is none.
+ */
+export async function readOriginUrl(realRoot: string): Promise<string | null> {
+  const raw = await hostGit(realRoot, ['config', '--get', 'remote.origin.url'], { timeoutMs: 5_000 }).catch(() => '')
+  return validPushUrl(raw.trim())
+}
+
+function validPushUrl(value: unknown): string | null {
+  if (typeof value !== 'string' || value.length === 0 || value.startsWith('-')) return null
+  try {
+    parseRemoteUrl(value)
+    return value
+  } catch {
+    return null
+  }
+}
+
 /** Forget a project. Its files — `.devloop/`, worktrees, branches — are left exactly as they are. */
 export async function unregisterProject(home: string, realRoot: string): Promise<void> {
   await serially(() => rewriteRegistry(home, entries => entries.filter((entry) => {
@@ -232,7 +281,7 @@ export async function unregisterProject(home: string, realRoot: string): Promise
   })))
   // Entries may have been written by hand with another spelling of the path;
   // the filter above only removes the spelling this page wrote.
-  for (const root of (await readRegistry(registryPath(home))).roots) {
+  for (const { root } of (await readRegistry(registryPath(home))).roots) {
     if (await canonical(root) === realRoot) {
       throw new ProjectError('the registry still names this project under another spelling; remove it by hand')
     }
