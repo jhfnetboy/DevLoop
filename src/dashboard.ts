@@ -21,7 +21,9 @@ import {
   MAX_GOAL_BYTES,
   ProjectError,
   projectId,
+  readOriginUrl,
   registerProject,
+  setProjectPushUrl,
   unregisterProject,
   validateProjectRoot,
   type Project,
@@ -179,6 +181,12 @@ export interface ProjectDetail extends ProjectSummary {
   readonly firstPass: FirstPass
   /** The current goal's release pull request, when the forge merges. */
   readonly release: Release | null
+  /** Pull requests are reviewed on the forge, so a registered project needs a confirmed repository to start. */
+  readonly forgeMerges: boolean
+  /** The forge repository the operator confirmed for this project; null for none (and for the own root, which uses the profile's). */
+  readonly pushUrl: string | null
+  /** The checkout's origin, offered for confirming while none is confirmed. */
+  readonly originUrl: string | null
 }
 
 export type TaskView = Pick<Task,
@@ -203,9 +211,17 @@ export async function summarizeProject(project: Project, deps: Pick<DashboardDep
   return (await readProject(project, deps, now, false)).summary
 }
 
-export async function describeProject(project: Project, deps: Pick<DashboardDeps, 'presence'>, now: number): Promise<ProjectDetail> {
+export async function describeProject(project: Project, deps: Pick<DashboardDeps, 'presence' | 'forgeMerges'>, now: number): Promise<ProjectDetail> {
   const { summary, extra } = await readProject(project, deps, now, true)
-  const detail = { ...summary, ...(extra ?? emptyDetail()) }
+  const forgeMerges = deps.forgeMerges === true
+  const unconfirmed = forgeMerges && !project.own && project.pushUrl === null
+  const detail = {
+    ...summary,
+    ...(extra ?? emptyDetail()),
+    forgeMerges,
+    pushUrl: project.pushUrl,
+    originUrl: unconfirmed ? await readOriginUrl(project.root) : null,
+  }
   if (summary.error !== null) return detail
   const docs = await readPlanningDocuments(project.root).catch(() => null)
   const withDocs = { ...detail, documents: docs?.documents ?? [], docsDir: docs?.docsDir ?? null }
@@ -307,6 +323,10 @@ async function readProject(
         firstPass: firstPassRate(await readPrLog(project.root, PR_LOG_RATE_WINDOW)),
         goalNumber: goalNumber(state),
         release: state.release ?? null,
+        // Filled in by describeProject, which knows the project and the profile.
+        forgeMerges: false,
+        pushUrl: null,
+        originUrl: null,
       },
     }
   } catch (error) {
@@ -336,6 +356,9 @@ function emptyDetail(): Omit<ProjectDetail, keyof ProjectSummary> {
     goalNumber: 1,
     firstPass: { tasks: 0, passed: 0 },
     release: null,
+    forgeMerges: false,
+    pushUrl: null,
+    originUrl: null,
   }
 }
 
@@ -688,6 +711,8 @@ async function manage(
       if (readiness === null) return fail(422, 'not-ready', '读不到这个仓库的 git 状态，没有启动。')
       const refusal = readinessRefusal(readiness)
       if (refusal !== null) return fail(422, 'not-ready', refusal)
+      const confirmed = await confirmForge(project, body, deps)
+      if (confirmed !== null) return fail(422, 'forge-url', confirmed)
       await armProject(project.root, body.goal)
       // The loop was already ticking, idle for want of a goal; wake it rather
       // than leave the operator watching a page that has not changed yet.
@@ -705,6 +730,8 @@ async function manage(
       if (readiness === null) return fail(422, 'not-ready', '读不到这个仓库的 git 状态，没有启动。')
       const refusal = readinessRefusal(readiness)
       if (refusal !== null) return fail(422, 'not-ready', refusal)
+      const confirmed = await confirmForge(project, body, deps)
+      if (confirmed !== null) return fail(422, 'forge-url', confirmed)
       const saved = await startNextGoal(project.root, body.goal, { expectedRevision: revision, requireRelease: deps.forgeMerges === true, via: 'dashboard' })
       deps.onOperatorAction?.(project, 'resume')
       return json(res, req, 200, { ok: true, value: { id: project.id, revision: saved.revision, goal: goalNumber(saved) } })
@@ -725,6 +752,23 @@ async function manage(
     if (error instanceof OperatorError) return fail(FAILURE_STATUS[error.code], error.code, error.message)
     return fail(500, 'internal', messageOf(error))
   }
+}
+
+/**
+ * Where the forge reviews, a registered project needs the repository its pull
+ * requests go to before it starts: the one the operator confirms here, sent
+ * with the start, is kept in the registry and its loop restarted with it.
+ * Null once there is one; otherwise why not.
+ */
+async function confirmForge(project: Project, body: Record<string, unknown>, deps: DashboardDeps): Promise<string | null> {
+  if (deps.forgeMerges !== true || project.own || project.pushUrl !== null) return null
+  if (typeof body.pushUrl !== 'string' || body.pushUrl.trim() === '') {
+    return 'confirm the forge repository this project\'s pull requests go to first'
+  }
+  const url = body.pushUrl.trim()
+  await setProjectPushUrl(deps.home, project.root, url)
+  deps.control?.setProjectForge?.(project.root, url)
+  return null
 }
 
 async function readJsonBody(req: IncomingMessage, max: number): Promise<Record<string, unknown>> {

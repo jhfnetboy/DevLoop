@@ -418,6 +418,11 @@ nothing changes: tasks merge locally, as before.
 ```
 
 `forge.pushUrl` and `forge.reviewers` have no defaults and are both **required**.
+`forge.pushUrl` is the profile's own root's repository. Each project added on the
+dashboard pushes to its own: before its first start the page shows its checkout's
+`origin` (read without `insteadOf` rewriting), the operator confirms or corrects it,
+and it is kept in the project registry, never re-read from the checkout. A project
+with none confirmed does not start.
 
 How a task goes:
 

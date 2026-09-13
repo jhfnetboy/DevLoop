@@ -303,6 +303,7 @@ function serverText(area, code, params, fallback) {
 }
 
 function startPanel(p) {
+  const forge = forgeField(p)
   const area = el('textarea', { class: 'goal-input', rows: '8', placeholder: t('start.placeholder') })
   area.value = goalDrafts.get(p.id) || ''
   area.addEventListener('input', () => goalDrafts.set(p.id, area.value))
@@ -313,7 +314,7 @@ function startPanel(p) {
     async () => {
       const goal = area.value.trim()
       if (!goal) throw new Error(t('start.emptyGoal'))
-      await postJson(`${API}/projects/${p.id}/start`, { goal })
+      await postJson(`${API}/projects/${p.id}/start`, { goal, ...forge.body() })
       goalDrafts.delete(p.id)
       return { text: t('start.done') }
     })
@@ -324,6 +325,7 @@ function startPanel(p) {
     el('h3', {}, t('start.title')),
     el('p', {}, t('start.intro')),
     readinessPanel(p.readiness),
+    forge.node,
     area,
     el('div', { class: 'actions' }, start, recheck),
     el('p', { class: 'note' }, t('start.note')))
@@ -331,6 +333,7 @@ function startPanel(p) {
 
 // The next goal on the same repository: the finished one is archived under .devloop/archive.
 function nextGoalBox(p) {
+  const forge = forgeField(p)
   const key = `next:${p.id}`
   const area = el('textarea', { class: 'goal-input', rows: '6', placeholder: t('start.placeholder') })
   area.value = goalDrafts.get(key) || ''
@@ -340,7 +343,7 @@ function nextGoalBox(p) {
   const start = actionButton(t('next.button', { n: (p.goalNumber || 1) + 1 }), 'primary', t('next.confirm'), async () => {
     const goal = area.value.trim()
     if (!goal) throw new Error(t('start.emptyGoal'))
-    await postJson(`${API}/projects/${p.id}/next`, { goal, revision: p.revision })
+    await postJson(`${API}/projects/${p.id}/next`, { goal, revision: p.revision, ...forge.body() })
     goalDrafts.delete(key)
     return { text: t('next.started') }
   })
@@ -349,9 +352,21 @@ function nextGoalBox(p) {
     el('h4', {}, t('next.title', { n: (p.goalNumber || 1) + 1 })),
     pending ? el('p', { class: 'note' }, t('next.releasePending', { number: p.release.number })) : null,
     readinessPanel(p.readiness),
+    forge.node,
     area,
     el('div', { class: 'actions' }, start),
     el('p', { class: 'note' }, t('next.note', { n: p.goalNumber || 1 })))
+}
+
+// Where the forge reviews: the repository this project's pull requests go to, confirmed once and then shown.
+function forgeField(p) {
+  if (!p.forgeMerges || p.own) return { node: null, body: () => ({}) }
+  if (p.pushUrl) return { node: el('p', { class: 'note' }, t('forge.urlSet', { url: p.pushUrl })), body: () => ({}) }
+  const input = el('input', { class: 'path-input push-url', type: 'text', value: p.originUrl || '', placeholder: 'git@github.com:owner/repo.git' })
+  return {
+    node: el('label', { class: 'forge-url' }, el('span', {}, t('forge.urlLabel')), input, el('span', { class: 'note' }, t('forge.urlNote'))),
+    body: () => ({ pushUrl: input.value.trim() }),
+  }
 }
 
 // A half-typed goal survives the rebuild that a failed start or a re-check causes.
