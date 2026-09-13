@@ -573,7 +573,7 @@ describe('ForgePrBackend pull-request binding', () => {
       return { stdout: JSON.stringify(pr(moved)), stderr: '' }
     }
     const result = await new ForgePrBackend({ ...FAST, maxWaitMs: 5_000 }, runner).run(reviewInput())
-    expect(result).toMatchObject({ status: 'failed', detail: expect.stringMatching(/no longer targets/) })
+    expect(result).toMatchObject({ status: 'failed', detail: expect.stringMatching(/^forge_review_gone: pull request \d+ no longer targets/) })
     expect(views).toBeGreaterThanOrEqual(2)
   })
 })
@@ -1275,7 +1275,7 @@ describe('ForgePrBackend verdicts from GitHub reviews', () => {
     const green = [{ name: 'test', conclusion: 'SUCCESS' }]
     const moved = await backend({ verdictSource: 'reviews' }, { reviews: approved, checks: green, checksHead: OTHER_SHA }).run(reviewInput())
     expect(moved.outcome).toBeUndefined()
-    expect(moved.detail).toMatch(new RegExp(`^forge_pr: pull request 7 is at ${OTHER_SHA}, not the reviewed ${HEAD_SHA}`))
+    expect(moved.detail).toMatch(new RegExp(`^forge_review_gone: pull request 7 is at ${OTHER_SHA}, not the reviewed ${HEAD_SHA}`))
     const unknown = await backend({ verdictSource: 'reviews' }, { reviews: approved, checks: green, checksHead: '' }).run(reviewInput())
     expect(unknown.detail).toMatch(/is at an unknown head/)
   })

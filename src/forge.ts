@@ -786,7 +786,8 @@ export class ForgePrBackend implements AgentBackend {
     // keep deciding the commit it no longer points at.
     const pr = readPullRequest(view)
     if (!matchesReviewTarget(pr, ctx.base ?? this.options.base, branch, sha) || pr.number !== number) {
-      throw new Error(`forge_pr: pull request ${number} no longer targets ${branch} at ${sha}`)
+      // The review was of a pull request that is no longer this one: a question for review, not the forge.
+      throw new Error(`forge_review_gone: pull request ${number} no longer targets ${branch} at ${sha}`)
     }
 
     if (this.options.verdictSource === 'reviews') return this.readReviewVerdict(root, repo, number, taskId, sha, self, ctx)
@@ -897,7 +898,7 @@ export class ForgePrBackend implements AgentBackend {
     const raw = await this.forge(root, ['pr', 'view', String(number), '--repo', repoSlug(repo), '--json', 'headRefOid,statusCheckRollup'], ctx)
     const view: unknown = parseJson(raw, 'forge_pr: pr checks')
     const head = isRecord(view) && typeof view.headRefOid === 'string' ? view.headRefOid.toLowerCase() : ''
-    if (head !== sha) throw new Error(`forge_pr: pull request ${number} is at ${head || 'an unknown head'}, not the reviewed ${sha}; its checks are not this commit's`)
+    if (head !== sha) throw new Error(`forge_review_gone: pull request ${number} is at ${head || 'an unknown head'}, not the reviewed ${sha}; its checks are not this commit's`)
     const rollup = isRecord(view) ? view.statusCheckRollup : undefined
     if (!Array.isArray(rollup)) throw new Error('forge_pr: pr checks did not return a list')
     if (rollup.length === 0 && this.options.requireChecks) return 'pending'
