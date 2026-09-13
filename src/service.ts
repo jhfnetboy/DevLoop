@@ -289,7 +289,9 @@ export class ProjectLoop {
               // Retrying this every tick would never free the name: ask, and give back the attempt nothing ran for.
               if (!(error instanceof Error && error.message.startsWith('task_branch_taken'))) return
               const taskId = input.contract.taskId
-              const refunded = { ...result.state, usage: refundAction(result.state.usage, result.action) }
+              // Not a refused dispatch either: this hold asks every time it recurs, so it needs no counter to
+              // stop a loop, and one would soon trip dispatch_refused and misname the cause.
+              const refunded = { ...result.state, usage: { ...refundAction(result.state.usage, result.action), refusedDispatches: result.state.usage.refusedDispatches } }
               result = { ...result, action: { type: 'escalate', taskId, reason: 'task_branch_taken' }, state: holdTask(refunded, taskId, 'task_branch_taken') }
             }
           }
