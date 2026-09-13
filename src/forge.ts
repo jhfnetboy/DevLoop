@@ -503,11 +503,12 @@ export class ForgePrBackend implements AgentBackend {
    * asks again on its next tick. Merged into the trunk on the forge only; the
    * checkout is never moved onto the trunk.
    */
-  async advanceRelease(request: { workspaceRoot: string, workBranch: string }): Promise<{ state: 'merged', number: number, mergeCommit: string } | { state: 'waiting' | 'changes', number: number, notes?: string }> {
+  async advanceRelease(request: { workspaceRoot: string, workBranch: string, number: number }): Promise<{ state: 'merged', number: number, mergeCommit: string } | { state: 'waiting' | 'changes', number: number, notes?: string }> {
     const { root, repo, ctx } = this.releaseContext(request.workspaceRoot, request.workBranch)
     const self = await this.authenticatedLogin(root, repo, ctx)
-    const found = await this.releaseOf(root, repo, request.workBranch, ctx, true)
-    if (found === null) throw new Error(`forge_release: no release pull request from ${request.workBranch}`)
+    // This goal's own release, by number: a work branch that carries goal after goal has an earlier one merged from the same head.
+    const found = await this.releaseOf(root, repo, request.workBranch, ctx, true, request.number)
+    if (found === null) throw new Error(`forge_release: no release pull request #${String(request.number)} from ${request.workBranch}`)
     if (found.state === 'MERGED') return { state: 'merged', number: found.number, mergeCommit: found.mergeCommit }
     const verdict = await this.readReviewVerdict(root, repo, found.number, 'release', found.head, self, ctx)
     if (verdict === null) return { state: 'waiting', number: found.number }
@@ -520,7 +521,7 @@ export class ForgePrBackend implements AgentBackend {
     } finally {
       await rm(neutral, { recursive: true, force: true })
     }
-    const merged = await this.releaseOf(root, repo, request.workBranch, ctx, true)
+    const merged = await this.releaseOf(root, repo, request.workBranch, ctx, true, request.number)
     if (merged?.state !== 'MERGED') throw new Error(`forge_release: pull request ${found.number} is not merged after merging it`)
     return { state: 'merged', number: merged.number, mergeCommit: merged.mergeCommit }
   }
@@ -535,7 +536,7 @@ export class ForgePrBackend implements AgentBackend {
   }
 
   /** The release pull request: same-repo, the work branch into the trunk; open, or also merged when asked. */
-  private async releaseOf(root: string, repo: ForgeRepo, workBranch: string, ctx: RunCtx, orMerged = false): Promise<{ number: number, head: string, state: 'OPEN' | 'MERGED', mergeCommit: string } | null> {
+  private async releaseOf(root: string, repo: ForgeRepo, workBranch: string, ctx: RunCtx, orMerged = false, number?: number): Promise<{ number: number, head: string, state: 'OPEN' | 'MERGED', mergeCommit: string } | null> {
     const raw = await this.forge(root, [
       'pr', 'list', '--repo', repoSlug(repo), '--head', workBranch, '--base', this.options.base, '--state', orMerged ? 'all' : 'open',
       '--json', `${PR_FIELDS},state,mergeCommit`, '--limit', '20',
@@ -545,6 +546,7 @@ export class ForgePrBackend implements AgentBackend {
     const matching = listed.filter(entry => isRecord(entry) && (entry.state === 'OPEN' || (orMerged && entry.state === 'MERGED')))
       .map(entry => ({ entry: entry as Record<string, unknown>, pr: readPullRequest(entry) }))
       .filter(({ pr }) => !pr.isCrossRepository && pr.baseRefName === this.options.base && pr.headRefName === workBranch)
+      .filter(({ pr }) => number === undefined || pr.number === number)
     const open = matching.filter(({ entry }) => entry.state === 'OPEN')
     if (open.length > 1) throw new Error(`forge_release: ${open.length} open release pull requests from ${workBranch}`)
     const chosen = open[0] ?? matching.find(({ entry }) => entry.state === 'MERGED')

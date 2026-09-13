@@ -3,6 +3,9 @@ import type { AgentAction } from './backend.js'
 import type { DevloopResult } from './result.js'
 import type { HoldReason, LoopState, Task, TaskStatus } from './types.js'
 
+/** result.ts's rule for a task id, held again after the goal prefix is added. */
+const TASK_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
+
 export interface ApplyAgentResultOptions {
   readonly agent: string
   readonly implementationSha?: string
@@ -28,13 +31,18 @@ export function applyAgentResult(
 function applyPlan(state: LoopState, result: DevloopResult, options: ApplyAgentResultOptions): LoopState {
   if (result.kind !== 'plan') throw new Error('result_kind_mismatch: expected plan')
   if (state.tasks.length > 0) throw new Error('stale_agent_result: tasks already exist')
+  // From the second goal on, a task's id (and so its branch, devloop/<id>) is the goal's own:
+  // planners restart at TASK-001, and an earlier goal's branch of that name may still be on the forge.
+  const prefix = state.goal === undefined ? '' : `g${String(state.goal.number)}-`
   const tasks: Task[] = result.tasks.map(task => ({
     ...task,
+    id: `${prefix}${task.id}`,
     status: 'ready',
     attempts: 0,
     reviewCycles: 0,
     planner: options.agent,
   }))
+  if (tasks.some(task => !TASK_ID.test(task.id))) throw new Error('result_task_mismatch: a task id is too long once the goal prefix is added')
   return { ...state, tasks }
 }
 

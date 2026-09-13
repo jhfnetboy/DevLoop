@@ -107,7 +107,7 @@ export class ProjectLoop {
         const opened = await forge.openRelease({ workspaceRoot: this.config.root, workBranch, title: releaseTitle(workBranch), body: releaseBody(state, workBranch, this.config.forge.reviewers) })
         release = { number: opened.number, merged: false }
       } else {
-        const step = await forge.advanceRelease({ workspaceRoot: this.config.root, workBranch })
+        const step = await forge.advanceRelease({ workspaceRoot: this.config.root, workBranch, number: state.release.number })
         release = step.state === 'merged'
           ? { number: step.number, merged: true, mergeCommit: step.mergeCommit }
           : { number: step.number, merged: false, ...(step.state === 'changes' ? { changes: (step.notes ?? 'changes requested').slice(0, MAX_RELEASE_CHANGES) } : {}) }

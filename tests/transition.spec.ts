@@ -21,6 +21,16 @@ describe('agent result transitions', () => {
     expect(next.tasks[0]?.estimate).toEqual({ lines: 120, files: 3 })
   })
 
+  it('gives each goal after the first its own task ids, so its branches never meet an earlier goal\'s', () => {
+    const plan = (id: string) => ({ version: 1 as const, kind: 'plan' as const, tasks: [{ id, title: 'Do it', tier: 'T1' as const, risk: 'low' as const, allowedPaths: ['src/**'], acceptance: ['ok'] }] })
+    const first = { ...emptyState(0), lastAction: { type: 'plan' as const } }
+    expect(applyAgentResult(first, { type: 'plan' }, plan('TASK-001'), {}).tasks[0]?.id).toBe('TASK-001')
+    const third = { ...first, goal: { number: 3, startedAt: '2026-09-13T08:00:00.000Z' } }
+    expect(applyAgentResult(third, { type: 'plan' }, plan('TASK-001'), {}).tasks[0]?.id).toBe('g3-TASK-001')
+    // An id the prefix pushes past the limit is refused, not cut into a different or clashing id.
+    expect(() => applyAgentResult(third, { type: 'plan' }, plan('T'.repeat(62)), {})).toThrow(/result_task_mismatch/)
+  })
+
   it('moves a completed implementation to SHA-bound review', () => {
     const sha = 'a'.repeat(40)
     const state = {
