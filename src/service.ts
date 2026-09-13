@@ -319,6 +319,7 @@ export class ProjectLoop {
             // the checkout can be switched back after the start was checked.
             const trunks = await trunkBranches(this.config.root)
             const task = result.state.tasks.find(entry => entry.id === mergeTaskId)
+            let pullRequest: number | undefined
             if (mergesOnForge(this.config)) {
               // The forge merges the reviewed pull request; the checkout only follows it.
               const workBranch = result.state.workBranch
@@ -329,12 +330,13 @@ export class ProjectLoop {
                 this.ctx.logger.info(`[dsh-devloop] warning: ${mergeTaskId}'s pull request #${String(merged.number)} was merged by ${merged.mergedBy}, outside DevLoop; its review and checks were not re-checked at merge`)
               }
               await fastForwardWorkBranch(this.config.root, workBranch, merged.mergeCommit, this.config.forge.pushUrl, { trunks })
+              pullRequest = merged.number
             } else {
               await mergeTaskWorktree(this.config.root, mergeTaskId, task?.baseSha ?? null, task?.implementationSha ?? null, { trunks })
             }
             result = {
               ...result,
-              state: markTaskDone(result.state, mergeTaskId),
+              state: markTaskDone(result.state, mergeTaskId, pullRequest),
             }
           } catch (error) {
             this.ctx.logger.error('[dsh-devloop] merge failed', error)
@@ -1320,7 +1322,7 @@ function releaseBody(state: LoopState, workBranch: string, reviewers: readonly s
     ...state.tasks.map(task => task.implementationSha !== undefined && task.implementationSha === task.baseSha
       // Accepted with no commits of its own: there was nothing to merge, so there is no pull request to look for.
       ? `- \`${task.id}\` ${task.title}: no change, accepted without a pull request, verdict ${task.lastReviewVerdict ?? 'none'}`
-      : `- \`${task.id}\` ${task.title}: head \`${task.implementationSha ?? 'unknown'}\`, from \`devloop/${task.id}\`, verdict ${task.lastReviewVerdict ?? 'none'}`),
+      : `- \`${task.id}\` ${task.title}: ${task.pullRequest === undefined ? '' : `#${String(task.pullRequest)}, `}head \`${task.implementationSha ?? 'unknown'}\`, from \`devloop/${task.id}\`, verdict ${task.lastReviewVerdict ?? 'none'}`),
     '',
     'Review it as a summary: each task pull request should be merged, based on this branch, and approved at the head it merged with; a commit that came in any other way is a finding.',
     '',
@@ -1360,10 +1362,10 @@ function stampTaskBaseSha(state: LoopState, taskId: string, baseSha: string): Lo
   }
 }
 
-function markTaskDone(state: LoopState, taskId: string): LoopState {
+function markTaskDone(state: LoopState, taskId: string, pullRequest?: number): LoopState {
   return {
     ...state,
-    tasks: state.tasks.map(task => task.id === taskId ? { ...task, status: 'done' } : task),
+    tasks: state.tasks.map(task => task.id === taskId ? { ...task, status: 'done', ...(pullRequest === undefined ? {} : { pullRequest }) } : task),
   }
 }
 

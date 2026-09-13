@@ -1711,7 +1711,8 @@ describe('merging on the forge', () => {
     await forgeService(root).tick()
     expect(asked).toEqual([{ workspaceRoot: root, taskId: 'd1', sha: task, workBranch: 'work' }])
     expect(await g(root, 'rev-parse', 'HEAD')).toBe(merge)
-    expect((await loadState(root, Date.now())).tasks[0]?.status).toBe('done')
+    // Done, with the pull request it went through, for the release to link.
+    expect((await loadState(root, Date.now())).tasks[0]).toMatchObject({ status: 'done', pullRequest: 7 })
   })
 
   it('warns when the reviewed pull request was merged outside DevLoop, and still follows it', async () => {
@@ -1788,7 +1789,7 @@ describe('releasing a finished goal on the forge', () => {
       workBranch: 'work',
       lastAction: { type: 'stop', reason: 'goal_complete' },
       tasks: [
-        makeTask({ id: 'd1', status: 'done', title: 'Add a parser', baseSha: 'c'.repeat(40), implementationSha: 'a'.repeat(40), lastReviewVerdict: 'PASS' }),
+        makeTask({ id: 'd1', status: 'done', title: 'Add a parser', baseSha: 'c'.repeat(40), implementationSha: 'a'.repeat(40), lastReviewVerdict: 'PASS', pullRequest: 4 }),
         makeTask({ id: 'd2', status: 'done', title: 'Check only', baseSha: 'c'.repeat(40), implementationSha: 'c'.repeat(40), lastReviewVerdict: 'PASS' }),
       ],
       ...extra,
@@ -1821,7 +1822,7 @@ describe('releasing a finished goal on the forge', () => {
     expect((await loadState(root, Date.now())).release).toEqual({ number: 9, merged: false })
     expect(opened).toHaveLength(1)
     expect(opened[0]?.title).toBe('DevLoop release: work')
-    expect(opened[0]?.body).toContain('`d1` Add a parser: head `' + 'a'.repeat(40) + '`, from `devloop/d1`, verdict PASS')
+    expect(opened[0]?.body).toContain('`d1` Add a parser: #4, head `' + 'a'.repeat(40) + '`, from `devloop/d1`, verdict PASS')
     // A task accepted with no commits of its own had no pull request; the body must not send the reviewer looking for one.
     expect(opened[0]?.body).toContain('`d2` Check only: no change, accepted without a pull request, verdict PASS')
     expect(opened[0]?.body).not.toContain('devloop/d2')

@@ -40,6 +40,8 @@ export interface Task {
    * it is bigger than asked, to judge whether it should have been split.
    */
   readonly overBudget?: string
+  /** The forge pull request it was merged through, for the release to link; absent in local mode. */
+  readonly pullRequest?: number
   /**
    * What the last review asked to be changed, for the worker's next attempt;
    * cleared once that attempt is handed in, when a new review speaks.
