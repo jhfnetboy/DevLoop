@@ -341,14 +341,17 @@ describe('browsing for a repository', () => {
 })
 
 describe('dashboard project routes', () => {
-  function control(): ProjectControl & { added: string[], removed: string[] } {
+  function control(): ProjectControl & { added: string[], removed: string[], forged: string[][] } {
     const added: string[] = []
     const removed: string[] = []
+    const forged: string[][] = []
     return {
       added,
       removed,
+      forged,
       addProject: root => { added.push(root) },
       removeProject: root => { removed.push(root) },
+      setProjectForge: (root, url) => { forged.push([root, url]) },
       spend: () => ({ costUsdDay: 1.5, cap: 20 }),
     }
   }
@@ -440,12 +443,12 @@ describe('dashboard project routes', () => {
     expect(early.json.error?.message).toMatch(/not finished/)
 
     const done = await saveState(root, { ...running, goalCompleted: true, killSwitch: true, lastAction: { type: 'stop', reason: 'goal_complete' }, tasks: [makeTask({ id: 't1', status: 'done' })], release: { number: 5, merged: false } })
-    expect((await describeProject({ id, root, name: 'n', own: false }, { presence: () => 'running' }, Date.now())).readiness?.ready).toBe(true)
+    expect((await describeProject({ id, root, name: 'n', own: false, pushUrl: null }, { presence: () => 'running' }, Date.now())).readiness?.ready).toBe(true)
     expect((await post(plain, `/devloop/api/projects/${id}/next`, { goal: 'Goal two', revision: done.revision - 1 })).status).toBe(409)
     expect((await post(plain, `/devloop/api/projects/${id}/next`, { goal: 'Goal two' })).status).toBe(400)
     // Where the forge merges, the next goal waits for the finished one's release.
     const forge = handlerFor(await mkdtempInRepo('route-own-'), dir, control(), { forgeMerges: true })
-    const waiting = await post(forge, `/devloop/api/projects/${id}/next`, { goal: 'Goal two', revision: done.revision })
+    const waiting = await post(forge, `/devloop/api/projects/${id}/next`, { goal: 'Goal two', revision: done.revision, pushUrl: 'git@github.com:acme/widgets.git' })
     expect(waiting.status).toBe(422)
     expect(waiting.json.error?.message).toMatch(/release pull request has not merged/)
 
@@ -457,8 +460,41 @@ describe('dashboard project routes', () => {
     expect(woken).toEqual(['resume'])
     expect(await readFile(join(root, '.devloop', 'GOAL.md'), 'utf8')).toBe('Goal two\n')
     expect(await readFile(join(root, '.devloop', 'archive', '0001', 'GOAL.md'), 'utf8')).toBe('Goal one\n')
-    const detail = await describeProject({ id, root, name: 'n', own: false }, { presence: () => 'running' }, Date.now())
+    const detail = await describeProject({ id, root, name: 'n', own: false, pushUrl: null }, { presence: () => 'running' }, Date.now())
     expect(detail).toMatchObject({ goalNumber: 2, release: null, completed: false })
+  })
+
+  it('asks for the forge repository before a registered project starts where the forge reviews, keeps it, and restarts its loop with it', async () => {
+    const dir = await home()
+    const root = await repo('route-forge-')
+    await execFileAsync('git', ['-C', root, 'remote', 'add', 'origin', 'git@github.com:acme/widgets.git'])
+    await execFileAsync('git', ['-C', root, 'switch', '-q', '-c', 'devloop/work'])
+    const ctl = control()
+    const own = await mkdtempInRepo('route-own-')
+    const handler = handlerFor(own, dir, ctl, { forgeMerges: true })
+    await post(handler, '/devloop/api/projects', { root })
+    const id = projectId(root)
+    const describe = async () => describeProject((await listProjects(own, dir)).projects.find(p => p.id === id)!, { presence: () => 'running', forgeMerges: true }, Date.now())
+    // The checkout's origin is offered; nothing is confirmed yet.
+    expect(await describe()).toMatchObject({ forgeMerges: true, pushUrl: null, originUrl: 'git@github.com:acme/widgets.git' })
+
+    const unconfirmed = await post(handler, `/devloop/api/projects/${id}/start`, { goal: 'Goal one' })
+    expect(unconfirmed.status).toBe(422)
+    expect(unconfirmed.json.error?.message).toMatch(/confirm the forge repository/)
+    await expect(readFile(join(root, '.devloop', 'GOAL.md'), 'utf8')).rejects.toThrow()
+    expect((await post(handler, `/devloop/api/projects/${id}/start`, { goal: 'Goal one', pushUrl: '/srv/local.git' })).status).toBe(422)
+
+    const started = await post(handler, `/devloop/api/projects/${id}/start`, { goal: 'Goal one', pushUrl: ' git@github.com:acme/widgets.git ' })
+    expect(started.status).toBe(200)
+    expect(ctl.forged).toEqual([[root, 'git@github.com:acme/widgets.git']])
+    expect(await describe()).toMatchObject({ pushUrl: 'git@github.com:acme/widgets.git', originUrl: null })
+
+    // Local review asks for none: the start is as it was.
+    const local = await repo('route-local-')
+    await execFileAsync('git', ['-C', local, 'switch', '-q', '-c', 'devloop/work'])
+    const plain = handlerFor(own, dir, control())
+    await post(plain, '/devloop/api/projects', { root: local })
+    expect((await post(plain, `/devloop/api/projects/${projectId(local)}/start`, { goal: 'Goal one' })).status).toBe(200)
   })
 
   it('never removes the process\'s own root', async () => {
