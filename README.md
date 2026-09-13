@@ -457,7 +457,8 @@ How a task goes:
 5. **The release.** Once every task is done, the loop opens the work branch →
    trunk pull request, its body listing each task's head, branch and verdict for
    the reviewer to check the branch against, looks at it each tick, and merges it
-   once approved with green checks. It merges on the forge only; the checkout
+   once approved with green checks. The release is always decided by a GitHub
+   review, even with `verdictSource: comments`; its body says so. It merges on the forge only; the checkout
    is never moved onto trunk. `STATE.release` records it.
 
 What this path establishes, re-checked every time it acts:

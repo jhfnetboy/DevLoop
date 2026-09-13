@@ -492,7 +492,9 @@ export class ForgePrBackend implements AgentBackend {
 
   /**
    * Where the release stands, and merge it once it may be: approved by a
-   * reviewer at its head, with green checks. One look, no waiting — the loop
+   * reviewer at its head, with green checks. Always read from GitHub reviews,
+   * whatever `verdictSource` says for task pull requests: the release body asks
+   * for a review, and a comment envelope needs a task id the release has not. One look, no waiting — the loop
    * asks again on its next tick. Merged into the trunk on the forge only; the
    * checkout is never moved onto the trunk.
    */

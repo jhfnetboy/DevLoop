@@ -1719,6 +1719,9 @@ describe('releasing a finished goal on the forge', () => {
     // A task accepted with no commits of its own had no pull request; the body must not send the reviewer looking for one.
     expect(opened[0]?.body).toContain('`d2` Check only: no change, accepted without a pull request, verdict PASS')
     expect(opened[0]?.body).not.toContain('devloop/d2')
+    // How to decide it, from whom: the release is read from GitHub reviews only.
+    expect(opened[0]?.body).toContain('Decide with a GitHub review on this pull request')
+    expect(opened[0]?.body).toContain('Only reviews from `clestons` of its head commit are read; comments are not read.')
     const before = (await loadState(root, Date.now())).revision
     await loop.tick()
     expect((await loadState(root, Date.now())).revision).toBe(before)
