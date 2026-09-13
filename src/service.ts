@@ -23,7 +23,7 @@ import { appendPrLog, checkEntry } from './prlog.js'
 import { ForgePrBackend } from './forge.js'
 import { DshHeadlessBackend } from './dsh.js'
 import { CordisHarnessHost, HarnessSubagentBackend } from './harness.js'
-import { DEVLOOP_DIR, loadState, saveState, withStateLock, workspaceArmed, writeBudgetSnapshot, type LockResult } from './persist.js'
+import { DEVLOOP_DIR, loadState, MAX_RELEASE_CHANGES, saveState, withStateLock, workspaceArmed, writeBudgetSnapshot, type LockResult } from './persist.js'
 import { writeProgress } from './progress.js'
 import { applyRunSignals, refundAction, rollCostWindows } from './budget.js'
 import { runTick, type TickResult } from './tick.js'
@@ -110,7 +110,7 @@ export class ProjectLoop {
         const step = await forge.advanceRelease({ workspaceRoot: this.config.root, workBranch })
         release = step.state === 'merged'
           ? { number: step.number, merged: true, mergeCommit: step.mergeCommit }
-          : { number: step.number, merged: false, ...(step.state === 'changes' ? { changes: (step.notes ?? 'changes requested').slice(0, 8_192) } : {}) }
+          : { number: step.number, merged: false, ...(step.state === 'changes' ? { changes: (step.notes ?? 'changes requested').slice(0, MAX_RELEASE_CHANGES) } : {}) }
       }
     } catch (error) {
       this.ctx.logger.error('[dsh-devloop] release failed', error)
