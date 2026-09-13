@@ -1287,19 +1287,20 @@ describe('acceptance gates the review, not just the log', () => {
   // "log whatever the reason was" degenerates into logging nothing specific.
   it('names the step that actually refused, not the one that already succeeded', async () => {
     const { root, logged } = await runWith([['false']])
-    expect(logged.some(line => line.includes('acceptance_failed'))).toBe(true)
+    expect(logged.some(line => line.includes('acceptance failed: false'))).toBe(true)
     // The commit had already happened by the time acceptance ran.
     expect(logged.some(line => line.includes('parent commit failed'))).toBe(false)
     await rm(root, { recursive: true, force: true })
   })
 
-  it('holds the task and never dispatches a review when a check fails', async () => {
+  it('sends the task back to the worker, and never dispatches a review, when a check fails', async () => {
     const { root, seen } = await runWith([['false']])
     const state = await loadState(root, Date.now())
-    // The worker's own claim of completion is not enough.
-    expect(state.tasks[0]?.status).not.toBe('review_pending')
-    expect(state.supervisor?.reason).toMatch(/^acceptance_failed/)
-    expect(seen).not.toContain('review')
+    // The worker's own claim of completion is not enough: the failure is its next attempt's instructions.
+    expect(state.tasks[0]?.status).toBe('rework')
+    expect(state.tasks[0]?.reviewNotes).toMatch(/^The acceptance check `false` failed on this commit/)
+    expect(state.supervisor).toBeNull()
+    expect(seen).toEqual(['delegate', 'delegate'])
     await rm(root, { recursive: true, force: true })
   })
 })
@@ -1545,7 +1546,6 @@ process.exit(${code})
 
   it.each([
     ['over the size budget', [{ rule: 'SZ-1', severity: 'block' }], 1, /^task_over_budget:340 lines, 7 files$/],
-    ['blocked by another rule', [{ rule: 'SZ-2', severity: 'block' }, { rule: 'B2', severity: 'block' }], 1, /^prepr_blocked:SZ-2,B2$/],
     ['without a verdict', [], 2, /^prepr_unavailable:checker exited 2$/],
   ])('holds a change %s, and never pays a reviewer for it', async (_case, findings, code, reason) => {
     const { root, reviews } = await runWith((await checker(findings, code)).argv)
@@ -1557,6 +1557,62 @@ process.exit(${code})
     const log = await readPrLog(root)
     expect(log.map(e => e.kind === 'check' ? e.status : e.kind)).toEqual([code === 2 ? 'unavailable' : 'blocked'])
     expect(log[0]?.kind === 'check' ? log[0].blocking : null).toEqual(findings.filter(f => (f as { severity: string }).severity === 'block').map(f => (f as { rule: string }).rule))
+  })
+})
+
+describe('a mechanical check the commit fails goes back to the worker', () => {
+  async function blockedRun(acceptance: string[][] = []) {
+    const services: DevloopService[] = []
+    const root = await mkdtempInRepo('devloop-mech-')
+    await mkdir(join(root, '.devloop'))
+    await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
+    await initWorkRepo(root)
+    await saveState(root, { ...emptyState(Date.now()), tasks: [makeTask({ id: 'd1', status: 'ready', allowedPaths: ['src/**'] })] })
+    const dir = await mkdtemp(join(tmpdir(), 'mech-checker-'))
+    const findings = [{ rule: 'B2', severity: 'block', file: 'src/added.ts', line: 1, message: 'swallowed error' }, { rule: 'B1', severity: 'review', file: 'src/added.ts', line: 1, message: 'say when' }]
+    await writeFile(join(dir, 'check.mjs'), `process.stdout.write(${JSON.stringify(JSON.stringify({ checker: { rules_version: '1.2.2', git_sha: 'x', dirty: false }, size: { lines: 3, files: 1, counted_top_dirs: ['src'] }, findings }))}); process.exit(1)`, 'utf8')
+    const notes: (string | undefined)[] = []
+    const backend: AgentBackend = {
+      async run(input: AgentRunInput): Promise<AgentRunResult> {
+        if (input.action.type !== 'delegate') return { status: 'started' }
+        notes.push(input.contract?.reviewNotes)
+        await mkdir(join(input.worktreeRoot ?? root, 'src'), { recursive: true })
+        await writeFile(join(input.worktreeRoot ?? root, 'src', 'added.ts'), `export const x = ${notes.length}\n`, 'utf8')
+        return { status: 'started', agent: 'test/worker', outcome: { version: 1, kind: 'implementation', taskId: 'd1', outcome: 'completed', summary: 'done' } }
+      },
+      async cancel() {},
+      async health() { return 'ok' },
+    }
+    const service = new DevloopService(new Context(), resolveConfig({ root, enabled: false, acceptance, prePrCheck: ['node', join(dir, 'check.mjs')] }), backend)
+    services.push(service)
+    return { root, service, notes, stop: () => { for (const s of services) s.stop() } }
+  }
+
+  it('turns the checker\'s blocking findings into the next attempt\'s instructions, and pays no reviewer', async () => {
+    const { root, service, notes, stop } = await blockedRun()
+    try {
+      await service.tick()
+      const state = await loadState(root, Date.now())
+      expect(state.supervisor).toBeNull()
+      expect(state.tasks[0]).toMatchObject({ status: 'rework' })
+      expect(state.tasks[0]?.reviewNotes).toBe('The pre-PR checker (rules 1.2.2) blocked this commit. Fix each of these and hand it in again:\n- B2 src/added.ts:1: swallowed error')
+      // The next attempt is given them; the attempts circuit, not a hold, bounds how often.
+      await service.tick()
+      expect(notes).toEqual([undefined, state.tasks[0]?.reviewNotes])
+    } finally {
+      stop()
+    }
+  })
+
+  it('does not run the checker on a commit whose tests failed, so the failure is what the worker is told', async () => {
+    const { root, service, stop } = await blockedRun([['false']])
+    try {
+      await service.tick()
+      expect((await loadState(root, Date.now())).tasks[0]?.reviewNotes).toMatch(/^The acceptance check `false` failed/)
+      expect(await readPrLog(root)).toEqual([])
+    } finally {
+      stop()
+    }
   })
 })
 
