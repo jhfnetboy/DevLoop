@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process'
-import { chmod, lstat, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -595,6 +596,16 @@ describe('fastForwardWorkBranch', () => {
     await g(root, 'switch', '-q', 'work')
     await writeFile(join(root, 'README.md'), 'changed\n', 'utf8')
     await expect(fastForwardWorkBranch(root, 'work', merge, forge, { trunks: TRUNKS })).rejects.toThrow(/^merge_wedged: the workspace has tracked changes/)
+  })
+
+  it('names a bare git or filesystem failure as the checkout\'s, so it is never taken for a forge refusal', async () => {
+    const plain = await mkdtemp(join(tmpdir(), 'devloop-not-a-repo-'))
+    scratch.push(plain)
+    const merge = 'a'.repeat(40)
+    // Not a repository at all: git itself fails, with no prefix of its own.
+    await expect(fastForwardWorkBranch(plain, 'work', merge, plain, { trunks: TRUNKS })).rejects.toThrow(/^merge_wedged: Command failed: git/)
+    // Gone altogether: realpath fails before git runs.
+    await expect(fastForwardWorkBranch(join(plain, 'gone'), 'work', merge, plain, { trunks: TRUNKS })).rejects.toThrow(/^merge_wedged: ENOENT/)
   })
 
   it('refuses a commit it cannot fetch, and one the work branch is not behind', async () => {

@@ -178,6 +178,18 @@ export async function fastForwardWorkBranch(
   fetchUrl: string,
   options: MergeOptions = {},
 ): Promise<void> {
+  try {
+    await followMerge(root, workBranch, mergeCommit, fetchUrl, options)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    if (/^(merge_wedged|merge_detached_head|merge_onto_trunk):/.test(message)) throw error
+    // A bare git or filesystem failure here is the checkout's, not the forge's: named as such,
+    // or the merge's caller would take it for a forge refusal and ask for the wrong fix.
+    throw new Error(`merge_wedged: ${message}`, { cause: error })
+  }
+}
+
+async function followMerge(root: string, workBranch: string, mergeCommit: string, fetchUrl: string, options: MergeOptions): Promise<void> {
   const target = normalizeSha(mergeCommit)
   if (target === null) throw new Error('merge_wedged: the forge named no merge commit')
   const resolvedRoot = await realpath(root)
