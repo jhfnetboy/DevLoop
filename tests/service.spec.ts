@@ -1,4 +1,4 @@
-import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises'
+import { appendFile, chmod, lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { tmpdir } from 'node:os'
@@ -1450,7 +1450,7 @@ process.exit(${code})
     return { argv: ['node', join(dir, 'check.mjs')], seen }
   }
 
-  async function runWith(prePrCheck: string[], task: Partial<Task> = {}, onTrunk = false): Promise<{ root: string, reviews: number }> {
+  async function runWith(prePrCheck: string[], task: Partial<Task> = {}, onTrunk = false, review: Partial<AgentRunResult> = {}): Promise<{ root: string, reviews: number }> {
     const root = await mkdtempInRepo('devloop-prepr-svc-')
     await mkdir(join(root, '.devloop'))
     await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n', 'utf8')
@@ -1462,7 +1462,7 @@ process.exit(${code})
       async run(input: AgentRunInput): Promise<AgentRunResult> {
         if (input.action.type === 'review') {
           reviews += 1
-          return { status: 'started', agent: 'test/reviewer', outcome: { version: 1, kind: 'review', taskId: 'd1', reviewedSha: input.contract?.implementationSha ?? '', verdict: 'PASS' } }
+          return { status: 'started', agent: 'test/reviewer', ...review, outcome: { version: 1, kind: 'review', taskId: 'd1', reviewedSha: input.contract?.implementationSha ?? '', verdict: 'PASS' } }
         }
         await mkdir(join(input.worktreeRoot ?? root, 'src'), { recursive: true })
         await writeFile(join(input.worktreeRoot ?? root, 'src', 'added.ts'), 'export const x = 1\n', 'utf8')
@@ -1497,6 +1497,18 @@ process.exit(${code})
     expect(log.map(e => e.kind)).toEqual(['check', 'review'])
     expect(log[0]).toMatchObject({ taskId: 'd1', status: 'passed', size: { lines: 340, files: 7 }, rules: ['B1'], blocking: [], checker: { rulesVersion: '1.1.0' } })
     expect(log[1]).toMatchObject({ taskId: 'd1', verdict: 'PASS', reviewer: 'test/reviewer', head: log[0]?.head })
+    // No local reviewer was in the way, so the line names none.
+    expect('localReviewer' in log[1]!).toBe(false)
+  })
+
+  it('names the local reviewer a review went through before the forge, on the PR log line', async () => {
+    const { argv } = await checker([], 0)
+    const { root } = await runWith(argv, {}, false, { localReviewer: 'claude/opus' })
+    const log = await readPrLog(root)
+    expect(log[1]).toMatchObject({ kind: 'review', verdict: 'PASS', reviewer: 'test/reviewer', localReviewer: 'claude/opus' })
+    // A line whose local reviewer is not text is not ours, and the page never gets it.
+    await appendFile(join(root, '.devloop', 'PR-LOG.jsonl'), `${JSON.stringify({ ...log[1], localReviewer: { html: '<b>' } })}\n`, 'utf8')
+    expect(await readPrLog(root)).toHaveLength(2)
   })
 
   it('reviews an elastic-band change with its size on the task, and logs it beside the planner\'s estimate', async () => {

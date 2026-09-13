@@ -27,7 +27,8 @@ describe('a local review before the forge', () => {
     for (const passing of ['PASS', 'PASS_WITH_NOTES'] as const) {
       const local = fake(verdict(passing))
       const forge = fake(verdict('PASS'))
-      expect(await new LocalThenForgeReview(local, LOCAL, forge).run(input())).toEqual(await forge.run(input()))
+      // The forge's verdict, saying which local reviewer passed it first.
+      expect(await new LocalThenForgeReview(local, LOCAL, forge).run(input())).toEqual({ ...await forge.run(input()), localReviewer: 'claude/opus' })
       expect(local.calls[0]?.route).toEqual(LOCAL)
       expect(forge.calls).toHaveLength(2)
     }
@@ -36,7 +37,7 @@ describe('a local review before the forge', () => {
   it('takes a local rework, replan, block or failure as the answer, and never asks the forge', async () => {
     for (const result of [verdict('REWORK'), verdict('REPLAN'), verdict('BLOCKED'), { status: 'failed', detail: 'claude down' } as AgentRunResult]) {
       const forge = fake(verdict('PASS'))
-      expect(await new LocalThenForgeReview(fake(result), LOCAL, forge).run(input())).toEqual(result)
+      expect(await new LocalThenForgeReview(fake(result), LOCAL, forge).run(input())).toEqual({ ...result, localReviewer: 'claude/opus' })
       expect(forge.calls).toHaveLength(0)
     }
   })

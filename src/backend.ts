@@ -27,6 +27,12 @@ export interface AgentRunResult {
   /** Concrete provider/model identity used for independent-review checks. */
   readonly agent?: string
   /**
+   * The local reviewer a forge review went through first, as backend/model.
+   * `agent` names the forge route either way; this says who looked before it,
+   * and, for a local verdict the forge never saw, who gave it.
+   */
+  readonly localReviewer?: string
+  /**
    * False when the run stopped before any provider did work — a bad route, a
    * missing adapter, a refused precondition. Absent means it did.
    *

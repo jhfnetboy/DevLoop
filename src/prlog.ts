@@ -36,6 +36,8 @@ export type PrLogEntry =
       readonly head: string | null
       readonly verdict: string
       readonly reviewer: string | null
+      /** The local reviewer the change went through before the forge; absent when there was none. */
+      readonly localReviewer?: string
     }
 
 export const PR_LOG_FILE = 'PR-LOG.jsonl'
@@ -119,7 +121,7 @@ function asEntry(value: unknown): PrLogEntry | null {
   const v = value as Record<string, unknown>
   if (!text(v.at) || !text(v.taskId) || !nullableText(v.head)) return null
   if (v.kind === 'review') {
-    return text(v.verdict) && nullableText(v.reviewer) ? v as unknown as PrLogEntry : null
+    return text(v.verdict) && nullableText(v.reviewer) && (v.localReviewer === undefined || text(v.localReviewer)) ? v as unknown as PrLogEntry : null
   }
   if (v.kind !== 'check' || !text(v.status) || !STATUSES.has(v.status) || !texts(v.rules) || !texts(v.blocking)) return null
   if (v.band !== undefined && v.band !== null && !BANDS.has(v.band as string)) return null
