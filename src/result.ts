@@ -157,7 +157,7 @@ function validateReview(value: Record<string, unknown>): ReviewResult {
   if (!TASK_ID.test(taskId)) throw new Error('review taskId is unsafe')
   if (!SHA.test(reviewedSha)) throw new Error('review reviewedSha is not a full git SHA')
   if (!VERDICTS.has(value.verdict as ReviewVerdict)) throw new Error('review verdict is invalid')
-  const notes = value.notes === undefined ? undefined : shortText(value.notes, 'review notes')
+  const notes = value.notes === undefined ? undefined : reviewNotes(value.notes)
   return {
     version: RESULT_VERSION,
     kind: 'review',
@@ -167,6 +167,22 @@ function validateReview(value: Record<string, unknown>): ReviewResult {
     ...(notes === undefined ? {} : { notes }),
   }
 }
+
+/**
+ * A reviewer's notes. Long ones are cut with a marker rather than refused, as
+ * the forge cuts a review body: a verdict is not invalid for explaining too
+ * much, and refusing it stopped the loop over a local reviewer's thoroughness.
+ * Empty notes are no notes.
+ */
+function reviewNotes(value: unknown): string | undefined {
+  if (typeof value !== 'string') throw new Error('review notes must be a string')
+  if (value.includes('\0')) throw new Error('review notes contain a NUL')
+  const trimmed = value.trim()
+  if (trimmed.length === 0) return undefined
+  return trimmed.length <= MAX_TEXT ? trimmed : `${trimmed.slice(0, MAX_TEXT - NOTES_CUT.length)}${NOTES_CUT}`
+}
+
+const NOTES_CUT = '\n[truncated]'
 
 function stringList(value: unknown, label: string, min: number, max: number): string[] {
   if (!Array.isArray(value) || value.length < min || value.length > max) {
