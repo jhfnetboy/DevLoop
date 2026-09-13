@@ -337,7 +337,7 @@ export class ProjectLoop {
             this.ctx.logger.error('[dsh-devloop] merge failed', error)
             // On the forge an error nothing here names (gh exiting, timing out, missing) holds too:
             // retried blindly, an expired login or a refusing forge would spin without an operator ever asked.
-            const reason = mergeHoldReason(error) ?? (mergesOnForge(this.config) ? 'merge_wedged' : null)
+            const reason = mergeHoldReason(error) ?? (mergesOnForge(this.config) ? 'forge_merge_refused' : null)
             if (reason) {
               result = {
                 ...result,
@@ -1301,12 +1301,12 @@ function releaseBody(state: LoopState, workBranch: string): string {
   ].join('\n')
 }
 
-function mergeHoldReason(error: unknown): 'empty_task' | 'merge_wedged' | 'unknown_base' | 'unknown_review_sha' | 'stale_review_sha' | 'merge_onto_trunk' | 'merge_detached_head' | 'no_review_pass' | null {
+function mergeHoldReason(error: unknown): 'empty_task' | 'merge_wedged' | 'forge_merge_refused' | 'unknown_base' | 'unknown_review_sha' | 'stale_review_sha' | 'merge_onto_trunk' | 'merge_detached_head' | 'no_review_pass' | null {
   const message = error instanceof Error ? error.message : ''
   // Approved when it was reviewed, not any more: the question is the review's, not the merge's.
   if (message.startsWith('forge_review_gone')) return 'no_review_pass'
-  // Every other forge refusal is a merge that could not be completed safely.
-  if (message.startsWith('forge_')) return 'merge_wedged'
+  // Every other forge error: the forge, its login or DevLoop's forge settings would not let it merge.
+  if (message.startsWith('forge_')) return 'forge_merge_refused'
   if (message.startsWith('empty_task')) return 'empty_task'
   if (message.startsWith('merge_onto_trunk')) return 'merge_onto_trunk'
   if (message.startsWith('merge_detached_head')) return 'merge_detached_head'
