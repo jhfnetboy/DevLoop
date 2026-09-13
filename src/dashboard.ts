@@ -6,6 +6,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { BudgetLimits } from './config.js'
 import { effectiveBudget } from './command.js'
 import { gateFor, type Gate, type GateOption } from './gate.js'
+import { goalNumber, startNextGoal } from './goals.js'
 import { answerGate, OperatorError, pauseLoop, resumeLoop, type OperatorFailure } from './operator.js'
 import { actionKey } from './loop.js'
 import { attentionFor, type AttentionLane } from './attention.js'
@@ -28,7 +29,7 @@ import {
 import { inspectReadiness, readinessRefusal, readPlanningDocuments, type PlanningDocument, type Readiness } from './readiness.js'
 import { diagnoseHalt, type HaltDetail } from './resume.js'
 import { confirmedBranches, runCleanup, statusView, UnreadableStateError } from './status-routes.js'
-import type { LoopState, Task } from './types.js'
+import type { LoopState, Release, Task } from './types.js'
 
 /**
  * The management page, served by DSH's own webserver behind DSH's own login.
@@ -79,6 +80,8 @@ export interface DashboardDeps {
    * rest. A project run by another process notices on its own next tick.
    */
   readonly onOperatorAction?: (project: Project, verb: DashboardVerb) => void
+  /** The forge merges: a finished goal's release pull request must merge before the next goal starts. */
+  readonly forgeMerges?: boolean
   /** Where failures the page only sees as a short refusal are recorded in full. */
   readonly logError?: (message: string, error: unknown) => void
 }
@@ -143,6 +146,10 @@ export interface ProjectDetail extends ProjectSummary {
   readonly reviewNote: string | null
   /** The newest pre-PR checks and review verdicts, for judging the PR budget trial. */
   readonly prLog: readonly PrLogEntry[]
+  /** Which of the project's goals is current; 1 until a finished goal hands over. */
+  readonly goalNumber: number
+  /** The current goal's release pull request, when the forge merges. */
+  readonly release: Release | null
 }
 
 export type TaskView = Pick<Task,
@@ -173,7 +180,8 @@ export async function describeProject(project: Project, deps: Pick<DashboardDeps
   if (summary.error !== null) return detail
   const docs = await readPlanningDocuments(project.root).catch(() => null)
   const withDocs = { ...detail, documents: docs?.documents ?? [], docsDir: docs?.docsDir ?? null }
-  if (summary.armed) return withDocs
+  // A finished goal gets the start checks again: the next goal on it starts only when they pass.
+  if (summary.armed && !summary.completed) return withDocs
   return { ...withDocs, readiness: await inspectReadiness(project.root).catch(() => null) }
 }
 
@@ -267,6 +275,8 @@ async function readProject(
         planNote: await readHead(join(devloopDir(project.root), 'PLAN.md'), NOTE_MAX_BYTES),
         reviewNote: await readHead(join(devloopDir(project.root), 'REVIEW.md'), NOTE_MAX_BYTES),
         prLog: await readPrLog(project.root, PR_LOG_SHOWN),
+        goalNumber: goalNumber(state),
+        release: state.release ?? null,
       },
     }
   } catch (error) {
@@ -293,6 +303,8 @@ function emptyDetail(): Omit<ProjectDetail, keyof ProjectSummary> {
     planNote: null,
     reviewNote: null,
     prLog: [],
+    goalNumber: 1,
+    release: null,
   }
 }
 
@@ -429,7 +441,7 @@ export function createDashboardHandler(deps: DashboardDeps): (req: IncomingMessa
       }
       const verb = action[2] as DashboardVerb | ProjectVerb
       if (verb === 'cleanup') return cleanup(req, res, deps, action[1] as string)
-      if (verb === 'start' || verb === 'unregister') return manage(req, res, deps, action[1] as string, verb)
+      if (verb === 'start' || verb === 'next' || verb === 'unregister') return manage(req, res, deps, action[1] as string, verb)
       return act(req, res, deps, now, action[1] as string, verb)
     }
     if (path === `${DASHBOARD_PATH}/api/projects` && req.method === 'POST') return register(req, res, deps)
@@ -485,9 +497,9 @@ export function createDashboardHandler(deps: DashboardDeps): (req: IncomingMessa
 }
 
 /** What the page can do to the set of projects, as opposed to one loop's state. */
-export type ProjectVerb = 'start' | 'unregister' | 'cleanup'
+export type ProjectVerb = 'start' | 'next' | 'unregister' | 'cleanup'
 
-const ACTION_ROUTE = new RegExp(`^${DASHBOARD_PATH}/api/projects/([0-9a-f]{12})/(answer|resume|pause|start|unregister|cleanup)$`)
+const ACTION_ROUTE = new RegExp(`^${DASHBOARD_PATH}/api/projects/([0-9a-f]{12})/(answer|resume|pause|start|next|unregister|cleanup)$`)
 const MAX_BODY_BYTES = 4 * 1024
 /** A goal is the one body that carries prose. */
 const MAX_GOAL_BODY_BYTES = MAX_GOAL_BYTES + 4 * 1024
@@ -632,7 +644,7 @@ async function manage(
   verb: ProjectVerb,
 ): Promise<void> {
   const fail: Fail = (status, code, message) => json(res, req, status, { ok: false, error: { code, message } })
-  const body = await writeBody(req, fail, verb === 'start' ? MAX_GOAL_BODY_BYTES : MAX_BODY_BYTES)
+  const body = await writeBody(req, fail, verb === 'start' || verb === 'next' ? MAX_GOAL_BODY_BYTES : MAX_BODY_BYTES)
   if (body === null) return
   const project = findProject(await listProjects(deps.ownRoot, deps.home), id)
   if (!project) return fail(404, 'not-found', 'no such project')
@@ -651,6 +663,21 @@ async function manage(
       deps.onOperatorAction?.(project, 'resume')
       return json(res, req, 200, { ok: true, value: { id: project.id } })
     }
+    if (verb === 'next') {
+      if (typeof body.goal !== 'string') return fail(400, 'bad-request', 'goal must be text')
+      const revision = body.revision
+      if (typeof revision !== 'number' || !Number.isInteger(revision) || revision < 0) {
+        return fail(400, 'bad-request', 'revision is required: the state you were looking at')
+      }
+      // The same checks as a first start: a next goal pays for plan, delegate and review too.
+      const readiness = await inspectReadiness(project.root).catch(() => null)
+      if (readiness === null) return fail(422, 'not-ready', '读不到这个仓库的 git 状态，没有启动。')
+      const refusal = readinessRefusal(readiness)
+      if (refusal !== null) return fail(422, 'not-ready', refusal)
+      const saved = await startNextGoal(project.root, body.goal, { expectedRevision: revision, requireRelease: deps.forgeMerges === true, via: 'dashboard' })
+      deps.onOperatorAction?.(project, 'resume')
+      return json(res, req, 200, { ok: true, value: { id: project.id, revision: saved.revision, goal: goalNumber(saved) } })
+    }
     if (project.own) return fail(422, 'refused', 'this process\'s own root cannot be removed')
     if (!deps.control) return fail(501, 'unsupported', 'this process cannot run other projects')
     const summary = await summarizeProject(project, deps, Date.now())
@@ -664,6 +691,7 @@ async function manage(
     return json(res, req, 200, { ok: true, value: { id: project.id } })
   } catch (error) {
     if (error instanceof ProjectError) return fail(422, 'refused', error.message)
+    if (error instanceof OperatorError) return fail(FAILURE_STATUS[error.code], error.code, error.message)
     return fail(500, 'internal', messageOf(error))
   }
 }

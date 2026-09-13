@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { emptyUsage } from '../src/budget.ts'
 import { resolveConfig } from '../src/config.ts'
-import { createDashboardHandler, type DashboardDeps, type ProjectControl } from '../src/dashboard.ts'
+import { createDashboardHandler, describeProject, type DashboardDeps, type ProjectControl } from '../src/dashboard.ts'
 import { pauseLoop } from '../src/operator.ts'
 import { emptyState, loadState, saveState } from '../src/persist.ts'
 import {
@@ -302,8 +302,9 @@ describe('dashboard project routes', () => {
     return { status: out.status, json: JSON.parse(out.body || '{}') as { ok: boolean, value?: Record<string, unknown>, error?: { message: string } } }
   }
 
-  function handlerFor(ownRoot: string, homeDir: string, ctl: ProjectControl): ReturnType<typeof createDashboardHandler> {
+  function handlerFor(ownRoot: string, homeDir: string, ctl: ProjectControl, extra: Partial<DashboardDeps> = {}): ReturnType<typeof createDashboardHandler> {
     const deps: DashboardDeps = {
+      ...extra,
       ownRoot,
       home: homeDir,
       presence: () => 'running',
@@ -353,6 +354,42 @@ describe('dashboard project routes', () => {
     expect(removed.status).toBe(200)
     expect(ctl.removed).toEqual([root])
     expect((await listProjects(own, dir)).projects.map(p => p.root)).not.toContain(root)
+  })
+
+  it('starts the next goal on a finished project, and refuses one that is not finished, stale, or waiting on its release', async () => {
+    const dir = await home()
+    const root = await repo('route-next-')
+    await execFileAsync('git', ['-C', root, 'switch', '-q', '-c', 'devloop/work'])
+    const woken: string[] = []
+    const plain = handlerFor(await mkdtempInRepo('route-own-'), dir, control(), { onOperatorAction: (_project, verb) => woken.push(verb) })
+    await post(plain, '/devloop/api/projects', { root })
+    const id = projectId(root)
+    await post(plain, `/devloop/api/projects/${id}/start`, { goal: 'Goal one' })
+    const running = await saveState(root, { ...emptyState(Date.now()), lastAction: { type: 'plan' }, tasks: [makeTask({ id: 't1', status: 'ready' })] })
+    const early = await post(plain, `/devloop/api/projects/${id}/next`, { goal: 'Goal two', revision: running.revision })
+    expect(early.status).toBe(422)
+    expect(early.json.error?.message).toMatch(/not finished/)
+
+    const done = await saveState(root, { ...running, goalCompleted: true, killSwitch: true, lastAction: { type: 'stop', reason: 'goal_complete' }, tasks: [makeTask({ id: 't1', status: 'done' })], release: { number: 5, merged: false } })
+    expect((await describeProject({ id, root, name: 'n', own: false }, { presence: () => 'running' }, Date.now())).readiness?.ready).toBe(true)
+    expect((await post(plain, `/devloop/api/projects/${id}/next`, { goal: 'Goal two', revision: done.revision - 1 })).status).toBe(409)
+    expect((await post(plain, `/devloop/api/projects/${id}/next`, { goal: 'Goal two' })).status).toBe(400)
+    // Where the forge merges, the next goal waits for the finished one's release.
+    const forge = handlerFor(await mkdtempInRepo('route-own-'), dir, control(), { forgeMerges: true })
+    const waiting = await post(forge, `/devloop/api/projects/${id}/next`, { goal: 'Goal two', revision: done.revision })
+    expect(waiting.status).toBe(422)
+    expect(waiting.json.error?.message).toMatch(/release pull request has not merged/)
+
+    woken.length = 0
+    const next = await post(plain, `/devloop/api/projects/${id}/next`, { goal: 'Goal two', revision: done.revision })
+    expect(next.status).toBe(200)
+    expect(next.json.value).toMatchObject({ id, goal: 2, revision: done.revision + 1 })
+    // The loop halted on the finished goal is woken to plan the next one.
+    expect(woken).toEqual(['resume'])
+    expect(await readFile(join(root, '.devloop', 'GOAL.md'), 'utf8')).toBe('Goal two\n')
+    expect(await readFile(join(root, '.devloop', 'archive', '0001', 'GOAL.md'), 'utf8')).toBe('Goal one\n')
+    const detail = await describeProject({ id, root, name: 'n', own: false }, { presence: () => 'running' }, Date.now())
+    expect(detail).toMatchObject({ goalNumber: 2, release: null, completed: false })
   })
 
   it('never removes the process\'s own root', async () => {

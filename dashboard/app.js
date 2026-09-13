@@ -329,6 +329,31 @@ function startPanel(p) {
     el('p', { class: 'note' }, t('start.note')))
 }
 
+// The next goal on the same repository: the finished one is archived under .devloop/archive.
+function nextGoalBox(p) {
+  const key = `next:${p.id}`
+  const area = el('textarea', { class: 'goal-input', rows: '6', placeholder: t('start.placeholder') })
+  area.value = goalDrafts.get(key) || ''
+  area.addEventListener('input', () => goalDrafts.set(key, area.value))
+  // On the forge the next release must carry only the next goal's work; the server refuses it too.
+  const pending = p.release && !p.release.merged
+  const start = actionButton(t('next.button', { n: (p.goalNumber || 1) + 1 }), 'primary', t('next.confirm'), async () => {
+    const goal = area.value.trim()
+    if (!goal) throw new Error(t('start.emptyGoal'))
+    await postJson(`${API}/projects/${p.id}/next`, { goal, revision: p.revision })
+    goalDrafts.delete(key)
+    return { text: t('next.started') }
+  })
+  start.disabled = Boolean(pending) || !(p.readiness && p.readiness.ready)
+  return el('div', { class: 'next-goal' },
+    el('h4', {}, t('next.title', { n: (p.goalNumber || 1) + 1 })),
+    pending ? el('p', { class: 'note' }, t('next.releasePending', { number: p.release.number })) : null,
+    readinessPanel(p.readiness),
+    area,
+    el('div', { class: 'actions' }, start),
+    el('p', { class: 'note' }, t('next.note', { n: p.goalNumber || 1 })))
+}
+
 // A half-typed goal survives the rebuild that a failed start or a re-check causes.
 const goalDrafts = new Map()
 
@@ -423,7 +448,7 @@ function haltPanel(p) {
     return el('section', { class: 'panel' },
       el('h3', {}, t('halt.completed')),
       el('p', {}, t('halt.completedText')),
-      el('p', { class: 'note' }, t('halt.completedNote')))
+      nextGoalBox(p))
   }
   if (!p.halted && !p.supervisor) return null
   return el('section', { class: 'panel' },
