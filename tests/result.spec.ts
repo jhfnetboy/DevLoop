@@ -56,6 +56,20 @@ describe('DevLoop result envelope', () => {
     expect(parseDevloopResult(result('T-1'))).toMatchObject({ kind: 'plan', tasks: [{ id: 'T-1' }] })
   })
 
+  it('cuts a review\'s long notes instead of refusing the verdict, and takes empty notes as none', () => {
+    const review = (notes: unknown) => validateDevloopResult({ version: 1, kind: 'review', taskId: 'T-1', reviewedSha: 'a'.repeat(40), verdict: 'REWORK', notes })
+    const long = review('x'.repeat(20_000))
+    expect(long.kind === 'review' && long.verdict).toBe('REWORK')
+    const notes = long.kind === 'review' ? long.notes ?? '' : ''
+    // Within what a task's saved review notes may hold, so the rework reaches the worker.
+    expect(notes.length).toBe(8_192)
+    expect(notes.endsWith('\n[truncated]')).toBe(true)
+    expect(review('  keep this  ')).toMatchObject({ notes: 'keep this' })
+    expect('notes' in review('   ')).toBe(false)
+    expect(() => review('a\0b')).toThrow(/NUL/)
+    expect(() => review(42)).toThrow(/must be a string/)
+  })
+
   it('requires a full SHA and known review verdict', () => {
     expect(() => validateDevloopResult({
       version: 1,
