@@ -261,6 +261,7 @@ const STRINGS = {
   'prlog.title': ['PR record', 'PR 记录', 'บันทึก PR'],
   'prlog.count': ['PR record (latest {n})', 'PR 记录（最近 {n} 条）', 'บันทึก PR (ล่าสุด {n} รายการ)'],
   'prlog.none': ['Nothing recorded yet. With a pre-PR checker configured, every task\'s check and review verdict is recorded here (.devloop/PR-LOG.jsonl).', '还没有记录。配置了 pre-PR 检查器后，每个任务的检查结果和评审结论都会记在这里（.devloop/PR-LOG.jsonl）。', 'ยังไม่มีบันทึก เมื่อตั้งค่าตัวตรวจก่อนเปิด PR แล้ว ผลการตรวจและผลรีวิวของทุกงานจะถูกบันทึกที่นี่ (.devloop/PR-LOG.jsonl)'],
+  'prlog.firstPass': ['Passed their first review: {passed} of {tasks} tasks ({pct}%).', '第一次评审就通过：{tasks} 个任务里 {passed} 个（{pct}%）。', 'ผ่านรีวิวครั้งแรก: {passed} จาก {tasks} งาน ({pct}%)'],
   'prlog.passed': ['Passed', '通过', 'ผ่าน'],
   'prlog.blocked': ['Blocked', '拦下', 'ถูกบล็อก'],
   'prlog.unavailable': ['No verdict', '无结论', 'ไม่มีผลตัดสิน'],

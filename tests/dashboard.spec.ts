@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest'
 import {
   createDashboardHandler,
   dashboardAssetsDir,
+  firstPassRate,
   loadDashboardAssets,
   type DashboardDeps,
 } from '../src/dashboard.ts'
@@ -63,6 +64,18 @@ async function armedProject(prefix: string): Promise<string> {
   await writeFile(join(root, '.devloop', 'GOAL.md'), '# Ship the thing\n', 'utf8')
   return root
 }
+
+describe('the first-review pass rate', () => {
+  it('counts, per task with a review, whether its first verdict was a pass', () => {
+    const at = '2026-09-13T00:00:00Z'
+    const review = (taskId: string, verdict: string) => ({ kind: 'review' as const, at, taskId, head: null, verdict, reviewer: 'forge/pr' })
+    const check = { kind: 'check' as const, at, taskId: 'T3', head: null, status: 'passed' as const, size: null, rules: [], blocking: [], checker: null }
+    const rate = firstPassRate([review('T1', 'PASS'), review('T2', 'REWORK'), review('T2', 'PASS'), check, review('T4', 'PASS_WITH_NOTES')])
+    // T2 passed in the end, but not the first time; T3 has no review, so it is not counted.
+    expect(rate).toEqual({ tasks: 3, passed: 2 })
+    expect(firstPassRate([])).toEqual({ tasks: 0, passed: 0 })
+  })
+})
 
 describe('dashboard access', () => {
   it('serves nothing — not even its script — to a request DSH would not authenticate', async () => {
