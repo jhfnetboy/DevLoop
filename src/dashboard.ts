@@ -300,6 +300,7 @@ async function readProject(
       updatedAt: state.updatedAt,
     }, state, gate?.reason ?? null)
     if (!full) return { summary, extra: null }
+    const prLog = await readPrLog(project.root, PR_LOG_RATE_WINDOW)
     return {
       summary,
       extra: {
@@ -319,8 +320,8 @@ async function readProject(
         docsDir: null,
         planNote: await readHead(join(devloopDir(project.root), 'PLAN.md'), NOTE_MAX_BYTES),
         reviewNote: await readHead(join(devloopDir(project.root), 'REVIEW.md'), NOTE_MAX_BYTES),
-        prLog: await readPrLog(project.root, PR_LOG_SHOWN),
-        firstPass: firstPassRate(await readPrLog(project.root, PR_LOG_RATE_WINDOW)),
+        prLog: prLog.slice(-PR_LOG_SHOWN),
+        firstPass: firstPassRate(prLog),
         goalNumber: goalNumber(state),
         release: state.release ?? null,
         // Filled in by describeProject, which knows the project and the profile.

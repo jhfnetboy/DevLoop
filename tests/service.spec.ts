@@ -1594,6 +1594,7 @@ describe('a task whose branch name is already taken', () => {
       expect(state.usage.taskAttempts.d1 ?? 0).toBe(0)
       expect((await git(taken.root, 'log', '-1', '--format=%s', 'devloop/d1')).stdout.trim()).toBe('mine')
       expect(gateFor(state, resolveConfig({}).budget, Date.now())).toMatchObject({ key: 'task_branch_taken', options: [{ key: 'stop' }] })
+      expect(state.usage.refusedDispatches.d1 ?? 0).toBe(0)
 
       const merged = await setup(false)
       // An old branch already in HEAD's history holds nothing to lose: it is reused and the worker runs.
