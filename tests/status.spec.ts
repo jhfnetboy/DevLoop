@@ -16,6 +16,25 @@ async function commitOn(root: string, branch: string, file: string): Promise<voi
 }
 
 describe('scanning a repository', () => {
+  it('counts ahead and behind against the remote\'s trunk when there is one, not a local trunk nobody pulled', async () => {
+    const upstream = await realpath(await mkdtempInRepo('status-up-'))
+    await initWorkRepo(upstream)
+    await git(upstream, 'switch', '-q', 'main')
+    const root = await realpath(await mkdtempInRepo('status-clone-'))
+    await git(root, 'clone', '-q', upstream, '.')
+    await git(root, 'switch', '-q', '-c', 'feature')
+    await commitOn(upstream, 'extra', 'u.txt')
+    await git(upstream, 'switch', '-q', 'main')
+    await git(upstream, 'merge', '-q', '--no-edit', 'extra')
+    await git(root, 'fetch', '-q', 'origin')
+    // Local main still where the clone left it; origin/main one commit ahead of this branch.
+    const s = await scanRepo(root)
+    expect({ ahead: s.ahead, behind: s.behind }).toEqual({ ahead: 0, behind: 1 })
+    // No remote trunk at all: the local one, as before.
+    expect((await scanRepo(upstream)).behind).not.toBeNull()
+  })
+
+
   it('marks what branch -d would take, and every reason a branch is kept', async () => {
     const root = await realpath(await mkdtempInRepo('status-scan-'))
     await initWorkRepo(root)

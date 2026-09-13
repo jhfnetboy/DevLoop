@@ -264,6 +264,28 @@ export async function readOriginUrl(realRoot: string): Promise<string | null> {
   return validPushUrl(raw.trim())
 }
 
+/**
+ * Keep the loop's own files out of the operator's commits: `.devloop/` is added
+ * to the repository's local `info/exclude` (never `.gitignore`, which is theirs
+ * and shared), once. Best-effort: a repository where it cannot be written still
+ * starts, as it always did.
+ */
+async function excludeDevloop(realRoot: string): Promise<void> {
+  try {
+    const file = resolve(realRoot, (await hostGit(realRoot, ['rev-parse', '--git-path', 'info/exclude'], { timeoutMs: 5_000 })).trim())
+    // Missing is empty; unreadable is not, and writing over it would lose the operator's own lines.
+    const current = await readFile(file, 'utf8').catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return ''
+      throw error
+    })
+    if (current.split('\n').some(line => ['.devloop', '.devloop/', '/.devloop', '/.devloop/'].includes(line.trim()))) return
+    await mkdir(dirname(file), { recursive: true })
+    await writeFile(file, `${current}${current === '' || current.endsWith('\n') ? '' : '\n'}/.devloop/\n`, 'utf8')
+  } catch {
+    // Untracked noise is all this prevents; it never blocks a start.
+  }
+}
+
 function validPushUrl(value: unknown): string | null {
   if (typeof value !== 'string' || value.length === 0 || value.startsWith('-')) return null
   try {
@@ -394,6 +416,7 @@ export async function armProject(realRoot: string, goal: string): Promise<void> 
   }
   const meta = await lstat(dir)
   if (meta.isSymbolicLink() || !meta.isDirectory()) throw new ProjectError('.devloop must be a real directory')
+  await excludeDevloop(realRoot)
   let handle
   try {
     handle = await open(
