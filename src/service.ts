@@ -452,6 +452,8 @@ export class ProjectLoop {
             )
             let implementationSha: string | undefined
             let overBudget: string | undefined
+            // A mechanical check the commit failed, sent back to the worker rather than held; the attempts circuit bounds it.
+            let mechanicalRework: string | undefined
             let transitionAllowed = dispatched?.status === 'started' && dispatched.outcome !== undefined
             if (transitionAllowed && action.type === 'delegate' && dispatched?.outcome?.kind === 'implementation'
               && dispatched.outcome.outcome === 'completed' && outcome.value.worktreeRoot) {
@@ -472,11 +474,11 @@ export class ProjectLoop {
                 )
                 if (failure) {
                   this.ctx.logger.error(`[dsh-devloop] acceptance failed: ${failure.argv.join(' ')} — ${failure.detail}`)
-                  throw new Error(`acceptance_failed: ${failure.argv.join(' ')}`)
+                  mechanicalRework = acceptanceRework(failure.argv, failure.detail)
                 }
                 // PR-daemon's mechanical rules, the PR size budget among them, before any
                 // reviewer is paid. A checker that cannot say is a stop, never a pass.
-                if (this.config.prePrCheck.length > 0) {
+                if (mechanicalRework === undefined && this.config.prePrCheck.length > 0) {
                   const base = input.contract.baseSha
                   const check = typeof base !== 'string' || base === ''
                     ? null
@@ -487,11 +489,12 @@ export class ProjectLoop {
                   if (check === null || check.status === 'unavailable') throw new Error(`prepr_unavailable: ${check?.detail ?? 'the task has no base commit'}`)
                   if (check.status === 'blocked') {
                     const rules = [...new Set(check.findings.filter(f => f.severity === 'block').map(f => f.rule))].join(',')
-                    if (!blockedOnlyBySize(check)) throw new Error(`prepr_blocked: ${rules}`)
-                    throw new Error(`task_over_budget: ${check.size ? `${String(check.size.lines)} lines, ${String(check.size.files)} files` : rules}`)
+                    // Too big is a plan to split, which no retry of the same task fixes; anything else the worker can.
+                    if (blockedOnlyBySize(check)) throw new Error(`task_over_budget: ${check.size ? `${String(check.size.lines)} lines, ${String(check.size.files)} files` : rules}`)
+                    mechanicalRework = checkerRework(check)
                   }
                   // Over the budget but inside its elastic band: reviewed, with the size named.
-                  if (check.band === 'elastic') overBudget = elasticSummary(check)
+                  else if (check.band === 'elastic') overBudget = elasticSummary(check)
                 }
               } catch (error) {
                 transitionAllowed = false
@@ -528,7 +531,7 @@ export class ProjectLoop {
                   this.config.root,
                   action,
                   { ...dispatched, outcome: agentOutcome },
-                  implementationSha === undefined ? undefined : { sha: implementationSha, ...(overBudget === undefined ? {} : { overBudget }) },
+                  implementationSha === undefined ? undefined : { sha: implementationSha, ...(overBudget === undefined ? {} : { overBudget }), ...(mechanicalRework === undefined ? {} : { mechanicalRework }) },
                   this.ctx.logger,
                 )
                 if (action.type === 'review' && agentOutcome.kind === 'review') {
@@ -1119,7 +1122,7 @@ export async function persistAgentTransition(
   root: string,
   action: AgentAction,
   dispatched: AgentRunResult & { readonly outcome: NonNullable<AgentRunResult['outcome']> },
-  commit: { readonly sha: string, readonly overBudget?: string } | undefined,
+  commit: { readonly sha: string, readonly overBudget?: string, readonly mechanicalRework?: string } | undefined,
   log: { error(message: string, ...rest: unknown[]): void },
   deadlineMs = RESULT_LOCK_DEADLINE_MS,
 ): Promise<void> {
@@ -1130,7 +1133,7 @@ export async function persistAgentTransition(
     const next = {
       ...applyAgentResult(current, action, dispatched.outcome, {
         agent: dispatched.agent ?? 'unknown',
-        ...(commit === undefined ? {} : { implementationSha: commit.sha, overBudget: commit.overBudget }),
+        ...(commit === undefined ? {} : { implementationSha: commit.sha, overBudget: commit.overBudget, mechanicalRework: commit.mechanicalRework }),
       }),
       updatedAt: new Date(now).toISOString(),
     }
@@ -1244,6 +1247,23 @@ export async function persistAgentHold(
   await writePendingHold(root, taskId, reason, log)
   return false
 }
+
+/** The checker's blocking findings, as the worker's instructions for its next attempt. */
+function checkerRework(check: PreprResult): string {
+  const lines = check.findings.filter(f => f.severity === 'block')
+    .map(f => `- ${f.rule}${f.file ? ` ${f.file}${f.line ? `:${String(f.line)}` : ''}` : ''}: ${f.message}`)
+  const rules = check.checker ? ` (rules ${check.checker.rulesVersion})` : ''
+  return `The pre-PR checker${rules} blocked this commit. Fix each of these and hand it in again:\n${lines.join('\n')}`.slice(0, MAX_REWORK_NOTES)
+}
+
+/** A failed acceptance command and the end of what it printed, for the worker to fix. */
+function acceptanceRework(argv: readonly string[], detail: string): string {
+  const tail = (detail.length > 3_000 ? `…${detail.slice(-3_000)}` : detail).replace(/\0/g, '')
+  return `The acceptance check \`${argv.join(' ')}\` failed on this commit. Make it pass and hand it in again:\n${tail}`.slice(0, MAX_REWORK_NOTES)
+}
+
+/** What a task's saved review notes may hold (persist.ts). */
+const MAX_REWORK_NOTES = 8_192
 
 function implementationFailureReason(error: unknown): HoldReason {
   const message = error instanceof Error ? error.message : ''

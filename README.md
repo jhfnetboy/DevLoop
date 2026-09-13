@@ -525,8 +525,10 @@ claim.
 
 They run in the task's own worktree, after the host commits the work and
 **before it is offered for review** — a task that cannot pass them never costs a
-reviewer anything. The first failure stops the rest and holds the task, which
-surfaces as a question naming the command that failed.
+reviewer anything. The first failure stops the rest and sends the task back to
+the worker, with the command and the end of its output as the next attempt's
+instructions; the task's attempts limit, not a question per failure, bounds how
+often (`max_task_attempts` asks once they run out).
 
 `acceptanceTimeoutMinutes` is **per command, not for the list**: the two above
 are allowed 15 minutes each, so a task can spend 30 before the checks give up.
@@ -563,7 +565,10 @@ pull --ff-only` changes them for every loop without a DevLoop release.
   its size in front of the reviewer, who judges whether it should have been split.
 - **Blocked on size alone** — held as `task_over_budget`; the answer is to redo
   the task smaller from its base.
-- **Blocked by another rule** — held as `prepr_blocked:<rules>`.
+- **Blocked by another rule** — sent back to the worker with the blocking
+  findings (rule, file, line, message) as its next attempt's instructions, so a
+  pull request opens only once the mechanical rules pass; bounded by the task's
+  attempts limit. Not run on a commit whose acceptance checks already failed.
 - **No verdict** (a timeout, a missing checker, output that is not the JSON) —
   held as `prepr_unavailable`, never a pass.
 

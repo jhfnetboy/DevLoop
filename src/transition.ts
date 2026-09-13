@@ -11,6 +11,12 @@ export interface ApplyAgentResultOptions {
   readonly implementationSha?: string
   /** The checker's size, when the commit is inside the elastic band. */
   readonly overBudget?: string
+  /**
+   * What a mechanical check found wrong with a handed-in commit — the pre-PR
+   * checker's blocking rules, a failed acceptance command — as instructions for
+   * the next attempt. The task goes back to the worker instead of to review.
+   */
+  readonly mechanicalRework?: string
 }
 
 /** Pure, fail-closed conversion from a validated model result to domain state. */
@@ -57,7 +63,7 @@ function applyImplementation(
   let status: TaskStatus
   if (result.outcome === 'completed') {
     if (!options.implementationSha) throw new Error('implementation result has no host commit SHA')
-    status = 'review_pending'
+    status = options.mechanicalRework === undefined ? 'review_pending' : 'rework'
   } else if (result.outcome === 'blocked') {
     status = 'blocked'
   } else {
@@ -74,7 +80,7 @@ function applyImplementation(
     lastReviewVerdict: undefined,
     reviewer: undefined,
     // Spent only by an attempt that was handed in: a failed or blocked one is retried, and still needs them.
-    ...(result.outcome === 'completed' ? { reviewNotes: undefined } : {}),
+    ...(result.outcome === 'completed' ? { reviewNotes: options.mechanicalRework } : {}),
   }))
 }
 
