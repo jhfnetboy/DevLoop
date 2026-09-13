@@ -1,4 +1,5 @@
 import { constants, lstat, open, realpath, rename, unlink } from 'node:fs/promises'
+import { workerEnv } from './worker-env.js'
 import { join } from 'node:path'
 import type { AgentBackend, AgentRunInput, AgentRunResult } from './backend.js'
 import { headlessPrompt, type HeadlessRunner } from './dsh.js'
@@ -115,7 +116,7 @@ async function runCli(
     return { status: 'failed', detail: 'refusing to run T3 CLI at workspace root', reachedProvider: false }
   }
   try {
-    const request = { command, argv, cwd, timeoutMs: runTimeoutMs(input), signal: input.signal }
+    const request = { command, argv, cwd, timeoutMs: runTimeoutMs(input), signal: input.signal, ...workerEnv() }
     // Both counters accumulate across the repair attempt: a run that had to be
     // asked twice cost twice, and the budget must see both.
     let tokens: number | undefined
