@@ -301,6 +301,24 @@ describe('mergeTaskWorktree', () => {
     await expect(execFileAsync('git', ['-C', root, 'rev-parse', '--verify', 'devloop/d1'])).rejects.toThrow()
   }, 30_000)
 
+  it('removes the worktree a forge merge left behind, then the branch; keeps one holding changes', async () => {
+    const root = await gitWorkspace()
+    const dest = await prepareDelegateWorktree(root, contractFor('d1'))
+    await writeFile(join(dest, 'src.txt'), 'from-worker\n', 'utf8')
+    await execFileAsync('git', ['-C', dest, 'add', 'src.txt'])
+    await execFileAsync('git', ['-C', dest, 'commit', '-m', 'worker'])
+    // What following a forge merge does: the checkout moves on, the task worktree stays.
+    await execFileAsync('git', ['-C', root, 'merge', '-q', '--ff-only', 'devloop/d1'])
+    await deleteMergedTaskBranch(root, 'd1')
+    await expect(lstat(dest)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(execFileAsync('git', ['-C', root, 'rev-parse', '--verify', 'devloop/d1'])).rejects.toThrow()
+
+    const kept = await prepareDelegateWorktree(root, contractFor('d2'))
+    await writeFile(join(kept, 'notes.txt'), 'not committed\n', 'utf8')
+    await expect(deleteMergedTaskBranch(root, 'd2')).rejects.toThrow()
+    await expect(readFile(join(kept, 'notes.txt'), 'utf8')).resolves.toBe('not committed\n')
+  }, 30_000)
+
   it('host merge does not run hooks from the shared git directory', async () => {
     const root = await gitWorkspace()
     const dest = await prepareDelegateWorktree(root, contractFor('d1'))
