@@ -41,7 +41,7 @@ describe('router', () => {
     expect(routeFor('T1', table)).toEqual({
       tier: 'T1',
       backend: 'dsh',
-      model: 'deepseek-v4-flash',
+      model: 'deepseek-flash',
     })
   })
 })

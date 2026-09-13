@@ -112,8 +112,9 @@ describe('Plan 0.1.4 budget 1:1', () => {
 describe('Plan 0.1.5 router 1:1', () => {
   it('default realizations match ADR-0005', () => {
     expect(routeFor('T0', table).backend).toBe('local')
-    expect(routeFor('T1', table)).toMatchObject({ backend: 'dsh', model: 'deepseek-v4-flash' })
-    expect(routeFor('T2', table).backend).toBe('dsh')
+    expect(routeFor('T1', table)).toMatchObject({ backend: 'dsh', model: 'deepseek-flash' })
+    // V4.1 Flash for both DeepSeek tiers: since 2026-09-14 V4 Pro is served by it anyway.
+    expect(routeFor('T2', table)).toMatchObject({ backend: 'dsh', model: 'deepseek-flash' })
     expect(routeFor('T3', table).backend).toBe('codex')
   })
 
