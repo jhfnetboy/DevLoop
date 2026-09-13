@@ -759,6 +759,7 @@ export default class DevloopService extends Service {
       ownRoot: this.config.root,
       home: dshHome(),
       browseRoot: browseRoot(),
+      forgeMerges: mergesOnForge(this.config),
       presence: root => this.presence(root),
       onOperatorAction: (project, verb) => {
         const loop = this.loopFor(project.root)
