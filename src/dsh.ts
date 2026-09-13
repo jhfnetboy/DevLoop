@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AgentBackend, AgentRunInput, AgentRunResult } from './backend.js'
 import { defaultRunner, type HeadlessRun, type HeadlessRunner } from './spawn.js'
+import { workerEnv } from './worker-env.js'
 import { parseDevloopResult, protocolRepairInstruction, resultInstructions } from './result.js'
 import { readPlainOutput } from './reading.js'
 
@@ -99,6 +100,9 @@ export class DshHeadlessBackend implements AgentBackend {
         cwd,
         timeoutMs,
         signal: input.signal,
+        ...workerEnv(),
+        // dsh reads its sandbox mode from here; one inherited as danger-full-access drops every fence.
+        env: { ...workerEnv().env, DSH_PERMISSION_MODE: 'workspace-write' },
       }
       // `dsh --profile headless` has no output options, so there is nothing to
       // read but the prose. Saying that here rather than only in the README is
