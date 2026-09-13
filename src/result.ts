@@ -168,6 +168,8 @@ function validateReview(value: Record<string, unknown>): ReviewResult {
   }
 }
 
+const NOTES_CUT = '\n[truncated]'
+
 /**
  * A reviewer's notes. Long ones are cut with a marker rather than refused, as
  * the forge cuts a review body: a verdict is not invalid for explaining too
@@ -179,10 +181,12 @@ function reviewNotes(value: unknown): string | undefined {
   if (value.includes('\0')) throw new Error('review notes contain a NUL')
   const trimmed = value.trim()
   if (trimmed.length === 0) return undefined
-  return trimmed.length <= MAX_TEXT ? trimmed : `${trimmed.slice(0, MAX_TEXT - NOTES_CUT.length)}${NOTES_CUT}`
+  if (trimmed.length <= MAX_TEXT) return trimmed
+  let end = MAX_TEXT - NOTES_CUT.length
+  // Never between the two halves of a surrogate pair: a lone half is not text.
+  if (/[\uD800-\uDBFF]/.test(trimmed.charAt(end - 1))) end -= 1
+  return `${trimmed.slice(0, end)}${NOTES_CUT}`
 }
-
-const NOTES_CUT = '\n[truncated]'
 
 function stringList(value: unknown, label: string, min: number, max: number): string[] {
   if (!Array.isArray(value) || value.length < min || value.length > max) {

@@ -64,6 +64,11 @@ describe('DevLoop result envelope', () => {
     // Within what a task's saved review notes may hold, so the rework reaches the worker.
     expect(notes.length).toBe(8_192)
     expect(notes.endsWith('\n[truncated]')).toBe(true)
+    // A cut that would fall inside an emoji keeps the whole character or none of it.
+    const emoji = review(`${'x'.repeat(8_179)}${'😀'.repeat(10)}`)
+    const cut = emoji.kind === 'review' ? emoji.notes ?? '' : ''
+    expect(cut.endsWith('x\n[truncated]')).toBe(true)
+    expect(cut.isWellFormed()).toBe(true)
     expect(review('  keep this  ')).toMatchObject({ notes: 'keep this' })
     expect('notes' in review('   ')).toBe(false)
     expect(() => review('a\0b')).toThrow(/NUL/)
