@@ -104,7 +104,7 @@ export class ProjectLoop {
     let release: Release
     try {
       if (state.release === undefined) {
-        const opened = await forge.openRelease({ workspaceRoot: this.config.root, workBranch, title: releaseTitle(workBranch), body: releaseBody(state, workBranch) })
+        const opened = await forge.openRelease({ workspaceRoot: this.config.root, workBranch, title: releaseTitle(workBranch), body: releaseBody(state, workBranch, this.config.forge.reviewers) })
         release = { number: opened.number, merged: false }
       } else {
         const step = await forge.advanceRelease({ workspaceRoot: this.config.root, workBranch })
@@ -1289,7 +1289,7 @@ function releaseTitle(workBranch: string): string {
 }
 
 /** What the release reviewer checks the branch against: each task, its commit, and the branch its pull request came from. */
-function releaseBody(state: LoopState, workBranch: string): string {
+function releaseBody(state: LoopState, workBranch: string, reviewers: readonly string[]): string {
   return [
     `DevLoop release of \`${workBranch}\`: every task below was reviewed, and each one that changed anything was merged into it through its own pull request, labelled \`devloop\`.`,
     '',
@@ -1299,6 +1299,9 @@ function releaseBody(state: LoopState, workBranch: string): string {
       : `- \`${task.id}\` ${task.title}: head \`${task.implementationSha ?? 'unknown'}\`, from \`devloop/${task.id}\`, verdict ${task.lastReviewVerdict ?? 'none'}`),
     '',
     'Review it as a summary: each task pull request should be merged, based on this branch, and approved at the head it merged with; a commit that came in any other way is a finding.',
+    '',
+    // advanceRelease reads GitHub reviews whatever forge.verdictSource says, so the body must not suggest a comment decides it.
+    `Decide with a GitHub review on this pull request: **Approve**, or **Request changes** with what to change. Only reviews from ${reviewers.map(login => `\`${login}\``).join(', ')} of its head commit are read; comments are not read. DevLoop merges it once approved with green checks: do not press Merge here.`,
   ].join('\n')
 }
 

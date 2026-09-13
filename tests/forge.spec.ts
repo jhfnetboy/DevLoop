@@ -1500,6 +1500,14 @@ describe('ForgePrBackend releasing the work branch', () => {
     expect(calls(approved, 'merge')[0]?.argv).toEqual(['pr', 'merge', '9', '--repo', 'github.com/acme/widgets', '--merge', '--match-head-commit', HEAD_SHA])
   })
 
+  it('decides the release by GitHub review even where task pull requests are decided by comment', async () => {
+    const envelope = { author: REVIEWER, body: `<devloop_result>${JSON.stringify({ version: 1, kind: 'review', taskId: 'release', reviewedSha: HEAD_SHA, verdict: 'PASS' })}</devloop_result>` }
+    // A comment is not a decision here: with no review, the release waits.
+    expect(await backend({ verdictSource: 'comments' }, { prLists: [[release()]], reviews: [], comments: [envelope] }).advanceRelease(request)).toEqual({ state: 'waiting', number: 9 })
+    const approved = { prLists: [[release()], [release({ state: 'MERGED', mergeCommit: { oid: OTHER_SHA } })]], reviews: [{ author: REVIEWER, state: 'APPROVED', commit: HEAD_SHA, body: '' }] }
+    expect(await backend({ verdictSource: 'comments' }, approved).advanceRelease(request)).toEqual({ state: 'merged', number: 9, mergeCommit: OTHER_SHA })
+  })
+
   it('does not merge a release twice, and releases only a work branch', async () => {
     const done = { prLists: [[release({ state: 'MERGED', mergeCommit: { oid: OTHER_SHA } })]], calls: [] as Recorded[] }
     expect(await releaser(done).advanceRelease(request)).toEqual({ state: 'merged', number: 9, mergeCommit: OTHER_SHA })
