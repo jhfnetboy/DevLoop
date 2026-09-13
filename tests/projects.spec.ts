@@ -24,7 +24,7 @@ import {
   unregisterProject,
   validateProjectRoot,
 } from '../src/projects.ts'
-import DevloopService, { LoopShared, ProjectLoop } from '../src/service.ts'
+import DevloopService, { forgeMergers, LoopShared, ProjectLoop, projectConfig } from '../src/service.ts'
 import { NoopBackend } from '../src/backend.ts'
 import { initGitRepo, makeTask, mkdtempInRepo } from './helpers.ts'
 
@@ -253,6 +253,37 @@ describe('the service runs every registered project', () => {
       state = await loadState(other, Date.now())
     }
     expect(state.lastAction.type).toBe('plan')
+  })
+
+  it('runs a registered project against the forge repository confirmed for it, never the profile\'s', async () => {
+    const dir = await home()
+    process.env.DSH_HOME = dir
+    const other = await repo('svc-forge-')
+    await armProject(other, 'plan something')
+    await registerProject(dir, '/unused', other)
+    await setProjectPushUrl(dir, other, 'git@github.com:acme/one.git')
+    await saveState(other, { ...emptyState(Date.now()), workBranch: 'work', tasks: [makeTask({ id: 't1', status: 'merge_ready', lastReviewVerdict: 'PASS', implementationSha: 'a'.repeat(40) })] })
+    const seen: string[] = []
+    const realCreate = forgeMergers.create
+    forgeMergers.create = (config) => {
+      seen.push(config.forge.pushUrl)
+      return { async mergeTask() { throw new Error('forge_merge: stop here') }, async openRelease() { return { number: 1 } }, async advanceRelease() { return { state: 'waiting' as const, number: 1 } } }
+    }
+    try {
+      const service = new DevloopService(new Context(), resolveConfig({
+        root: await mkdtempInRepo('svc-own3-'), tickIntervalMs: 60_000, agentBackend: 'routed',
+        reviewerRoute: { tier: 'T3', backend: 'forge', model: 'pr' },
+        forge: { pushUrl: 'git@github.com:acme/profile.git', reviewers: ['clestons'] },
+      } as never))
+      services.push(service)
+      const deadline = Date.now() + 10_000
+      while (seen.length === 0 && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 50))
+    } finally {
+      forgeMergers.create = realCreate
+    }
+    expect(seen[0]).toBe('git@github.com:acme/one.git')
+    // None confirmed is no repository at all, which the forge refuses, not the profile's.
+    expect(projectConfig(resolveConfig({ forge: { pushUrl: 'git@github.com:acme/profile.git' } } as never), other, null).forge.pushUrl).toBe('')
   })
 
   it('starts nothing from a registry read that finishes after it was stopped', async () => {

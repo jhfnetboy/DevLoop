@@ -53,6 +53,11 @@ export type LoopPresence = 'running' | 'stopped' | 'elsewhere'
 export interface ProjectControl {
   /** A root was just registered: start its loop. */
   addProject(root: string): void
+  /**
+   * The operator confirmed a project's forge repository: run its loop with it
+   * from now on. Only called while that loop has no work in flight.
+   */
+  setProjectForge?(root: string, pushUrl: string): void
   /** A root was just unregistered: stop and forget its loop. */
   removeProject(root: string): void
   /** Today's spend across every loop, and the shared cap when one applies. */

@@ -66,6 +66,8 @@ describe('a local review before the forge', () => {
     const registry = { claude: fake(verdict('PASS')), dsh: fake(verdict('PASS')) }
     const base = { agentBackend: 'routed' as const, reviewerRoute: { backend: 'forge', model: 'pr' } }
     expect(forgeReview(resolveConfig(base), registry)).toBeInstanceOf(ForgePrBackend)
+    // A profile that sets some forge settings but never names localReview has none; it used to throw.
+    expect(forgeReview(resolveConfig({ ...base, forge: { pushUrl: 'git@github.com:acme/widgets.git', reviewers: ['clestons'] } } as never), registry)).toBeInstanceOf(ForgePrBackend)
     expect(forgeReview(resolveConfig({ ...base, forge: { localReview: LOCAL } } as never), registry)).toBeInstanceOf(LocalThenForgeReview)
     const implementer = resolveConfig({ ...base, forge: { localReview: { backend: 'dsh', model: 'deepseek-v4-flash' } } } as never)
     expect(() => forgeReview(implementer, registry)).toThrow(/also implements tasks/)
