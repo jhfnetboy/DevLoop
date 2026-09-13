@@ -39,6 +39,25 @@ describe('gateFor', () => {
     expect(gate?.options.map(o => o.key)).toEqual(['retry', 'accept', 'stop'])
   })
 
+  it('asks about the checkout by stage: a review not yet opened is not a merge waiting', async () => {
+    const i18n = await readFile(join(import.meta.dirname, '..', 'dashboard', 'i18n.js'), 'utf8')
+    for (const reason of ['merge_onto_trunk', 'merge_detached_head']) {
+      const merging = gateFor(held(reason), limits, NOW)
+      expect(merging?.key, reason).toBe(reason)
+      expect(merging?.evidence[0]).toBe('task A passed review and is waiting to merge')
+      // Held at review time, before any pull request: it has passed nothing yet.
+      const reviewing = gateFor(held(reason, { status: 'review_pending' }), limits, NOW)
+      expect(reviewing?.key, reason).toBe(`${reason}_review`)
+      expect(reviewing?.question).toMatch(/pull request was not opened/)
+      expect(reviewing?.evidence.join(' ')).not.toMatch(/passed review|waiting to merge/)
+      expect(reviewing?.manual).toMatch(/reviewed on the next tick/)
+      expect(reviewing?.options.map(o => o.key)).toEqual(['stop'])
+      // Its own key is only worth having if the page can say it in every language.
+      // (dashboard.spec holds every string to all three languages.)
+      for (const part of ['q', 'e1', 'e2', 'm']) expect(i18n).toContain(`'gate.${reason}_review.${part}': [`)
+    }
+  })
+
   it('says what each answer costs before it is chosen, and recommends one unless the only answer is to leave it', () => {
     const cost = {
       // Not a clean slate: the worker runs again in the same worktree, on the same base.
