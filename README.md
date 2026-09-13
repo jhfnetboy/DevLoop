@@ -383,15 +383,19 @@ refs:
     plannerRoute:  { tier: T3, backend: dsh, model: deepseek-v4-pro }
     reviewerRoute: { tier: T3, backend: dsh, model: deepseek-v4-pro }
     routing:
-      T0: { tier: T0, backend: dsh, model: deepseek-v4-flash }
-      T1: { tier: T1, backend: dsh, model: deepseek-v4-flash }
-      T2: { tier: T2, backend: dsh, model: deepseek-v4-flash }
-      T3: { tier: T3, backend: dsh, model: deepseek-v4-flash }
+      T0: { tier: T0, backend: dsh, model: deepseek-flash }
+      T1: { tier: T1, backend: dsh, model: deepseek-flash }
+      T2: { tier: T2, backend: dsh, model: deepseek-flash }
+      T3: { tier: T3, backend: dsh, model: deepseek-flash }
 ```
 
+`deepseek-flash` is DeepSeek V4.1 Flash's API id.
 Every worker tier is Flash on purpose: review refuses a commit whose implementer
 has the reviewer's identity, so a worker on `deepseek-v4-pro` could never be
-reviewed. `dsh` headless reports no usage, so none of this spend reaches the
+reviewed. Since 2026-09-14 DeepSeek serves `deepseek-v4-pro` with V4.1 Flash too,
+so in this all-DeepSeek setup the reviewer is a different route but the same
+model: for a review independent of the workers, point `reviewerRoute` at another
+provider (`claude`, `codex`) or at the `forge`. `dsh` headless reports no usage, so none of this spend reaches the
 cost caps — [Pricing.md](docs/Pricing.md) has the prices for when it can.
 
 ### One pull request per task, reviewed and merged on GitHub

@@ -87,16 +87,24 @@ const DEEPSEEK_V41_FLASH: Omit<PriceEntry, 'billedAs' | 'note'> = {
  * stops being true and has to be revisited — which is why it carries a note
  * rather than silently sharing a card.
  *
- * Models absent from this table are unpriced, not free: `deepseek-v4-flash`
- * (the pre-4.1 Flash our T1 route names) has no published rate in the notice
- * this table was built from, and V4 Pro's own pre-change rates were not
- * restated either.
+ * `deepseek-flash` is V4.1 Flash's own API id (2026-09-10 notice); the
+ * deprecated `deepseek-v4-flash` is routed to it and priced the same, with a
+ * note, like V4 Pro. `deepseek-v4.1-flash` is kept for routes written before
+ * the id was published.
+ *
+ * Models absent from this table are unpriced, not free.
  */
 const PRICES: Readonly<Record<string, PriceEntry>> = {
-  'deepseek-v4.1-flash': { ...DEEPSEEK_V41_FLASH, billedAs: 'deepseek-v4.1-flash' },
+  'deepseek-flash': { ...DEEPSEEK_V41_FLASH, billedAs: 'deepseek-flash' },
+  'deepseek-v4.1-flash': { ...DEEPSEEK_V41_FLASH, billedAs: 'deepseek-flash' },
+  'deepseek-v4-flash': {
+    ...DEEPSEEK_V41_FLASH,
+    billedAs: 'deepseek-flash',
+    note: 'V4 Flash is deprecated; its id is routed to V4.1 Flash and billed at its prices',
+  },
   'deepseek-v4-pro': {
     ...DEEPSEEK_V41_FLASH,
-    billedAs: 'deepseek-v4.1-flash',
+    billedAs: 'deepseek-flash',
     note: 'V4 Pro requests are routed to V4.1 Flash and billed at Flash prices until V4.1 Pro ships',
   },
 }

@@ -70,14 +70,17 @@ describe('priceUsage', () => {
     expect(result.price.amount).toBeCloseTo(10.04, 10)
   })
 
-  it('prices a V4 Pro request as Flash, and says why', () => {
-    const pro = priceUsage('deepseek-v4-pro', usage, at(3))
-    const flash = priceUsage('deepseek-v4.1-flash', usage, at(3))
-    expect(pro.ok && flash.ok).toBe(true)
-    if (!pro.ok || !flash.ok) return
-    expect(pro.price.amount).toBe(flash.price.amount)
-    expect(pro.price.billedAs).toBe('deepseek-v4.1-flash')
-    expect(pro.price.note).toMatch(/routed to V4.1 Flash/)
+  it('prices V4.1 Flash by its API id, and the ids DeepSeek routes to it as Flash, saying why', () => {
+    const flash = priceUsage('deepseek-flash', usage, at(3))
+    expect(flash.ok && flash.price.billedAs).toBe('deepseek-flash')
+    for (const [model, note] of [['deepseek-v4-pro', /routed to V4.1 Flash/], ['deepseek-v4-flash', /deprecated.*routed to V4.1 Flash/], ['deepseek-v4.1-flash', undefined]] as const) {
+      const routed = priceUsage(model, usage, at(3))
+      expect(routed.ok, model).toBe(true)
+      if (!routed.ok || !flash.ok) return
+      expect(routed.price.amount, model).toBe(flash.price.amount)
+      expect(routed.price.billedAs, model).toBe('deepseek-flash')
+      if (note) expect(routed.price.note, model).toMatch(note)
+    }
   })
 
   it('scales below a million tokens rather than rounding to a whole card', () => {
@@ -93,10 +96,9 @@ describe('priceUsage', () => {
   })
 
   it('refuses to price a model with no published rate', () => {
-    // The T1 route's model. The notice priced V4.1 Flash and said nothing
-    // about this one, so it is unpriced rather than free.
-    expect(isPricedModel('deepseek-v4-flash')).toBe(false)
-    const result = priceUsage('deepseek-v4-flash', usage, at(3))
+    // A model the notice said nothing about is unpriced rather than free.
+    expect(isPricedModel('deepseek-chat')).toBe(false)
+    const result = priceUsage('deepseek-chat', usage, at(3))
     expect(result.ok).toBe(false)
     if (result.ok) return
     expect(result.reason).toBe('unpriced_model')
