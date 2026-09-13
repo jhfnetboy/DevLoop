@@ -17,8 +17,10 @@ import {
   browseRoot,
   listProjects,
   projectId,
+  readOriginUrl,
   registerProject,
   registryPath,
+  setProjectPushUrl,
   unregisterProject,
   validateProjectRoot,
 } from '../src/projects.ts'
@@ -93,6 +95,42 @@ describe('registering a project', () => {
     await unregisterProject(dir, root)
     expect((await listProjects('/own', dir)).projects.map(p => p.root)).not.toContain(root)
     expect(await readFile(join(root, '.devloop', 'GOAL.md'), 'utf8')).toBe('Ship it\n')
+  })
+})
+
+describe('the forge repository a project pushes to', () => {
+  it('keeps the one the operator confirmed, and only one the forge could use', async () => {
+    const dir = await home()
+    const own = await mkdtempInRepo('url-own-')
+    const root = await repo('url-proj-')
+    await registerProject(dir, own, root)
+    expect((await listProjects(own, dir)).projects.find(p => p.root === root)?.pushUrl).toBeNull()
+    await setProjectPushUrl(dir, root, 'git@github.com:acme/widgets.git')
+    const listed = await listProjects(own, dir)
+    expect(listed.projects.find(p => p.root === root)?.pushUrl).toBe('git@github.com:acme/widgets.git')
+    // The own root always takes the profile's forge settings.
+    expect(listed.projects.find(p => p.own)?.pushUrl).toBeNull()
+    for (const bad of ['/srv/repo.git', '-x', 'ftp://example.com/a/b', '']) {
+      await expect(setProjectPushUrl(dir, root, bad), bad).rejects.toThrow(/not a forge URL/)
+    }
+    await expect(setProjectPushUrl(dir, await repo('url-other-'), 'git@github.com:acme/widgets.git')).rejects.toThrow(/not registered/)
+    // One written by hand that does not parse is dropped and said, never guessed at; the entry stays.
+    await writeFile(registryPath(dir), JSON.stringify({ projects: [{ root, pushUrl: 'file:///etc', note: 'mine' }] }), 'utf8')
+    const hand = await listProjects(own, dir)
+    expect(hand.projects.find(p => p.root === root)?.pushUrl).toBeNull()
+    expect(hand.registryError).toMatch(/"pushUrl" is not a forge URL/)
+    await setProjectPushUrl(dir, root, 'https://github.com/acme/widgets')
+    expect(JSON.parse(await readFile(registryPath(dir), 'utf8')).projects[0]).toMatchObject({ root, note: 'mine', pushUrl: 'https://github.com/acme/widgets' })
+  })
+
+  it('offers the checkout\'s origin as configured, not as a rewrite rule would turn it', async () => {
+    const root = await repo('url-origin-')
+    expect(await readOriginUrl(root)).toBeNull()
+    await execFileAsync('git', ['-C', root, 'remote', 'add', 'origin', 'git@github.com:acme/widgets.git'])
+    await execFileAsync('git', ['-C', root, 'config', 'url.git@evil.example:.insteadOf', 'git@github.com:'])
+    expect(await readOriginUrl(root)).toBe('git@github.com:acme/widgets.git')
+    await execFileAsync('git', ['-C', root, 'remote', 'set-url', 'origin', '/srv/local.git'])
+    expect(await readOriginUrl(root)).toBeNull()
   })
 })
 
