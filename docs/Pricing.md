@@ -23,28 +23,35 @@ Peak output costs 200× peak cached input. A workload that reads a large cached
 prompt and writes little is nearly free; one that writes a lot is not. Shifting
 long dispatches out of the two weekday windows halves them.
 
+## Model ids
+
+`deepseek-flash` is V4.1 Flash's API id (DeepSeek notice of 2026-09-10) and what
+`routing.T1` and `routing.T2` name by default. The deprecated
+`deepseek-v4-flash` is routed to V4.1 Flash for now and priced from the table
+above, with a note. `deepseek-v4.1-flash`, an id this table used before
+DeepSeek published one, is kept so routes that name it stay priced.
+
 ## `deepseek-v4-pro` bills as Flash
 
 Between V4.1 Flash shipping and **V4.1 Pro** shipping, DeepSeek routes V4 Pro
-requests to V4.1 Flash and bills them at Flash prices. So `routing.T2`, which
-names `deepseek-v4-pro`, is priced from the table above.
+requests to V4.1 Flash and bills them at Flash prices (for every request from
+2026-09-14 12:00). So a route that names `deepseek-v4-pro` is priced from the
+table above.
 
 The route keeps naming what it asks for and the price table holds the mapping to
-what is charged. Rewriting the route to `deepseek-v4.1-flash` would lose the fact
+what is charged. Rewriting such a route to `deepseek-flash` would lose the fact
 that we asked for Pro, which is what has to be revisited the day V4.1 Pro ships —
 and until then T1 and T2 land on comparable models, so do not reason about T2 as
 the more expensive tier.
 
 ## What is not priced
 
-`pricedModels()` is the whole table. Two absences are deliberate:
+`pricedModels()` is the whole table. One absence is deliberate:
 
-- **`deepseek-v4-flash`**, which `routing.T1` names, has no published rate in the
-  notice this table was built from.
 - **V4 Pro's own pre-change rates** were not restated, so a dispatch billed
   before the effective date above is unpriced rather than priced at today's card.
 
-Both return `{ ok: false, reason }` from `priceUsage`. An unpriced model is not a
+It returns `{ ok: false, reason }` from `priceUsage`. An unpriced model is not a
 free one, and a cost cap fed by a guessed price is a cap at an unknown value.
 
 ## The gap between a price and a charge
