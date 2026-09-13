@@ -1,8 +1,50 @@
-# Release 0.6.5
+# Release 0.6.6
 
-Bounded autonomous engineering loop: structured model results, deterministic state transitions, host-enforced write scope, SHA-bound independent review, durable recovery, and role/tier routing. Tag `v0.6.5` and the GitHub Release are created **after** this commit is on `main`; steps: [Deploy.md](./Deploy.md).
+Bounded autonomous engineering loop: structured model results, deterministic state transitions, host-enforced write scope, SHA-bound independent review, durable recovery, and role/tier routing. Tag `v0.6.6` and the GitHub Release are created **after** this commit is on `main`; steps: [Deploy.md](./Deploy.md).
 
-Package version: **0.6.5**. This document is the release note, not a second semver.
+Package version: **0.6.6**. This document is the release note, not a second semver.
+
+## New in 0.6.6
+
+One repository, worked on goal after goal, every change reviewed. Found by
+running 0.6.5 end to end on a live dashboard and a sandbox forge repository,
+and shaped after LoopX, where a goal is long-lived and
+finished work stays with it.
+
+- **The next goal on the same repository** ([#128](https://github.com/jhfnetboy/DevLoop/pull/128)–[#131](https://github.com/jhfnetboy/DevLoop/pull/131)).
+  A finished project's page shows a "Next goal" box. The finished goal is
+  archived under `.devloop/archive/NNNN/` (GOAL, STATE, PLAN, REVIEW,
+  PROGRESS) under the state lock, and the next is planned on the same work
+  branch; spend carries over, per-task counters restart. Where the forge
+  merges, the next goal waits for the finished one's release to merge, its
+  task ids get a `g<N>-` prefix so its branches never meet an earlier goal's,
+  and its release is matched by number, never by an earlier goal's merge.
+- **Each project pushes to its own forge repository** ([#132](https://github.com/jhfnetboy/DevLoop/pull/132), [#135](https://github.com/jhfnetboy/DevLoop/pull/135), [#136](https://github.com/jhfnetboy/DevLoop/pull/136)).
+  Before a registered project first starts on the forge route, the page shows
+  its checkout's origin (read without `insteadOf`) for the operator to
+  confirm; it is kept in the project registry, never re-read from the
+  checkout, and the project's loop runs with it. Also fixes the forge route
+  failing to start when a profile never named `forge.localReview`.
+- **Mechanical checks fix before review** ([#133](https://github.com/jhfnetboy/DevLoop/pull/133)).
+  A commit the pre-PR checker blocks on a rule, or whose acceptance command
+  fails, goes back to the worker with what the check said, bounded by the
+  task's attempts; only size alone (split the task) or no verdict still asks
+  the operator. The PR record shows how many tasks passed their first review
+  ([#139](https://github.com/jhfnetboy/DevLoop/pull/139)).
+- **Safer with a repository that is already in use** ([#127](https://github.com/jhfnetboy/DevLoop/pull/127), [#137](https://github.com/jhfnetboy/DevLoop/pull/137), [#140](https://github.com/jhfnetboy/DevLoop/pull/140)).
+  A branch named for a task that holds other work is never reset: the task
+  holds and asks (`task_branch_taken`). A forge merge removes the task's
+  worktree. `.devloop/` is added to the local `info/exclude`. Ahead/behind
+  is counted against the remote's trunk.
+- **Say what the task is** ([#134](https://github.com/jhfnetboy/DevLoop/pull/134), [#138](https://github.com/jhfnetboy/DevLoop/pull/138)).
+  Task commits are `<task id>: <title>`; the task pull request lists the
+  contract's acceptance and allowed paths; the release links each task's
+  pull request.
+
+New: `.devloop/archive/`, STATE `goal` and `Task.pullRequest`, registry
+`pushUrl`, hold reason `task_branch_taken`, `POST /api/projects/<id>/next`.
+Checked before release by a forge E2E in the sandbox: two goals in a row on
+one work branch, four pull requests reviewed and merged by DevLoop.
 
 ## New in 0.6.5
 
