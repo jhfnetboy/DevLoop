@@ -93,6 +93,8 @@ interface Recorded {
 }
 
 interface StubOptions {
+  /** The head `pr view` reports beside the checks; the reviewed HEAD_SHA unless a test moves it. */
+  checksHead?: string
   comments?: unknown[]
   reviews?: unknown[]
   lsRemote?: string
@@ -188,7 +190,7 @@ function stubRunner(stub: StubOptions): HeadlessRunner {
     if (joined.includes('statusCheckRollup')) {
       checkViews += 1
       const checks = typeof stub.checks === 'function' ? stub.checks(checkViews) : (stub.checks ?? [])
-      return { stdout: JSON.stringify({ statusCheckRollup: checks }), stderr: '' }
+      return { stdout: JSON.stringify({ headRefOid: stub.checksHead ?? HEAD_SHA, statusCheckRollup: checks }), stderr: '' }
     }
     if (joined.startsWith('pr view')) {
       const body = stub.prView ?? pr()
@@ -1266,6 +1268,16 @@ describe('ForgePrBackend verdicts from GitHub reviews', () => {
     expect(red.outcome).toMatchObject({ verdict: 'REWORK', notes: 'Approved, but these checks failed: test, deploy' })
     // A request for changes needs no checks to be rework.
     expect((await backend({ verdictSource: 'reviews' }, { reviews: [review(REVIEWER, 'CHANGES_REQUESTED')], checks: [{ context: 'ci', state: 'PENDING' }] }).run(reviewInput())).outcome).toMatchObject({ verdict: 'REWORK' })
+  })
+
+  it('reads checks only for the reviewed commit: a head pushed since cannot lend it green checks', async () => {
+    const approved = [review(REVIEWER, 'APPROVED')]
+    const green = [{ name: 'test', conclusion: 'SUCCESS' }]
+    const moved = await backend({ verdictSource: 'reviews' }, { reviews: approved, checks: green, checksHead: OTHER_SHA }).run(reviewInput())
+    expect(moved.outcome).toBeUndefined()
+    expect(moved.detail).toMatch(new RegExp(`^forge_pr: pull request 7 is at ${OTHER_SHA}, not the reviewed ${HEAD_SHA}`))
+    const unknown = await backend({ verdictSource: 'reviews' }, { reviews: approved, checks: green, checksHead: '' }).run(reviewInput())
+    expect(unknown.detail).toMatch(/is at an unknown head/)
   })
 
   it('counts a commit with no checks as green only when checks are not required', async () => {

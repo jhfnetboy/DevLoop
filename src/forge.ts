@@ -461,7 +461,7 @@ export class ForgePrBackend implements AgentBackend {
       throw new Error(`forge_review_gone: pull request ${found.number} is no longer approved with green checks at ${sha}`)
     }
     // A review verdict already waited for green checks; a comment verdict never looked, so look now.
-    if (this.options.verdictSource === 'comments' && await this.readChecks(root, repo, found.number, ctx) !== 'passed') {
+    if (this.options.verdictSource === 'comments' && await this.readChecks(root, repo, found.number, sha, ctx) !== 'passed') {
       throw new Error(`forge_review_gone: pull request ${found.number} is approved, but its checks at ${sha} are not green`)
     }
     const neutral = await mkdtemp(join(tmpdir(), 'devloop-merge-'))
@@ -864,7 +864,7 @@ export class ForgePrBackend implements AgentBackend {
     if (said === undefined) return null
     // An approval is a pass only once this commit's checks have passed too: a red build is rework, a running one is a wait.
     if (said.state === 'APPROVED') {
-      const checks = await this.readChecks(root, repo, number, ctx)
+      const checks = await this.readChecks(root, repo, number, sha, ctx)
       if (checks === 'pending') return null
       if (checks !== 'passed') {
         return { author: said.author, result: { version: 1, kind: 'review', taskId, reviewedSha: sha, verdict: 'REWORK', notes: `Approved, but these checks failed: ${checks.join(', ')}`.slice(0, MAX_NOTES) } }
@@ -887,14 +887,17 @@ export class ForgePrBackend implements AgentBackend {
   }
 
   /**
-   * The pull request's checks at its head, which the binding already holds at
-   * the reviewed commit: passed (none failing and none running — a repository
-   * with no checks has passed unless `requireChecks`), still running, or the
-   * names of those that failed.
+   * The pull request's checks at the reviewed commit: passed (none failing and
+   * none running — a repository with no checks has passed unless
+   * `requireChecks`), still running, or the names of those that failed. The
+   * head is read in the same call as the rollup, so a push between the binding
+   * check and this one cannot lend the reviewed commit a newer commit's checks.
    */
-  private async readChecks(root: string, repo: ForgeRepo, number: number, ctx: RunCtx): Promise<'passed' | 'pending' | string[]> {
-    const raw = await this.forge(root, ['pr', 'view', String(number), '--repo', repoSlug(repo), '--json', 'statusCheckRollup'], ctx)
+  private async readChecks(root: string, repo: ForgeRepo, number: number, sha: string, ctx: RunCtx): Promise<'passed' | 'pending' | string[]> {
+    const raw = await this.forge(root, ['pr', 'view', String(number), '--repo', repoSlug(repo), '--json', 'headRefOid,statusCheckRollup'], ctx)
     const view: unknown = parseJson(raw, 'forge_pr: pr checks')
+    const head = isRecord(view) && typeof view.headRefOid === 'string' ? view.headRefOid.toLowerCase() : ''
+    if (head !== sha) throw new Error(`forge_pr: pull request ${number} is at ${head || 'an unknown head'}, not the reviewed ${sha}; its checks are not this commit's`)
     const rollup = isRecord(view) ? view.statusCheckRollup : undefined
     if (!Array.isArray(rollup)) throw new Error('forge_pr: pr checks did not return a list')
     if (rollup.length === 0 && this.options.requireChecks) return 'pending'
