@@ -1674,7 +1674,10 @@ describe('merging on the forge', () => {
   it('holds for a review again when the approval is gone, and as a forge refusal for any other forge error', async () => {
     for (const [message, reason] of [
       ['forge_review_gone: pull request 7 is no longer approved', 'no_review_pass'],
-      ['forge_pr: pull request 7 no longer targets work', 'forge_merge_refused'],
+      // Pushed to or retargeted since review: what was approved is not what would merge.
+      ['forge_review_gone: pull request 7 no longer targets work', 'no_review_pass'],
+      ['forge_review_gone: pull request 7 is at 0000000000000000000000000000000000000000, not the reviewed 1111111111111111111111111111111111111111', 'no_review_pass'],
+      ['forge_pr: pr list did not return an array', 'forge_merge_refused'],
       ['forge_merge: forge is not configured to decide or merge', 'forge_merge_refused'],
       // What gh itself throws carries no prefix: an expired login, a missing binary, a timeout.
       ['Command failed: gh pr merge 7 (exit 1)', 'forge_merge_refused'],
