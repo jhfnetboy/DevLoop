@@ -334,6 +334,17 @@ export async function deleteMergedTaskBranch(root: string, taskId: string): Prom
   if (!token) throw new Error(`unsafe task id for worktree: ${taskId}`)
   const resolvedRoot = await realpath(root)
   const branch = `${WORKTREE_BRANCH_PREFIX}${token}`
+  // A local merge removes the task's worktree itself; one merged on the forge does not, and
+  // `branch -d` refuses a branch a worktree still has checked out. Not forced: a worktree
+  // holding changes or untracked files is kept, and the refusal is the caller's to report.
+  const dest = worktreePath(resolvedRoot, token)
+  if (await pathExists(dest) && await isRegisteredWorktree(await listedWorktreePaths(resolvedRoot), dest)) {
+    try {
+      await git(resolvedRoot, ['worktree', 'remove', dest])
+    } catch (error) {
+      if (await pathExists(dest)) throw error
+    }
+  }
   try {
     await git(resolvedRoot, ['worktree', 'prune'])
   } catch {
