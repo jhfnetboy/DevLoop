@@ -532,6 +532,7 @@ export class ProjectLoop {
                   await appendPrLog(this.config.root, {
                     kind: 'review', at: new Date().toISOString(), taskId: action.taskId,
                     head: agentOutcome.reviewedSha, verdict: agentOutcome.verdict, reviewer: dispatched.agent ?? null,
+                    ...(dispatched.localReviewer === undefined ? {} : { localReviewer: dispatched.localReviewer }),
                   }, this.ctx.logger)
                 }
               } catch (error) {

@@ -19,17 +19,18 @@ export class LocalThenForgeReview implements AgentBackend {
 
   async run(input: AgentRunInput): Promise<AgentRunResult> {
     if (input.action.type !== 'review') return this.forge.run(input)
+    const localReviewer = `${this.localRoute.backend}/${this.localRoute.model}`
     const first = await this.local.run({ ...input, route: this.localRoute })
     const outcome = first.outcome
-    if (first.status !== 'started' || outcome === undefined || outcome.kind !== 'review') return first
-    if (outcome.verdict !== 'PASS' && outcome.verdict !== 'PASS_WITH_NOTES') return first
+    if (first.status !== 'started' || outcome === undefined || outcome.kind !== 'review') return { ...first, localReviewer }
+    if (outcome.verdict !== 'PASS' && outcome.verdict !== 'PASS_WITH_NOTES') return { ...first, localReviewer }
     const second = await this.forge.run(input)
     // The local review was paid for whatever the forge says next: its usage counts toward the caps,
     // and the dispatch reached a provider even if the forge itself never got as far as one.
     const tokens = first.tokens === undefined && second.tokens === undefined ? undefined : (first.tokens ?? 0) + (second.tokens ?? 0)
     const costUsd = first.costUsd === undefined && second.costUsd === undefined ? undefined : (first.costUsd ?? 0) + (second.costUsd ?? 0)
     const { reachedProvider: _forgeOnly, ...rest } = second
-    return { ...rest, ...(tokens === undefined ? {} : { tokens }), ...(costUsd === undefined ? {} : { costUsd }) }
+    return { ...rest, localReviewer, ...(tokens === undefined ? {} : { tokens }), ...(costUsd === undefined ? {} : { costUsd }) }
   }
 
   async cancel(taskId: string): Promise<void> {
