@@ -42,8 +42,8 @@ const REPO_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/
 const HOSTNAME = /^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$/
 
 /**
- * Git runs repository-controlled hooks with this host's privileges, so every
- * invocation here disables them and refuses to prompt, matching the hardening
+ * Git runs repository-controlled hooks and fsmonitor with this host's privileges,
+ * so every invocation here disables both and refuses to prompt, matching the hardening
  * `worktree.ts` applies to its own git calls.
  */
 const GIT_HOOKS_PATH = process.platform === 'win32' ? 'NUL' : '/dev/null'
@@ -957,7 +957,7 @@ export class ForgePrBackend implements AgentBackend {
   ): Promise<string> {
     const { stdout } = await this.runner({
       command: 'git',
-      argv: ['-C', root, '-c', `core.hooksPath=${GIT_HOOKS_PATH}`, ...argv],
+      argv: ['-C', root, '-c', `core.hooksPath=${GIT_HOOKS_PATH}`, '-c', 'core.fsmonitor=false', ...argv],
       cwd: root,
       timeoutMs: remainingMs(ctx, cap),
       env,
@@ -993,7 +993,7 @@ export function pullRequestBody(taskId: string, sha: string, reviewers: readonly
       `DevLoop task \`${taskId}\` is ready for review at commit \`${sha}\`.`,
       '',
       'Decide with a GitHub review on this pull request: **Approve**, or **Request changes**',
-      'with what to change in the review body.',
+      'with what to change in the review body, which is given to the worker for its next attempt.',
       '',
       `Only reviews from ${who} of exactly this commit are read, never one from the account`,
       'that opened this pull request. Comments are not read. If any of them requests changes,',

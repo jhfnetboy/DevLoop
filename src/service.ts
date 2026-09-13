@@ -1290,9 +1290,12 @@ function releaseTitle(workBranch: string): string {
 /** What the release reviewer checks the branch against: each task, its commit, and the branch its pull request came from. */
 function releaseBody(state: LoopState, workBranch: string): string {
   return [
-    `DevLoop release of \`${workBranch}\`: every task below was reviewed and merged into it through its own pull request, labelled \`devloop\`.`,
+    `DevLoop release of \`${workBranch}\`: every task below was reviewed, and each one that changed anything was merged into it through its own pull request, labelled \`devloop\`.`,
     '',
-    ...state.tasks.map(task => `- \`${task.id}\` ${task.title}: head \`${task.implementationSha ?? 'unknown'}\`, from \`devloop/${task.id}\`, verdict ${task.lastReviewVerdict ?? 'none'}`),
+    ...state.tasks.map(task => task.implementationSha !== undefined && task.implementationSha === task.baseSha
+      // Accepted with no commits of its own: there was nothing to merge, so there is no pull request to look for.
+      ? `- \`${task.id}\` ${task.title}: no change, accepted without a pull request, verdict ${task.lastReviewVerdict ?? 'none'}`
+      : `- \`${task.id}\` ${task.title}: head \`${task.implementationSha ?? 'unknown'}\`, from \`devloop/${task.id}\`, verdict ${task.lastReviewVerdict ?? 'none'}`),
     '',
     'Review it as a summary: each task pull request should be merged, based on this branch, and approved at the head it merged with; a commit that came in any other way is a finding.',
   ].join('\n')
