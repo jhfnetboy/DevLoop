@@ -461,7 +461,7 @@ export class ProjectLoop {
                 const input = runInputFor(this.config.root, action, outcome.value.result.state, this.config.budget)
                 if (!input.contract) throw new Error('scope_check: missing task contract')
                 await assertTaskChangesAllowed(outcome.value.worktreeRoot, input.contract)
-                await commitDirtyTaskWorktree(outcome.value.worktreeRoot, action.taskId)
+                await commitDirtyTaskWorktree(outcome.value.worktreeRoot, action.taskId, input.contract.title)
                 implementationSha = await taskWorktreeHeadSha(outcome.value.worktreeRoot)
                 if (implementationSha === input.contract.baseSha) throw new Error('empty_task')
                 // Evidence before the verdict: a task that cannot pass the

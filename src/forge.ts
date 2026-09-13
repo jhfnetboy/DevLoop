@@ -391,7 +391,7 @@ export class ForgePrBackend implements AgentBackend {
         }
       }
       await this.publish(workspaceRoot, url, branch, reviewed, ctx, workBase === null ? null : { branch: base, sha: workBase })
-      const number = await this.ensurePullRequest(workspaceRoot, repo, branch, reviewed, contract.title, contract.taskId, ctx)
+      const number = await this.ensurePullRequest(workspaceRoot, repo, branch, reviewed, contract, ctx)
 
       const ranOut = {
         status: 'failed' as const,
@@ -681,8 +681,7 @@ export class ForgePrBackend implements AgentBackend {
     repo: ForgeRepo,
     branch: string,
     sha: string,
-    title: string,
-    taskId: string,
+    task: PullRequestTask & { readonly taskId: string, readonly title: string },
     ctx: RunCtx,
   ): Promise<number> {
     await this.ensureLabel(root, repo, ctx)
@@ -694,8 +693,8 @@ export class ForgePrBackend implements AgentBackend {
       // is correctly ignored — leaving the loop to wait for one that never comes.
       await this.forge(root, [
         'pr', 'edit', String(existing.number), '--repo', repoSlug(repo),
-        '--title', pullRequestTitle(taskId, title),
-        '--body', pullRequestBody(taskId, sha, this.options.reviewers, this.options.verdictSource),
+        '--title', pullRequestTitle(task.taskId, task.title),
+        '--body', pullRequestBody(task.taskId, sha, this.options.reviewers, this.options.verdictSource, task),
         '--add-label', DEVLOOP_LABEL,
       ], ctx)
       return existing.number
@@ -706,8 +705,8 @@ export class ForgePrBackend implements AgentBackend {
       '--head', branch,
       '--base', ctx.base ?? this.options.base,
       '--label', DEVLOOP_LABEL,
-      '--title', pullRequestTitle(taskId, title),
-      '--body', pullRequestBody(taskId, sha, this.options.reviewers, this.options.verdictSource),
+      '--title', pullRequestTitle(task.taskId, task.title),
+      '--body', pullRequestBody(task.taskId, sha, this.options.reviewers, this.options.verdictSource, task),
     ], ctx)
     const created = await this.findPullRequest(root, repo, branch, sha, ctx)
     if (created === null) throw new Error('forge_pr: pull request was created but cannot be found')
@@ -1008,12 +1007,32 @@ export function pullRequestTitle(taskId: string, title: string): string {
   return `DevLoop ${taskId}: ${title}`
 }
 
-export function pullRequestBody(taskId: string, sha: string, reviewers: readonly string[], source: ForgeOptions['verdictSource'] = 'reviews'): string {
+/** What the task asked for, as the reviewer should judge it: the contract, not the worker's account of it. */
+export interface PullRequestTask {
+  readonly acceptance: readonly string[]
+  readonly allowedPaths: readonly string[]
+}
+
+/** The contract in the body. Planner-written text: one line each, bounded, and no @mention that would ping anyone. */
+function taskSection(task: PullRequestTask | undefined): string[] {
+  if (task === undefined) return []
+  const line = (text: string) => text.replace(/\s+/g, ' ').trim().replace(/@/g, '@\u200b').slice(0, 300)
+  return [
+    '**Acceptance:**',
+    ...task.acceptance.slice(0, 20).map(item => `- ${line(item)}`),
+    '',
+    `**Allowed paths:** ${task.allowedPaths.slice(0, 20).map(path => `\`${line(path).replace(/`/g, '')}\``).join(', ')}`,
+    '',
+  ]
+}
+
+export function pullRequestBody(taskId: string, sha: string, reviewers: readonly string[], source: ForgeOptions['verdictSource'] = 'reviews', task?: PullRequestTask): string {
   const who = reviewers.map(login => `\`${login}\``).join(', ')
   if (source === 'reviews') {
     return [
       `DevLoop task \`${taskId}\` is ready for review at commit \`${sha}\`.`,
       '',
+      ...taskSection(task),
       'Decide with a GitHub review on this pull request: **Approve**, or **Request changes**',
       'with what to change in the review body, which is given to the worker for its next attempt.',
       '',
@@ -1028,6 +1047,7 @@ export function pullRequestBody(taskId: string, sha: string, reviewers: readonly
   return [
     `DevLoop task \`${taskId}\` is ready for review at commit \`${sha}\`.`,
     '',
+    ...taskSection(task),
     'Reply on this pull request with a comment containing exactly one envelope:',
     '',
     resultInstructions('review', taskId, sha),
