@@ -94,6 +94,28 @@ export interface DashboardAssets {
   readonly css: string
 }
 
+export interface FirstPass {
+  readonly tasks: number
+  readonly passed: number
+}
+
+/** Enough of the log to measure over many tasks, though the page lists only the latest lines. */
+const PR_LOG_RATE_WINDOW = 1_000
+
+/**
+ * The first-review pass rate: per task, whether the first review verdict the
+ * log holds for it was a pass. It measures what the mechanical checks and the
+ * split into small tasks are for — a change a reviewer accepts as it stands.
+ */
+export function firstPassRate(entries: readonly PrLogEntry[]): FirstPass {
+  const first = new Map<string, boolean>()
+  for (const entry of entries) {
+    if (entry.kind !== 'review' || first.has(entry.taskId)) continue
+    first.set(entry.taskId, entry.verdict === 'PASS' || entry.verdict === 'PASS_WITH_NOTES')
+  }
+  return { tasks: first.size, passed: [...first.values()].filter(Boolean).length }
+}
+
 export interface ProjectSummary {
   readonly id: string
   readonly name: string
@@ -148,6 +170,8 @@ export interface ProjectDetail extends ProjectSummary {
   readonly prLog: readonly PrLogEntry[]
   /** Which of the project's goals is current; 1 until a finished goal hands over. */
   readonly goalNumber: number
+  /** Of the tasks the PR log has a review for, how many passed their first one. */
+  readonly firstPass: FirstPass
   /** The current goal's release pull request, when the forge merges. */
   readonly release: Release | null
 }
@@ -275,6 +299,7 @@ async function readProject(
         planNote: await readHead(join(devloopDir(project.root), 'PLAN.md'), NOTE_MAX_BYTES),
         reviewNote: await readHead(join(devloopDir(project.root), 'REVIEW.md'), NOTE_MAX_BYTES),
         prLog: await readPrLog(project.root, PR_LOG_SHOWN),
+        firstPass: firstPassRate(await readPrLog(project.root, PR_LOG_RATE_WINDOW)),
         goalNumber: goalNumber(state),
         release: state.release ?? null,
       },
@@ -304,6 +329,7 @@ function emptyDetail(): Omit<ProjectDetail, keyof ProjectSummary> {
     reviewNote: null,
     prLog: [],
     goalNumber: 1,
+    firstPass: { tasks: 0, passed: 0 },
     release: null,
   }
 }

@@ -804,6 +804,9 @@ function prLogPanel(p) {
     el('div', { class: 'table-wrap' }, el('table', {},
       el('thead', {}, el('tr', {}, ['time', 'task', 'result', 'size', 'rules', 'version', 'commit'].map(h => el('th', {}, t(`prlog.col.${h}`))))),
       el('tbody', {}, rows))),
+    p.firstPass && p.firstPass.tasks > 0
+      ? el('p', {}, t('prlog.firstPass', { passed: p.firstPass.passed, tasks: p.firstPass.tasks, pct: Math.round(100 * p.firstPass.passed / p.firstPass.tasks) }))
+      : null,
     el('p', { class: 'note' }, t('prlog.note')))
 }
 
