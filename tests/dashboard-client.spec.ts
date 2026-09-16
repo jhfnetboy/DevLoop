@@ -192,8 +192,14 @@ function loadClient() {
   return { registration, opened }
 }
 
-/** Collect every slot registration the bundle makes, and the component for each. */
-function registrations() {
+/**
+ * Collect every slot registration the bundle makes, and the component for each.
+ *
+ * `services` answers `ctx.get`, which is how the bundle reads the client services
+ * it switches views through. Omitting one is the case a profile without it would
+ * see, and is what the launcher fallback is tested against.
+ */
+function registrations(services: Record<string, unknown> = {}) {
   const { registration, opened } = loadClient()
   const runtime = createHookRuntime()
   const face = registration.factory((s) => {
@@ -203,6 +209,7 @@ function registrations() {
   const calls: { kind: string; name: string; id?: string; order?: number; label?: string }[] = []
   const components = new Map<string, (props: Record<string, unknown>) => unknown>()
   face.apply({
+    get: (name: string) => services[name],
     slots: {
       inject: (name: string, cb: () => void) => { calls.push({ kind: 'inject', name }); return cb() },
       register: (o: { name: string; id?: string; order?: number; label?: string }, c: (props: Record<string, unknown>) => unknown) => {
@@ -289,7 +296,38 @@ describe('dashboard/client.js: the Harness client-module bundle', () => {
     expect(calls).toContainEqual({ kind: 'register', name: 'sidebar.footer.action', id: 'devloop-dashboard', order: 100, label: 'DevLoop' })
   })
 
-  it('opens the standalone dashboard from the sidebar button, in an app window', () => {
+  it('switches the conversation to the DevLoop view instead of opening a window', () => {
+    const activated: unknown[] = []
+    const { components, runtime, opened } = registrations({
+      sessions: { list: { getSnapshot: () => ({ current: 'session-1' }) } },
+      uiConversation: { binding: (id: unknown) => ({ activate: (view: unknown) => { activated.push([id, view]) } }) },
+    })
+
+    const button = components.get('sidebar.footer.action')!
+    const [first] = buttonsIn(runtime.render(button, { wide: true }))
+    expect(first.props['aria-label']).toBe('DevLoop')
+    ;(first.props.onClick as () => void)()
+
+    expect(activated).toEqual([['session-1', 'devloop']])
+    expect(opened).toEqual([])
+  })
+
+  it('falls back to the standalone page when there is no conversation to switch', () => {
+    const activated: unknown[] = []
+    const { components, runtime, opened } = registrations({
+      sessions: { list: { getSnapshot: () => ({}) } },
+      uiConversation: { binding: (id: unknown) => ({ activate: (view: unknown) => { activated.push([id, view]) } }) },
+    })
+
+    const button = components.get('sidebar.footer.action')!
+    const [first] = buttonsIn(runtime.render(button, { wide: false }))
+    ;(first.props.onClick as () => void)()
+
+    expect(activated).toEqual([])
+    expect(opened).toEqual([['/devloop/', '_blank', 'noopener,noreferrer']])
+  })
+
+  it('falls back to the standalone page on a profile without those services', () => {
     const { components, runtime, opened } = registrations()
     const button = components.get('sidebar.footer.action')!
     for (const wide of [true, false]) {

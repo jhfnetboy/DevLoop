@@ -1,21 +1,25 @@
 /**
- * The DevLoop client half: a page in the conversation's view area, plus the
- * sidebar button that opens the standalone dashboard.
+ * The DevLoop client half: a page in the conversation's view area, and a sidebar
+ * entry that leads to it.
  *
- * Two surfaces, because they answer different needs:
+ * Two registrations, one surface plus its door:
  *
  * - `conversation.view` — a tab beside Chat and Trajectory that renders the whole
- *   main area. This is the native surface: the projects and their loops, read
- *   from the same `/devloop/api/*` routes the standalone page uses. It cannot be
- *   an iframe of that page, because the page answers with `x-frame-options: DENY`
- *   and `frame-ancestors 'none'`; the view is real React against the same API.
- * - `sidebar.footer.action` — a button that opens `/devloop/` in an app window,
- *   for the parts of the standalone page this view does not cover (goal gates,
- *   registering a repository, cleanup).
+ *   main area: the projects and their loops, read from the same `/devloop/api/*`
+ *   routes the standalone page uses. It cannot be an iframe of that page, because
+ *   the page answers with `x-frame-options: DENY` and `frame-ancestors 'none'`;
+ *   the view is real React against the same API.
+ * - `sidebar.footer.action` — the entry that switches the conversation to that
+ *   tab, so the loops are one click away from anywhere in the app.
  *
- * The window rather than the system browser: the dashboard is a route on this
- * same Harness origin, and DSH Desktop's `isTrustedAppUrl` treats every
- * `127.0.0.1` / `localhost` URL as trusted, so it is allowed in-app.
+ * The standalone page keeps what the view does not cover — goal gates,
+ * registering a repository, cleanup — and is still reachable: from the link in
+ * the view's own header, and from the sidebar entry whenever there is no
+ * conversation to switch (a blank one renders no view area at all).
+ *
+ * That fallback opens a window rather than the system browser: the dashboard is a
+ * route on this same Harness origin, and DSH Desktop's `isTrustedAppUrl` treats
+ * every `127.0.0.1` / `localhost` URL as trusted, so it is allowed in-app.
  *
  * Plain browser JavaScript: the client module loader evaluates this verbatim, so
  * there is no TypeScript, no JSX, and no bundler in the path.
@@ -513,7 +517,42 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * Switch the conversation to the DevLoop view.
+     *
+     * A sidebar occupant is handed only `startSession` and `toggleSidebar`, so
+     * there is no slot-level way to do this. It goes through the Controller's own
+     * objects instead: `sessions.list` names the current Session, and
+     * `uiConversation.binding(id).activate(id)` is exactly what the app's own tab
+     * strip calls — so this switches the view the way a tab click does rather
+     * than inventing a second path to the same state.
+     *
+     * Both services are read optionally. A profile that has neither leaves the
+     * entry as the launcher it has always been.
+     *
+     * @returns whether the view was switched.
+     */
+    function activateDevloopView(ctx) {
+      const sessions = ctx.get('sessions')
+      const uiConversation = ctx.get('uiConversation')
+      if (sessions === undefined || uiConversation === undefined) return false
+      const sessionId = sessions.list?.getSnapshot?.().current
+      if (typeof sessionId !== 'string' || sessionId === '') return false
+      try {
+        uiConversation.binding(sessionId).activate(VIEW_ID)
+        return true
+      } catch {
+        return false
+      }
+    }
+
+    /**
      * The footer entry.
+     *
+     * Clicking it switches the conversation to the DevLoop view — the page is
+     * the surface, so the entry leads there rather than to a second window. The
+     * window is kept only as a fallback for the one case the view cannot serve:
+     * a blank conversation renders no view area at all, so with nothing to
+     * switch to, the standalone page stays reachable.
      *
      * `wide` is supplied by the sidebar's own `renderSlot` call and says whether
      * the sidebar is expanded, so this follows the rail without reading layout
@@ -522,69 +561,72 @@ window.__ModuleLoader__.load({
      * colour comes from the sidebar's own theme variables — so this needs no
      * stylesheet and follows both themes.
      */
-    function DevloopDashboardAction(props) {
-      const wide = props.wide === true
-      const [hover, setHover] = React.useState(false)
+    function createDashboardAction(ctx) {
+      return function DevloopDashboardAction(props) {
+        const wide = props.wide === true
+        const [hover, setHover] = React.useState(false)
 
-      const style = wide
-        ? {
-            boxSizing: 'border-box',
-            cursor: 'pointer',
-            border: '0.5px solid var(--dsw-alias-border-l3)',
-            background: hover
-              ? 'var(--dsw-alias-button-floating-hover)'
-              : 'var(--dsw-alias-button-elevated-fill)',
-            height: 28,
-            color: 'var(--dsw-alias-label-secondary)',
-            borderRadius: 999,
-            flex: 'none',
-            display: 'inline-flex',
-            justifyContent: 'center',
-            alignItems: 'center',
-            gap: 6,
-            padding: '0 10px',
-            font: 'inherit',
-            fontSize: 12,
-            lineHeight: '16px',
-            whiteSpace: 'nowrap',
-          }
-        : {
-            cursor: 'pointer',
-            width: 28,
-            height: 28,
-            color: 'var(--dsw-alias-label-secondary)',
-            background: hover ? 'var(--dsw-alias-interactive-bg-hover)' : 'transparent',
-            border: 'none',
-            borderRadius: 999,
-            flex: 'none',
-            display: 'inline-flex',
-            justifyContent: 'center',
-            alignItems: 'center',
-            padding: 0,
-          }
+        const style = wide
+          ? {
+              boxSizing: 'border-box',
+              cursor: 'pointer',
+              border: '0.5px solid var(--dsw-alias-border-l3)',
+              background: hover
+                ? 'var(--dsw-alias-button-floating-hover)'
+                : 'var(--dsw-alias-button-elevated-fill)',
+              height: 28,
+              color: 'var(--dsw-alias-label-secondary)',
+              borderRadius: 999,
+              flex: 'none',
+              display: 'inline-flex',
+              justifyContent: 'center',
+              alignItems: 'center',
+              gap: 6,
+              padding: '0 10px',
+              font: 'inherit',
+              fontSize: 12,
+              lineHeight: '16px',
+              whiteSpace: 'nowrap',
+            }
+          : {
+              cursor: 'pointer',
+              width: 28,
+              height: 28,
+              color: 'var(--dsw-alias-label-secondary)',
+              background: hover ? 'var(--dsw-alias-interactive-bg-hover)' : 'transparent',
+              border: 'none',
+              borderRadius: 999,
+              flex: 'none',
+              display: 'inline-flex',
+              justifyContent: 'center',
+              alignItems: 'center',
+              padding: 0,
+            }
 
-      return React.createElement(
-        'button',
-        {
-          type: 'button',
-          style,
-          title: 'DevLoop',
-          'aria-label': 'DevLoop',
-          onClick: () => {
-            window.open(DASHBOARD_PATH, '_blank', 'noopener,noreferrer')
+        return React.createElement(
+          'button',
+          {
+            type: 'button',
+            style,
+            title: 'DevLoop',
+            'aria-label': 'DevLoop',
+            onClick: () => {
+              if (activateDevloopView(ctx)) return
+              window.open(DASHBOARD_PATH, '_blank', 'noopener,noreferrer')
+            },
+            onMouseEnter: () => setHover(true),
+            onMouseLeave: () => setHover(false),
           },
-          onMouseEnter: () => setHover(true),
-          onMouseLeave: () => setHover(false),
-        },
-        React.createElement(LoopMark, { size: wide ? 14 : 16 }),
-        wide
-          ? React.createElement(
-              'span',
-              { style: { display: 'inline-block' } },
-              'DevLoop',
-            )
-          : null,
-      )
+          React.createElement(LoopMark, { size: wide ? 14 : 16 }),
+          wide
+            ? React.createElement(
+                'span',
+                { style: { display: 'inline-block' } },
+                'DevLoop',
+              )
+            : null,
+        )
+      }
     }
 
     const inject = ['slots']
@@ -616,7 +658,7 @@ window.__ModuleLoader__.load({
             order: 100,
             label: 'DevLoop',
           },
-          DevloopDashboardAction,
+          createDashboardAction(ctx),
         ),
       )
     }

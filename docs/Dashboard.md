@@ -117,9 +117,18 @@ The view adds no second read model and no second write path. It reads the same
 `/devloop/api/*` routes with same-origin `fetch`, so the cookie, the Host fence
 and the CSRF defence are the page's own; and its buttons are the same CLI verbs
 under the same state lock, each carrying the `revision` its row was rendered
-from, so a stale click is refused rather than applied to state nobody saw. What
-the view does not cover — goal gates, registering a repository, cleanup — stays
-on the page, which the sidebar button still opens.
+from, so a stale click is refused rather than applied to state nobody saw.
+
+The sidebar entry now leads to this view rather than to a window: clicking it
+switches the conversation to the DevLoop tab. A sidebar occupant is handed only
+`startSession` and `toggleSidebar`, so there is no slot-level way to do that —
+the entry reads `sessions.list` for the current Session and calls
+`uiConversation.binding(id).activate('devloop')`, which is the same call the
+app's own tab strip makes. The standalone window remains the fallback for the
+one case the view cannot serve: a blank conversation renders no view area, so
+there is nothing to switch to. What the view does not cover — goal gates,
+registering a repository, cleanup — stays on the page, reachable from the link
+in the view's header.
 
 ## Rules the dashboard does not bend
 
