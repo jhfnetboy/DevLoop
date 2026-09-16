@@ -335,6 +335,28 @@ async function readPlain(path: string, max: number): Promise<string | null> {
   }
 }
 
+/**
+ * The fix the trunk and detached-HEAD checks above point at: create a branch
+ * and switch to it. Refuses a name git could not use, or one that names the
+ * trunk itself — that would just recreate the problem it is meant to fix.
+ */
+export async function createWorkBranch(root: string, name: string): Promise<void> {
+  const trimmed = name.trim()
+  if (!isBranchName(trimmed)) throw new Error(`"${trimmed}" is not a usable branch name`)
+  const base = await baseBranch(root, await readPilotConfig(root))
+  if (trunkSet(base).has(trimmed.toLowerCase())) {
+    throw new Error(`"${trimmed}" is the trunk; name a work branch instead`)
+  }
+  try {
+    await hostGit(root, ['switch', '-c', trimmed])
+  } catch (error) {
+    const stderr = error instanceof Error && 'stderr' in error
+      ? String((error as { stderr?: string }).stderr).trim()
+      : ''
+    throw new Error(stderr.length > 0 ? `git switch failed: ${stderr}` : 'git switch failed', { cause: error })
+  }
+}
+
 export async function isToplevel(root: string): Promise<boolean> {
   try {
     const top = (await git(root, ['rev-parse', '--show-toplevel'])).trim()
