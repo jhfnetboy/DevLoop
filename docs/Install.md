@@ -15,6 +15,19 @@ dsh plugin --profile web add github:jhfnetboy/DevLoop
 - DeepSeek Harness CLI (`npm i -g @deepseek-ai/dsh`, or `pnpm dsh` from a harness checkout)
 - A profile you already boot (`dsh web`, or another named profile)
 
+## One install, not two
+
+This one package is everything: the loop and the `/devloop/` dashboard route,
+and — automatically, on a profile that renders a Harness chrome (a browser tab
+or DSH Desktop) — a sidebar button that opens the dashboard. Nothing to opt
+into and nothing to skip: a headless profile never composes a client bundle at
+all, so there is no second package and no decision to make either way.
+
+If a profile still has the standalone `dsh-devloop-ui` package from before this
+was folded in, remove it (`dsh plugin --profile web remove dsh-devloop-ui`):
+both register into the same `sidebar.footer.action` slot, so leaving both
+installed shows two DevLoop buttons rather than conflicting.
+
 ## GitHub git spec (runs `prepare`)
 
 After `v0.6.8` exists, pin the tag:
