@@ -300,7 +300,7 @@ const STRINGS = {
   'ready.pilot.okExternal': ['{file}: trunk {base}, planning declared outside the repository', '{file}：主干 {base}，规划声明在仓库外', '{file}: สาขาหลัก {base} แผนงานประกาศไว้นอกรีโพ'],
   'ready.plan.external': ['.pilot.yml declares planning outside the repository: the planner can only use GOAL.md and AGENTS.md / CLAUDE.md', '.pilot.yml 声明规划在仓库外：规划器只能参考 GOAL.md 和 AGENTS.md / CLAUDE.md', '.pilot.yml ประกาศว่าแผนงานอยู่นอกรีโพ: ตัววางแผนใช้ได้เพียง GOAL.md และ AGENTS.md / CLAUDE.md'],
   'ready.plan.found': ['The planner will read from {dir}/: {files}', '规划器会读 {dir}/ 里的：{files}', 'ตัววางแผนจะอ่านจาก {dir}/: {files}'],
-  'ready.plan.none': ['No planning documents in {dir}/. pilot plan writes them; without them the planner only has GOAL.md.', '{dir}/ 里没有规划文档。pilot plan 会写出它们；没有的话规划器只能看 GOAL.md。', 'ไม่มีเอกสารวางแผนใน {dir}/ pilot plan จะเขียนให้ ถ้าไม่มี ตัววางแผนจะมีเพียง GOAL.md'],
+  'ready.plan.none': ['No planning documents in {dir}/. Once started, DevLoop writes them as the first task, reviewed like any other; until then the planner only has GOAL.md.', '{dir}/ 里没有规划文档。一旦启动，DevLoop 会把写它们当作第一个任务，和其他任务一样走评审；启动前规划器只能看 GOAL.md。', 'ไม่มีเอกสารวางแผนใน {dir}/ เมื่อเริ่มแล้ว DevLoop จะเขียนเอกสารเหล่านี้เป็นงานแรก ผ่านการรีวิวเหมือนงานอื่น ก่อนหน้านั้นตัววางแผนจะมีเพียง GOAL.md'],
 
   // Why the server keeps a branch, leaves something to you, or refused a delete (src/cleanup.ts).
   'cleanup.current': ['current branch', '当前分支', 'สาขาปัจจุบัน'],

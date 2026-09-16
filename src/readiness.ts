@@ -104,7 +104,7 @@ export async function inspectReadiness(root: string): Promise<Readiness> {
     const found = await planningFiles(root, docsDir)
     checks.push(found.length > 0
       ? { id: 'plan', ok: true, blocking: false, code: 'plan.found', params: { dir: docsDir, files: found.join(', ') }, message: `规划器会读 ${docsDir}/ 里的：${found.join('、')}` }
-      : { id: 'plan', ok: false, blocking: false, code: 'plan.none', params: { dir: docsDir }, message: `${docsDir}/ 里没有规划文档。pilot plan 会写出它们；没有的话规划器只能看 GOAL.md。` })
+      : { id: 'plan', ok: false, blocking: false, code: 'plan.none', params: { dir: docsDir }, message: `${docsDir}/ 里没有规划文档。一旦启动，DevLoop 会把写它们当作第一个任务，和其他任务一样走评审；启动前规划器只能看 GOAL.md。` })
   }
 
   return { branch, base, docsDir, checks, ready: checks.every(check => check.ok || !check.blocking) }
