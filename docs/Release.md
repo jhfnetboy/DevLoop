@@ -17,7 +17,7 @@ install example for people who aren't building from source.
   the trunk itself, or a name already taken. New route:
   `POST /devloop/api/projects/<id>/branch`.
 - **npm install and a worked example in the README** ([#147](https://github.com/jhfnetboy/DevLoop/pull/147)).
-  A one-line `dsh plugin --profile web add @jhfnetboy/dsh-devloop@0.6.7`
+  A one-line `dsh plugin --profile web add @jhfnetboy/dsh-devloop@0.6.8`
   install, and a full `cordis.patch.yml` for the common setup this project
   runs in production: Codex plans, DeepSeek Flash implements, Claude Opus
   reviews locally, forge opens a PR per task.
