@@ -112,7 +112,7 @@ window.__ModuleLoader__.load({
           title: 'DevLoop',
           'aria-label': 'DevLoop',
           onClick: () => {
-            window.open(DASHBOARD_PATH, '_blank', 'noopener')
+            window.open(DASHBOARD_PATH, '_blank', 'noopener,noreferrer')
           },
           onMouseEnter: () => setHover(true),
           onMouseLeave: () => setHover(false),

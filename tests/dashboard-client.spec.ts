@@ -57,9 +57,7 @@ describe('dashboard/client.js: the Harness client-module bundle', () => {
       expect(button.type).toBe('button')
       expect(button.props['aria-label']).toBe('DevLoop')
       ;(button.props.onClick as () => void)()
-      const [path, target] = opened.at(-1) as [string, string]
-      expect(path).toBe('/devloop/')
-      expect(target).toBe('_blank')
+      expect(opened.at(-1)).toEqual(['/devloop/', '_blank', 'noopener,noreferrer'])
     }
   })
 })
