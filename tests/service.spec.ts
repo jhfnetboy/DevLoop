@@ -1340,8 +1340,24 @@ describe('saving a result while the state lock is busy', () => {
     await persistAgentTransition(root, { type: 'plan' }, planResult, undefined, log, 2_000)
     await holding
     const state = await loadState(root, Date.now())
-    expect(state.tasks.map(t => t.id)).toEqual(['T1'])
+    // 'plan-docs' first: `planned()` leaves docs/agent/ unwritten, so persistAgentTransition seeds it.
+    expect(state.tasks.map(t => t.id)).toEqual(['plan-docs', 'T1'])
     expect(await readFile(join(root, '.devloop', 'EVENTS.jsonl'), 'utf8')).toContain('"action":"result:plan"')
+  })
+
+  it('seeds the planning-docs task from the real GOAL.md, and skips it once docs/agent/ has one', async () => {
+    const seeded = await planned('devloop-result-seed-')
+    await persistAgentTransition(seeded, { type: 'plan' }, planResult, undefined, log, 2_000)
+    const seededState = await loadState(seeded, Date.now())
+    expect(seededState.tasks[0]).toMatchObject({ id: 'plan-docs', tier: 'T2', risk: 'low', allowedPaths: ['docs/agent/**'] })
+    expect(seededState.tasks[0]?.acceptance.join(' ')).toContain('# Goal')
+
+    const skipped = await planned('devloop-result-skip-')
+    await mkdir(join(skipped, 'docs', 'agent'), { recursive: true })
+    await writeFile(join(skipped, 'docs', 'agent', 'roadmap.md'), '# Roadmap\n', 'utf8')
+    await persistAgentTransition(skipped, { type: 'plan' }, planResult, undefined, log, 2_000)
+    const skippedState = await loadState(skipped, Date.now())
+    expect(skippedState.tasks.map(t => t.id)).toEqual(['T1'])
   })
 
   it('gives up at its deadline rather than waiting forever', async () => {

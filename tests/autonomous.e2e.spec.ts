@@ -72,6 +72,10 @@ describe('autonomous 0.3 composition', () => {
     await initWorkRepo(root)
     await mkdir(join(root, '.devloop'))
     await writeFile(join(root, '.devloop', 'GOAL.md'), '# Goal\n\nAdd generated module.\n', 'utf8')
+    // Planning docs already exist: this fixture is about the plan→delegate→review→merge round trip,
+    // not the seeded plan-docs task (covered in transition.spec.ts and service.spec.ts).
+    await mkdir(join(root, 'docs', 'agent'), { recursive: true })
+    await writeFile(join(root, 'docs', 'agent', 'roadmap.md'), '# Roadmap\n', 'utf8')
     const backend = new ScriptedFactoryBackend()
     const service = new DevloopService(new Context(), resolveConfig({
       root,
