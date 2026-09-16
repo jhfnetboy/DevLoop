@@ -318,6 +318,63 @@ Git installs run `prepare` → `pnpm build`, so the published entry is `lib/`.
 
 ## Install into DSH
 
+Most people install the published package — no build toolchain needed:
+
+```bash
+dsh plugin --profile web add @jhfnetboy/dsh-devloop@0.6.7
+```
+
+The git-source forms below (pinned tag, or a local checkout) are for building
+from source instead.
+
+### The common setup: Codex plans, DeepSeek implements, Claude reviews, then a PR
+
+One example that answers "I have a DeepSeek key, and Claude Code and Codex on
+PATH — how do I actually use this?" Store the DeepSeek key once, in DSH's own
+credential file, never in a config file or a launchd plist:
+
+```yaml
+# ~/.dsh/.credentials.yaml (mode 600)
+version: 1
+refs:
+  DEEPSEEK_API_KEY: "sk-…"
+```
+
+Then the profile patch — Codex plans, the cheap DeepSeek V4.1 Flash tiers do
+the implementing, Claude reviews each task's commit locally first, and only a
+change Claude already passed becomes a GitHub pull request. Point `forge.reviewers`
+at a person, or at an always-on reviewer like PR-daemon, and it decides with an
+ordinary GitHub review; DevLoop merges once it approves:
+
+```yaml
+# ~/.dsh/profiles/web/cordis.patch.yml
+- id: devloop
+  config:
+    root: /path/to/your/project
+    agentBackend: routed
+    plannerRoute:  { tier: T3, backend: codex, model: gpt-5.4 }
+    reviewerRoute: { tier: T3, backend: forge, model: pull-request }
+    routing:
+      T0: { tier: T0, backend: dsh, model: deepseek-flash }
+      T1: { tier: T1, backend: dsh, model: deepseek-flash }
+      T2: { tier: T2, backend: dsh, model: deepseek-flash }
+      T3: { tier: T3, backend: dsh, model: deepseek-flash }
+    forge:
+      pushUrl: git@github.com:you/your-repo.git
+      base: main                 # trunk: where the release pull request goes
+      reviewers: [some-login]    # a person, or a review bot's account
+      localReview: { tier: T3, backend: claude, model: opus }
+```
+
+Requires `codex` and `claude` authenticated on PATH, and `gh` authenticated
+against a remote that accepts the push. Restart, arm, and start exactly as in
+[Quick start](#quick-start) above, then check `devloop status`. Every task
+becomes its own pull request; [One pull request per task](#one-pull-request-per-task-reviewed-and-merged-on-github)
+below has the mechanics (work branch, release pull request, what a rejected
+review does to the next attempt).
+
+### From source (git tag, or a local checkout)
+
 Pinned GitHub tag (needs git tag `v0.6.7`; until then `github:jhfnetboy/DevLoop`). Git install runs `prepare` → `pnpm build`. pnpm ≥10 may ignore that build and still exit 0 — if it prints `Ignored build scripts`, approve `@jhfnetboy/dsh-devloop` (`onlyBuiltDependencies` on pnpm 10.1–10.25, `allowBuilds` on ≥10.26, or `pnpm approve-builds`) and re-run `add` (not `pnpm rebuild`), even when `add` succeeded:
 
 Quote the spec: zsh treats `#` as a glob (`no matches found`).
