@@ -68,6 +68,36 @@ describe('agent result transitions', () => {
     })).toThrow(/result_task_mismatch.*plan-docs/)
   })
 
+  it('gives the seeded task the same goal-number prefix as everything else the planner returned', () => {
+    const state = {
+      ...emptyState(0),
+      goal: { number: 2, startedAt: '2026-09-13T08:00:00.000Z' },
+      lastAction: { type: 'plan' as const },
+    }
+    const result = {
+      version: 1 as const, kind: 'plan' as const,
+      tasks: [{ id: 'T-1', title: 'Do it', tier: 'T1' as const, risk: 'low' as const, allowedPaths: ['src/**'], acceptance: ['ok'] }],
+    }
+    const next = applyAgentResult(state, { type: 'plan' }, result, {
+      agent: 'codex/planner',
+      seedPlanningDocsTask: { docsDir: 'docs/agent', goalText: 'Ship the thing' },
+    })
+    expect(next.tasks.map(task => task.id)).toEqual(['g2-plan-docs', 'g2-T-1'])
+  })
+
+  it('bounds the goal text folded into the seeded task, rather than an unbounded GOAL.md', () => {
+    const state = { ...emptyState(0), lastAction: { type: 'plan' as const } }
+    const result = { version: 1 as const, kind: 'plan' as const, tasks: [] }
+    const huge = 'x'.repeat(20_000)
+    const next = applyAgentResult(state, { type: 'plan' }, result, {
+      agent: 'codex/planner',
+      seedPlanningDocsTask: { docsDir: 'docs/agent', goalText: huge },
+    })
+    const acceptance = next.tasks[0]?.acceptance.join(' ') ?? ''
+    expect(acceptance.length).toBeLessThan(huge.length)
+    expect(acceptance).toContain('first 8192 characters')
+  })
+
   it('moves a completed implementation to SHA-bound review', () => {
     const sha = 'a'.repeat(40)
     const state = {
