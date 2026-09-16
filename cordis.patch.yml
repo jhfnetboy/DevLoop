@@ -1,6 +1,13 @@
 # Bundle patch applied when the plugin is installed through `dsh plugin add`.
 # Zero required config: `root` defaults to process.cwd(). Override in the
 # profile's own cordis.patch.yml if the workspace is not the DSH cwd.
+#
+# One Loader row does double duty: it is what runs the loop/dashboard on the
+# host side, and it is what makes dsh-client-modules find this package's own
+# `dsh.client` declaration and compose dashboard/client.js for any profile
+# that has a web-platform chrome (a browser tab or DSH Desktop) to put it in.
+# A headless profile never composes a client bundle at all, so nothing here
+# needs to check for one — there is no second package to install either way.
 - insert:
     - id: devloop
       # Quoted: a plain YAML scalar may not start with `@`, which is reserved.
