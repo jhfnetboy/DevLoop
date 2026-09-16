@@ -1,8 +1,26 @@
-# Release 0.6.7
+# Release 0.6.8
 
-Bounded autonomous engineering loop: structured model results, deterministic state transitions, host-enforced write scope, SHA-bound independent review, durable recovery, and role/tier routing. Tag `v0.6.7` and the GitHub Release are created **after** this commit is on `main`; steps: [Deploy.md](./Deploy.md).
+Bounded autonomous engineering loop: structured model results, deterministic state transitions, host-enforced write scope, SHA-bound independent review, durable recovery, and role/tier routing. Tag `v0.6.8` and the GitHub Release are created **after** this commit is on `main`; steps: [Deploy.md](./Deploy.md).
 
-Package version: **0.6.7**. This document is the release note, not a second semver.
+Package version: **0.6.8**. This document is the release note, not a second semver.
+
+## New in 0.6.8
+
+A one-click fix for the readiness panel's most common block, and a worked
+install example for people who aren't building from source.
+
+- **Create and switch to a work branch from the page** ([#146](https://github.com/jhfnetboy/DevLoop/pull/146)).
+  When the readiness panel blocks on `trunk.onTrunk` or `branch.detached`, it
+  now shows a name field and a button next to the failing check. It runs the
+  same `git switch -c` the check already names, refuses once the project is
+  armed (pausing the loop is what that's for), and refuses an unusable name,
+  the trunk itself, or a name already taken. New route:
+  `POST /devloop/api/projects/<id>/branch`.
+- **npm install and a worked example in the README** ([#147](https://github.com/jhfnetboy/DevLoop/pull/147)).
+  A one-line `dsh plugin --profile web add @jhfnetboy/dsh-devloop@0.6.7`
+  install, and a full `cordis.patch.yml` for the common setup this project
+  runs in production: Codex plans, DeepSeek Flash implements, Claude Opus
+  reviews locally, forge opens a PR per task.
 
 ## New in 0.6.7
 
