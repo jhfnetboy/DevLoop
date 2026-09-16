@@ -96,6 +96,31 @@ has. It is mounted with `ctx.inject(['webServer', 'connection'], …)`, so the
 loop itself still starts in `tui` and `headless` profiles, and the page appears
 only where there is a browser to show it.
 
+### The view beside the page
+
+The page is no longer the only surface. `dashboard/client.js` also registers a
+`conversation.view` occupant: a **DevLoop** tab beside Chat and Trajectory that
+renders the whole main view area, so the loops are readable without leaving the
+app.
+
+This does not reopen the decision above, and it does not bring back the cost
+that decision was avoiding. There is still no build step: `dashboard/client.js`
+is plain browser JavaScript that DSH's client module loader evaluates verbatim —
+no tsdown, no JSX, no bundler, and no dependency beyond `react`. It is the same
+file that already ships the sidebar button. The panel the paragraph above
+rejects was a *sidebar panel*, which is the wrong shape for a list of many
+projects; `conversation.view` is not a panel. It is the main view area — the
+surface the app's own Chat and Trajectory tabs occupy — and it is registered the
+way those are, through `ctx.slots.inject('conversation.view', …)`.
+
+The view adds no second read model and no second write path. It reads the same
+`/devloop/api/*` routes with same-origin `fetch`, so the cookie, the Host fence
+and the CSRF defence are the page's own; and its buttons are the same CLI verbs
+under the same state lock, each carrying the `revision` its row was rendered
+from, so a stale click is refused rather than applied to state nobody saw. What
+the view does not cover — goal gates, registering a repository, cleanup — stays
+on the page, which the sidebar button still opens.
+
 ## Rules the dashboard does not bend
 
 - **Every request is authenticated.** `requestRejection` runs before routing,
