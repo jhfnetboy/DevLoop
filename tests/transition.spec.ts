@@ -31,6 +31,43 @@ describe('agent result transitions', () => {
     expect(() => applyAgentResult(third, { type: 'plan' }, plan('T'.repeat(62)), {})).toThrow(/result_task_mismatch/)
   })
 
+  it('prepends a host-authored planning-docs task when the readiness check found none', () => {
+    const state = { ...emptyState(0), lastAction: { type: 'plan' as const } }
+    const result = {
+      version: 1 as const, kind: 'plan' as const,
+      tasks: [{ id: 'T-1', title: 'Do it', tier: 'T1' as const, risk: 'low' as const, allowedPaths: ['src/**'], acceptance: ['ok'] }],
+    }
+    const next = applyAgentResult(state, { type: 'plan' }, result, {
+      agent: 'codex/planner',
+      seedPlanningDocsTask: { docsDir: 'docs/agent', goalText: 'Ship the thing' },
+    })
+    expect(next.tasks).toHaveLength(2)
+    expect(next.tasks[0]).toMatchObject({
+      id: 'plan-docs', status: 'ready', tier: 'T2', risk: 'low', allowedPaths: ['docs/agent/**'],
+    })
+    expect(next.tasks[0]?.acceptance.join(' ')).toContain('Ship the thing')
+    expect(next.tasks[1]?.id).toBe('T-1')
+  })
+
+  it('does not seed a planning-docs task when the option is absent (documents already exist)', () => {
+    const state = { ...emptyState(0), lastAction: { type: 'plan' as const } }
+    const result = { version: 1 as const, kind: 'plan' as const, tasks: [{ id: 'T-1', title: 'Do it', tier: 'T1' as const, risk: 'low' as const, allowedPaths: ['src/**'], acceptance: ['ok'] }] }
+    const next = applyAgentResult(state, { type: 'plan' }, result, { agent: 'codex/planner' })
+    expect(next.tasks.map(task => task.id)).toEqual(['T-1'])
+  })
+
+  it('refuses a plan that reuses the reserved id instead of silently merging with the seed', () => {
+    const state = { ...emptyState(0), lastAction: { type: 'plan' as const } }
+    const result = {
+      version: 1 as const, kind: 'plan' as const,
+      tasks: [{ id: 'plan-docs', title: 'Something else', tier: 'T1' as const, risk: 'low' as const, allowedPaths: ['src/**'], acceptance: ['ok'] }],
+    }
+    expect(() => applyAgentResult(state, { type: 'plan' }, result, {
+      agent: 'codex/planner',
+      seedPlanningDocsTask: { docsDir: 'docs/agent', goalText: 'Ship the thing' },
+    })).toThrow(/result_task_mismatch.*plan-docs/)
+  })
+
   it('moves a completed implementation to SHA-bound review', () => {
     const sha = 'a'.repeat(40)
     const state = {

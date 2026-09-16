@@ -1,5 +1,5 @@
 import { realpathSync } from 'node:fs'
-import { constants, lstat, open, rename, unlink } from 'node:fs/promises'
+import { constants, lstat, open, readFile, rename, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { clearInterval, setInterval } from 'node:timers'
 import { Service, type Context } from '@deepseek-ai/cordis'
@@ -23,13 +23,13 @@ import { appendPrLog, checkEntry } from './prlog.js'
 import { ForgePrBackend } from './forge.js'
 import { DshHeadlessBackend } from './dsh.js'
 import { CordisHarnessHost, HarnessSubagentBackend } from './harness.js'
-import { DEVLOOP_DIR, loadState, MAX_RELEASE_CHANGES, saveState, withStateLock, workspaceArmed, writeBudgetSnapshot, type LockResult } from './persist.js'
+import { DEVLOOP_DIR, goalPath, loadState, MAX_RELEASE_CHANGES, saveState, withStateLock, workspaceArmed, writeBudgetSnapshot, type LockResult } from './persist.js'
 import { writeProgress } from './progress.js'
 import { applyRunSignals, refundAction, rollCostWindows } from './budget.js'
 import { runTick, type TickResult } from './tick.js'
 import { mountDashboard, type LoopPresence } from './dashboard.js'
 import { browseRoot, dshHome, listProjects } from './projects.js'
-import { currentBranch, trunkBranches } from './readiness.js'
+import { currentBranch, readPlanningDocuments, trunkBranches } from './readiness.js'
 import type { BudgetUsage, HoldReason, LoopState, Release } from './types.js'
 import { RUNNER_REAP_MS } from './spawn.js'
 import { applyAgentResult } from './transition.js'
@@ -1130,6 +1130,21 @@ export function elasticSummary(check: PreprResult): string {
 }
 
 /**
+ * Whether the plan just dispatched should have its first task be "write the
+ * planning documents", and what to seed it with. Read once, outside the
+ * retry loop below: nothing here changes while a busy lock is retried, and
+ * the check this mirrors — `readiness.ts`'s `plan.none` — is the same one the
+ * readiness panel already shows the operator before a loop starts.
+ */
+async function planningDocsSeed(root: string): Promise<{ docsDir: string, goalText: string } | undefined> {
+  const { docsDir, documents } = await readPlanningDocuments(root)
+  if (documents.length > 0) return undefined
+  const goalText = await readFile(goalPath(root), 'utf8').catch(() => '')
+  if (goalText.trim() === '') return undefined
+  return { docsDir, goalText }
+}
+
+/**
  * Fold a validated result into STATE. A busy lock used to drop the result after
  * one try, and the loop halted on no_progress 15 minutes later — a resume then
  * paid for the same run again. The page's actions hold this lock only briefly,
@@ -1143,6 +1158,7 @@ export async function persistAgentTransition(
   log: { error(message: string, ...rest: unknown[]): void },
   deadlineMs = RESULT_LOCK_DEADLINE_MS,
 ): Promise<void> {
+  const seedPlanningDocsTask = action.type === 'plan' ? await planningDocsSeed(root) : undefined
   const fold = () => withStateLock(root, async () => {
     const now = Date.now()
     const current = await loadState(root, now)
@@ -1150,6 +1166,7 @@ export async function persistAgentTransition(
     const next = {
       ...applyAgentResult(current, action, dispatched.outcome, {
         agent: dispatched.agent ?? 'unknown',
+        ...(seedPlanningDocsTask === undefined ? {} : { seedPlanningDocsTask }),
         ...(commit === undefined ? {} : { implementationSha: commit.sha, overBudget: commit.overBudget, mechanicalRework: commit.mechanicalRework }),
       }),
       updatedAt: new Date(now).toISOString(),
