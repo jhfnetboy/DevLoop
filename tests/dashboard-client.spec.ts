@@ -183,6 +183,14 @@ function textareaIn(tree: unknown): Element | undefined {
   return found
 }
 
+/** One `role="tab"` button as the view tab strip publishes it. */
+function tab(label: string, clicked: string[]) {
+  return {
+    textContent: label,
+    click: () => { clicked.push(label) },
+  }
+}
+
 function loadClient() {
   let registration: { id: string; factory: (require: (s: string) => unknown) => { apply: (ctx: unknown) => void; inject: string[] } } | undefined
   const opened: unknown[][] = []
@@ -296,49 +304,42 @@ describe('dashboard/client.js: the Harness client-module bundle', () => {
     expect(calls).toContainEqual({ kind: 'register', name: 'sidebar.footer.action', id: 'devloop-dashboard', order: 100, label: 'DevLoop' })
   })
 
-  it('switches the conversation to the DevLoop view instead of opening a window', () => {
-    const activated: unknown[] = []
-    const { components, runtime, opened } = registrations({
-      sessions: { list: { getSnapshot: () => ({ current: 'session-1' }) } },
-      uiConversation: { binding: (id: unknown) => ({ activate: (view: unknown) => { activated.push([id, view]) } }) },
+  it('presses the DevLoop tab instead of opening a window', () => {
+    const clicked: string[] = []
+    vi.stubGlobal('document', {
+      querySelectorAll: () => [
+        tab('Chat', clicked),
+        tab('Trajectory', clicked),
+        tab('DevLoop', clicked),
+      ],
     })
 
-    const button = components.get('sidebar.footer.action')!
-    const [first] = buttonsIn(runtime.render(button, { wide: true }))
+    const { components, runtime, opened } = registrations()
+    const [first] = buttonsIn(runtime.render(components.get('sidebar.footer.action')!, { wide: true }))
     expect(first.props['aria-label']).toBe('DevLoop')
     ;(first.props.onClick as () => void)()
 
-    expect(activated).toEqual([['session-1', 'devloop']])
+    expect(clicked).toEqual(['DevLoop'])
     expect(opened).toEqual([])
   })
 
-  it('falls back to the standalone page when there is no conversation to switch', () => {
-    const activated: unknown[] = []
-    const { components, runtime, opened } = registrations({
-      sessions: { list: { getSnapshot: () => ({}) } },
-      uiConversation: { binding: (id: unknown) => ({ activate: (view: unknown) => { activated.push([id, view]) } }) },
-    })
+  it('opens the standalone page when there is no tab to press', () => {
+    // A blank conversation renders no view area and a profile without the view
+    // has no tab, so the page is the only thing left to offer.
+    vi.stubGlobal('document', { querySelectorAll: () => [tab('Chat', []), tab('Trajectory', [])] })
 
-    const button = components.get('sidebar.footer.action')!
-    const [first] = buttonsIn(runtime.render(button, { wide: false }))
+    const { components, runtime, opened } = registrations()
+    const [first] = buttonsIn(runtime.render(components.get('sidebar.footer.action')!, { wide: false }))
     ;(first.props.onClick as () => void)()
 
-    expect(activated).toEqual([])
     expect(opened).toEqual([['/devloop/', '_blank', 'noopener,noreferrer']])
   })
 
-  it('falls back to the standalone page on a profile without those services', () => {
+  it('opens the standalone page where there is no document at all', () => {
     const { components, runtime, opened } = registrations()
-    const button = components.get('sidebar.footer.action')!
-    for (const wide of [true, false]) {
-      const [first] = buttonsIn(runtime.render(button, { wide }))
-      expect(first.props['aria-label']).toBe('DevLoop')
-      ;(first.props.onClick as () => void)()
-    }
-    expect(opened).toEqual([
-      ['/devloop/', '_blank', 'noopener,noreferrer'],
-      ['/devloop/', '_blank', 'noopener,noreferrer'],
-    ])
+    const [first] = buttonsIn(runtime.render(components.get('sidebar.footer.action')!, { wide: false }))
+    ;(first.props.onClick as () => void)()
+    expect(opened).toEqual([['/devloop/', '_blank', 'noopener,noreferrer']])
   })
 })
 

@@ -119,16 +119,33 @@ and the CSRF defence are the page's own; and its buttons are the same CLI verbs
 under the same state lock, each carrying the `revision` its row was rendered
 from, so a stale click is refused rather than applied to state nobody saw.
 
-The sidebar entry now leads to this view rather than to a window: clicking it
-switches the conversation to the DevLoop tab. A sidebar occupant is handed only
-`startSession` and `toggleSidebar`, so there is no slot-level way to do that —
-the entry reads `sessions.list` for the current Session and calls
-`uiConversation.binding(id).activate('devloop')`, which is the same call the
-app's own tab strip makes. The standalone window remains the fallback for the
-one case the view cannot serve: a blank conversation renders no view area, so
-there is nothing to switch to. What the view does not cover — goal gates,
-registering a repository, cleanup — stays on the page, reachable from the link
-in the view's header.
+The sidebar entry leads to this view: clicking it switches the conversation to
+the DevLoop tab. Reaching that took a step worth recording, because the obvious
+route does not work.
+
+There is no slot-level way to select a view from outside the conversation. The
+rendered view is the conversation store's `view` field — `ConversationSession`
+renders `only: resolveActiveView(tabs, useStore((s) => s.view)).id` — and only
+`selectView`/`openView` set it. Both are injected by `conversation.session`'s own
+registration, and the slot catalogue is explicit about what that leaves everyone
+else: an occupant of a slot outside that subtree receives **no owner-specific
+values**, and a sidebar occupant is handed only `startSession` and
+`toggleSidebar`. `uiConversation.binding(id).activate(id)` reads like the missing
+piece and is not — it activates an assembler target for activity tracking and
+leaves `view` untouched, so the window closes and the tab does not move.
+`ctx.conversation` exposes no view selection, and the conversation store handle is
+private to `@deepseek-ai/dsh-client-ui-conversation`.
+
+So the entry presses the tab, which is what an operator's click does. It is
+addressed through the accessible contract the tab strip publishes — a
+`role="tablist"` holding `role="tab"` buttons labelled with each view's registered
+label — and not through any styling class, so it is the same interaction under a
+stable name. It fails closed: with no such tab (a blank conversation, whose view
+area renders nothing, or a profile where the view is not registered) the entry
+opens the standalone page instead, which keeps what the view does not cover — goal
+gates, registering a repository, cleanup. The view's own header links there too,
+and each is reachable when the other is not: the view exists only while a
+conversation with content is open.
 
 ## Rules the dashboard does not bend
 
