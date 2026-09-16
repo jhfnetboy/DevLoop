@@ -8,13 +8,23 @@ import { describe, expect, it } from 'vitest'
 import { createDashboardHandler } from '../src/dashboard.ts'
 import { emptyState, saveState, withStateLock } from '../src/persist.ts'
 import { projectId, registryPath } from '../src/projects.ts'
-import { initWorkRepo, makeTask, mkdtempInRepo } from './helpers.ts'
+import { initGitRepo, initWorkRepo, makeTask, mkdtempInRepo } from './helpers.ts'
 
 const git = (root: string, ...args: string[]) => promisify(execFile)('git', ['-C', root, ...args])
+
+async function setupOnTrunk(prefix: string) {
+  const root = await realpath(await mkdtempInRepo(prefix))
+  await initGitRepo(root)
+  return setupFor(root)
+}
 
 async function setup(prefix: string) {
   const root = await realpath(await mkdtempInRepo(prefix))
   await initWorkRepo(root)
+  return setupFor(root)
+}
+
+async function setupFor(root: string) {
   const home = await mkdtemp(join(tmpdir(), 'status-home-'))
   await mkdir(join(home, 'devloop'))
   await writeFile(registryPath(home), JSON.stringify({ projects: [{ root }] }), 'utf8')
@@ -23,10 +33,10 @@ async function setup(prefix: string) {
     ownRoot: home, home, presence: () => 'running', requestRejection: () => undefined, assets: { html: '', js: '', css: '' },
     logError: (_message, error) => { logged.push(error) },
   })
-  const call = async (method: string, path: string, body?: unknown, type = 'application/json') => {
+  const call = async (method: string, path: string, body?: unknown, type = 'application/json', id = projectId(root)) => {
     const out = { status: 0, body: '' }
     const payload = body === undefined ? '' : JSON.stringify(body)
-    const req = { method, url: `/devloop/api/projects/${projectId(root)}${path}`, headers: { 'content-type': type }, async *[Symbol.asyncIterator]() { if (payload) yield Buffer.from(payload) } }
+    const req = { method, url: `/devloop/api/projects/${id}${path}`, headers: { 'content-type': type }, async *[Symbol.asyncIterator]() { if (payload) yield Buffer.from(payload) } }
     const res = { setHeader() {}, writeHead(s: number) { out.status = s }, end(t?: string) { out.body = t ?? '' } }
     await handler(req as unknown as IncomingMessage, res as unknown as ServerResponse)
     let parsed: { value?: any, error?: { code: string } } = {}
@@ -122,5 +132,40 @@ describe('status and cleanup routes', () => {
     const loop = await withStateLock(root, async () => 'got it')
     expect(loop).toEqual({ ok: true, value: 'got it' }) // a loop saving a result is not refused
     expect((await cleaning).json.value.deleted).toHaveLength(150)
+  })
+})
+
+describe('the branch route: the readiness panel\'s one-click fix', () => {
+  it('switches a trunk checkout, refuses once armed, and passes through the git refusal for a taken name', async () => {
+    const { root, call } = await setupOnTrunk('route-branch-')
+    const on = await call('POST', '/branch', { name: 'devloop/feature' })
+    expect(on.status).toBe(200)
+    expect(on.json.value).toEqual({ name: 'devloop/feature' })
+    expect((await git(root, 'branch', '--show-current')).stdout.trim()).toBe('devloop/feature')
+
+    // Armed: this is no longer the moment to move the primary checkout.
+    await mkdir(join(root, '.devloop'))
+    await writeFile(join(root, '.devloop', 'GOAL.md'), '# g\n', 'utf8')
+    const armed = await call('POST', '/branch', { name: 'devloop/other' })
+    expect(armed.status).toBe(422)
+    expect((await git(root, 'branch', '--show-current')).stdout.trim()).toBe('devloop/feature') // untouched
+
+    const { root: fresh, call: freshCall } = await setupOnTrunk('route-branch-taken-')
+    await git(fresh, 'branch', 'devloop/taken')
+    const taken = await freshCall('POST', '/branch', { name: 'devloop/taken' })
+    expect(taken.status).toBe(422)
+    expect(taken.json.error?.message).toMatch(/git switch failed/)
+  })
+
+  it('refuses an empty or missing name before touching git, and any method but POST', async () => {
+    const { call } = await setupOnTrunk('route-branch-bad-')
+    expect((await call('POST', '/branch', { name: '' })).status).toBe(400)
+    expect((await call('POST', '/branch', {})).status).toBe(400)
+    expect((await call('GET', '/branch')).status).toBe(405)
+  })
+
+  it('refuses a project id nothing is registered under', async () => {
+    const { call } = await setupOnTrunk('route-branch-missing-')
+    expect((await call('POST', '/branch', { name: 'devloop/work' }, 'application/json', '0'.repeat(12))).status).toBe(404)
   })
 })

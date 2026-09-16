@@ -285,15 +285,33 @@ function addProjectPanel() {
 }
 
 // Blocking checks refuse a start (the server refuses it too); the rest advise.
-function readinessPanel(r) {
+function readinessPanel(p) {
+  const r = p.readiness
   if (!r) return el('div', { class: 'banner bad' }, t('start.unreadable', { recheck: t('start.recheck') }))
+  // The one blocking check a branch switch actually fixes; clean.dirty needs a commit or a stash instead.
+  const fixable = r.checks.find(c => !c.ok && c.blocking && (c.id === 'trunk' || c.id === 'branch'))
   return el('div', { class: 'readiness' },
     el('div', { class: 'readiness-head' },
       r.ready ? badge(t('start.ready'), 'ok') : badge(t('start.fixRed'), 'bad'),
       el('span', { class: 'muted' }, t('start.trunk', { base: r.base }))),
     el('ul', { class: 'checks' }, r.checks.map(c => el('li', { class: c.ok ? 'ok' : c.blocking ? 'bad' : 'warn' },
       el('span', { class: 'mark' }, c.ok ? '✓' : c.blocking ? '✕' : '!'),
-      el('span', { class: 'msg' }, serverText('ready', c.code, c.params, c.message))))))
+      el('span', { class: 'msg' }, serverText('ready', c.code, c.params, c.message))))),
+    fixable ? branchFix(p) : null)
+}
+
+// The one-click fix for a trunk or detached-HEAD block: create a branch and switch to it.
+function branchFix(p) {
+  const input = el('input', { class: 'path-input branch-name', type: 'text', value: 'devloop/work' })
+  const create = actionButton(t('branch.button'), '', t('branch.confirm'), async () => {
+    const name = input.value.trim()
+    if (!name) throw new Error(t('branch.emptyName'))
+    await postJson(`${API}/projects/${p.id}/branch`, { name })
+    return { text: t('branch.done', { name }) }
+  })
+  return el('div', { class: 'branch-fix' },
+    el('p', { class: 'note' }, t('branch.note')),
+    el('div', { class: 'actions' }, input, create))
 }
 
 // A server finding in the reader's language when the page knows its code; the server's own words otherwise.
@@ -324,7 +342,7 @@ function startPanel(p) {
   return el('section', { class: 'panel start' },
     el('h3', {}, t('start.title')),
     el('p', {}, t('start.intro')),
-    readinessPanel(p.readiness),
+    readinessPanel(p),
     forge.node,
     area,
     el('div', { class: 'actions' }, start, recheck),
@@ -351,7 +369,7 @@ function nextGoalBox(p) {
   return el('div', { class: 'next-goal' },
     el('h4', {}, t('next.title', { n: (p.goalNumber || 1) + 1 })),
     pending ? el('p', { class: 'note' }, t('next.releasePending', { number: p.release.number })) : null,
-    readinessPanel(p.readiness),
+    readinessPanel(p),
     forge.node,
     area,
     el('div', { class: 'actions' }, start),

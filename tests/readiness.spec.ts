@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { describe, expect, it } from 'vitest'
 import { headlessPrompt, PLAN_CONTEXT } from '../src/dsh.ts'
-import { inspectReadiness, parsePilotConfig, protectedPrefixes, readinessRefusal } from '../src/readiness.ts'
+import { createWorkBranch, inspectReadiness, parsePilotConfig, protectedPrefixes, readinessRefusal } from '../src/readiness.ts'
 import { initGitRepo, mkdtempInRepo } from './helpers.ts'
 
 const execFileAsync = promisify(execFile)
@@ -165,6 +165,32 @@ describe('readiness to start a loop', () => {
     const r = await inspectReadiness(root)
     expect(check(r, 'pilot')?.ok).toBe(false)
     expect(r.base).toBe('main')
+  })
+})
+
+describe('createWorkBranch', () => {
+  it('fixes the exact two blocking checks it exists for: on the trunk, and detached', async () => {
+    const onTrunk = await repoOn(null, 'branch-trunk-')
+    await createWorkBranch(onTrunk, 'devloop/feature')
+    expect((await git(onTrunk, 'branch', '--show-current')).stdout.trim()).toBe('devloop/feature')
+    expect(check(await inspectReadiness(onTrunk), 'trunk')?.ok).toBe(true)
+
+    const detached = await repoOn(null, 'branch-detached-')
+    await git(detached, 'checkout', '-q', '--detach')
+    await createWorkBranch(detached, 'devloop/other')
+    expect((await git(detached, 'branch', '--show-current')).stdout.trim()).toBe('devloop/other')
+    expect(check(await inspectReadiness(detached), 'branch')?.ok).toBe(true)
+  })
+
+  it('refuses a name git could not use, the trunk itself, and one already taken', async () => {
+    const root = await repoOn(null, 'branch-refuse-')
+    await expect(createWorkBranch(root, '')).rejects.toThrow(/not a usable branch name/)
+    await expect(createWorkBranch(root, '-x')).rejects.toThrow(/not a usable branch name/)
+    await expect(createWorkBranch(root, 'main')).rejects.toThrow(/is the trunk/)
+    await git(root, 'branch', 'devloop/taken')
+    await expect(createWorkBranch(root, 'devloop/taken')).rejects.toThrow(/git switch failed/)
+    // None of the refusals moved the checkout off main.
+    expect((await git(root, 'branch', '--show-current')).stdout.trim()).toBe('main')
   })
 })
 

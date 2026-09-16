@@ -28,7 +28,7 @@ import {
   validateProjectRoot,
   type Project,
 } from './projects.js'
-import { inspectReadiness, readinessRefusal, readPlanningDocuments, type PlanningDocument, type Readiness } from './readiness.js'
+import { createWorkBranch, inspectReadiness, readinessRefusal, readPlanningDocuments, type PlanningDocument, type Readiness } from './readiness.js'
 import { diagnoseHalt, type HaltDetail } from './resume.js'
 import { confirmedBranches, runCleanup, statusView, UnreadableStateError } from './status-routes.js'
 import type { LoopState, Release, Task } from './types.js'
@@ -496,6 +496,7 @@ export function createDashboardHandler(deps: DashboardDeps): (req: IncomingMessa
       }
       const verb = action[2] as DashboardVerb | ProjectVerb
       if (verb === 'cleanup') return cleanup(req, res, deps, action[1] as string)
+      if (verb === 'branch') return createBranch(req, res, deps, action[1] as string)
       if (verb === 'start' || verb === 'next' || verb === 'unregister') return manage(req, res, deps, action[1] as string, verb)
       return act(req, res, deps, now, action[1] as string, verb)
     }
@@ -552,9 +553,9 @@ export function createDashboardHandler(deps: DashboardDeps): (req: IncomingMessa
 }
 
 /** What the page can do to the set of projects, as opposed to one loop's state. */
-export type ProjectVerb = 'start' | 'next' | 'unregister' | 'cleanup'
+export type ProjectVerb = 'start' | 'next' | 'unregister' | 'cleanup' | 'branch'
 
-const ACTION_ROUTE = new RegExp(`^${DASHBOARD_PATH}/api/projects/([0-9a-f]{12})/(answer|resume|pause|start|next|unregister|cleanup)$`)
+const ACTION_ROUTE = new RegExp(`^${DASHBOARD_PATH}/api/projects/([0-9a-f]{12})/(answer|resume|pause|start|next|unregister|cleanup|branch)$`)
 const MAX_BODY_BYTES = 4 * 1024
 /** A goal is the one body that carries prose. */
 const MAX_GOAL_BODY_BYTES = MAX_GOAL_BYTES + 4 * 1024
@@ -646,6 +647,29 @@ async function browse(req: IncomingMessage, res: ServerResponse, deps: Dashboard
   } catch (error) {
     if (error instanceof ProjectError) return fail(422, 'refused', error.message)
     return fail(500, 'internal', messageOf(error))
+  }
+}
+
+/**
+ * The one-click fix for the readiness panel's trunk / detached-HEAD block:
+ * switch the primary checkout to a new branch. Refused once the project is
+ * armed — a loop that may be running is not the moment to move its checkout;
+ * that is what pause is for.
+ */
+async function createBranch(req: IncomingMessage, res: ServerResponse, deps: DashboardDeps, id: string): Promise<void> {
+  const fail: Fail = (status, code, message) => json(res, req, status, { ok: false, error: { code, message } })
+  const body = await writeBody(req, fail)
+  if (body === null) return
+  if (typeof body.name !== 'string' || body.name.trim() === '') return fail(400, 'bad-request', 'name must be non-empty text')
+  const project = findProject(await listProjects(deps.ownRoot, deps.home), id)
+  if (!project) return fail(404, 'not-found', 'no such project')
+  if (await workspaceArmed(project.root)) return fail(422, 'refused', 'this project is already armed; pause the loop before moving its checkout')
+  try {
+    await createWorkBranch(project.root, body.name)
+    return json(res, req, 200, { ok: true, value: { name: body.name.trim() } })
+  } catch (error) {
+    deps.logError?.('[dsh-devloop] branch creation failed', error)
+    return fail(422, 'refused', messageOf(error))
   }
 }
 
