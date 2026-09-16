@@ -1,0 +1,22 @@
+# .pilot.yml — 放仓库根目录。pilot 各阶段读它取分支/清理策略。
+# 脚本不解析 YAML；由 skill 用 Read 读取后作为 flag 传给脚本，保持确定简单。
+
+base_branch: main            # 主干，受保护，禁止直推/直合
+integration_branch: preview  # PR 合并进这里；若该分支不存在则回退到 base_branch
+protect_patterns:            # 额外保护的分支前缀（如 release/1.2 会被 release 护住）
+  - release
+  - hotfix
+remote: origin
+# allow_remote_cleanup 已废弃 —— 脚本不再删远程分支，没有任何代码读这个键。
+# 远程 head 分支请用 GitHub 的 auto-delete-on-merge（仓库设置里开），它在合并真正
+# 发生的那一侧判定；从 clone 里判断要靠可能过期的 remote-tracking ref，而且 bare
+# 仓库不留 reflog，是所有删除里唯一完全没有后悔药的。
+docs_dir: docs/agent         # 规划/运行态文档目录
+
+# 规划在哪里。docs（默认）= 起跑门禁检查 docs_dir 下那七个文件；
+# external = 规划在别处（backlog.md / issue tracker / 任何工具），门禁【不做任何检查】直接放行。
+# external 是一句人做的担保，不是脚本核实的结论 —— 门禁会明确打印「NOTHING WAS CHECKED」，
+# 汇报时必须照实转述，不能说成「规划已验证」。
+planning_source: docs
+
+# PR 的裁决由外部评审服务给出，pilot 只负责盯状态（契约见 reference/review-contract.md）
