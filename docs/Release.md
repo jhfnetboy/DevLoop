@@ -1,8 +1,27 @@
-# Release 0.6.8
+# Release 0.6.9
 
-Bounded autonomous engineering loop: structured model results, deterministic state transitions, host-enforced write scope, SHA-bound independent review, durable recovery, and role/tier routing. Tag `v0.6.8` and the GitHub Release are created **after** this commit is on `main`; steps: [Deploy.md](./Deploy.md).
+Bounded autonomous engineering loop: structured model results, deterministic state transitions, host-enforced write scope, SHA-bound independent review, durable recovery, and role/tier routing. Tag `v0.6.9` and the GitHub Release are created **after** this commit is on `main`; steps: [Deploy.md](./Deploy.md).
 
-Package version: **0.6.8**. This document is the release note, not a second semver.
+Package version: **0.6.9**. This document is the release note, not a second semver.
+
+## New in 0.6.9
+
+A native sidebar entry for DSH Desktop and the browser, and the loop writing
+its own planning documents instead of pointing at a skill it cannot invoke.
+
+- **A sidebar button, composed from this one package** ([#149](https://github.com/jhfnetboy/DevLoop/pull/149)).
+  On a profile with a Harness chrome (a browser tab or DSH Desktop), an icon
+  in the sidebar footer opens `/devloop/` in a new window — no second package
+  to install, no decision to make. A headless profile never composes a client
+  bundle at all. Ported from `jhfnetboy/dsh-devloop-ui`, the standalone
+  package that verified this was feasible before folding it in.
+- **Writing the planning documents is the goal's first reviewed task** ([#150](https://github.com/jhfnetboy/DevLoop/pull/150), [#152](https://github.com/jhfnetboy/DevLoop/pull/152)).
+  The readiness panel used to point at `pilot plan` for missing planning
+  documents — a skill this loop's headless CLI-spawn architecture cannot
+  invoke. When `docs/agent/` (or `.pilot.yml`'s configured directory) is
+  empty, the host now prepends a real task — "write the planning documents",
+  reviewed and merged through the normal worktree pipeline like any other —
+  before the planner's own tasks. Nothing writes docs unreviewed.
 
 ## New in 0.6.8
 
