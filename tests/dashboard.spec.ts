@@ -165,6 +165,18 @@ describe('dashboard projects', () => {
     for (const project of projects) expect(project.id).toMatch(/^[0-9a-f]{12}$/)
   })
 
+  it('reports what the process is dispatching for a project, read from the loop rather than STATE', async () => {
+    const own = await armedProject('dash-active-')
+    const active = { taskId: 't1', type: 'delegate' as const, startedAt: 12_345, worktreeRoot: '/wt/t1' }
+    const withDispatch = createDashboardHandler(deps({ ownRoot: own, home: own, activeDispatch: () => active }))
+    const dispatching = JSON.parse((await call(withDispatch, 'GET', '/devloop/api/projects')).body) as { value: { projects: Array<{ active: unknown }> } }
+    expect(dispatching.value.projects[0]?.active).toEqual(active)
+
+    const withoutDispatch = createDashboardHandler(deps({ ownRoot: own, home: own }))
+    const idle = JSON.parse((await call(withoutDispatch, 'GET', '/devloop/api/projects')).body) as { value: { projects: Array<{ active: unknown }> } }
+    expect(idle.value.projects[0]?.active).toBeNull()
+  })
+
   it('cannot be pointed at a directory nobody registered', async () => {
     const own = await armedProject('dash-trav-')
     const handler = createDashboardHandler(deps({ ownRoot: own, home: own }))

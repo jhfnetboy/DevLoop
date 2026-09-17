@@ -51,6 +51,19 @@ export const DASHBOARD_PATH = '/devloop'
 /** How this process's own loop is doing, as far as the page can tell. */
 export type LoopPresence = 'running' | 'stopped' | 'elsewhere'
 
+/**
+ * What a loop is dispatching right now, read from the in-memory `ProjectLoop`
+ * that runs it — never from STATE, which only knows about a finished
+ * transition. Null once nothing is in flight, or for a project this process
+ * does not run (`LoopPresence` answers that half).
+ */
+export interface ActiveDispatch {
+  readonly taskId: string | null
+  readonly type: 'plan' | 'delegate' | 'review'
+  readonly startedAt: number
+  readonly worktreeRoot: string | null
+}
+
 /** How the page reaches the process that runs the loops. */
 export interface ProjectControl {
   /** A root was just registered: start its loop. */
@@ -74,6 +87,8 @@ export interface DashboardDeps {
   readonly home: string
   /** Whether this process is ticking a loop for that project right now. */
   readonly presence: (root: string, own: boolean) => LoopPresence
+  /** What this process's loop for that project is dispatching right now, or null. Absent means the same as null. */
+  readonly activeDispatch?: (root: string) => ActiveDispatch | null
   /** Present where the process can run projects besides its own root. */
   readonly control?: ProjectControl
   /** The one directory the add-project picker may list below; absent, it lists nothing. */
@@ -151,6 +166,8 @@ export interface ProjectSummary {
   /** The home page's column for it, and since when. */
   readonly lane: AttentionLane
   readonly since: string | null
+  /** What this process is dispatching for it right now, elsewhere or idle otherwise. */
+  readonly active: ActiveDispatch | null
 }
 
 export interface ProjectDetail extends ProjectSummary {
@@ -207,11 +224,11 @@ const PR_LOG_SHOWN = 50
 const EVENTS_TAIL_BYTES = 512 * 1024
 const EVENTS_SHOWN = 40
 
-export async function summarizeProject(project: Project, deps: Pick<DashboardDeps, 'presence'>, now: number): Promise<ProjectSummary> {
+export async function summarizeProject(project: Project, deps: Pick<DashboardDeps, 'presence' | 'activeDispatch'>, now: number): Promise<ProjectSummary> {
   return (await readProject(project, deps, now, false)).summary
 }
 
-export async function describeProject(project: Project, deps: Pick<DashboardDeps, 'presence' | 'forgeMerges'>, now: number): Promise<ProjectDetail> {
+export async function describeProject(project: Project, deps: Pick<DashboardDeps, 'presence' | 'activeDispatch' | 'forgeMerges'>, now: number): Promise<ProjectDetail> {
   const { summary, extra } = await readProject(project, deps, now, true)
   const forgeMerges = deps.forgeMerges === true
   const unconfirmed = forgeMerges && !project.own && project.pushUrl === null
@@ -232,7 +249,7 @@ export async function describeProject(project: Project, deps: Pick<DashboardDeps
 
 async function readProject(
   project: Project,
-  deps: Pick<DashboardDeps, 'presence'>,
+  deps: Pick<DashboardDeps, 'presence' | 'activeDispatch'>,
   now: number,
   full: boolean,
 ): Promise<{ summary: ProjectSummary, extra: Omit<ProjectDetail, keyof ProjectSummary> | null }> {
@@ -262,6 +279,7 @@ async function readProject(
     error: null,
     lane: 'idle',
     since: null,
+    active: deps.activeDispatch?.(project.root) ?? null,
   }
   const placed = (summary: ProjectSummary, state: LoopState | null, holdReason: string | null = null): ProjectSummary => ({
     ...summary,
