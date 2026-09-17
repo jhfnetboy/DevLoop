@@ -255,6 +255,7 @@ function project(overrides: Record<string, unknown> = {}) {
     lane: 'idle',
     since: null,
     active: null,
+    gate: null,
     ...overrides,
   }
 }
@@ -421,6 +422,43 @@ describe('the DevLoop page', () => {
 
     const tree = await settle({}, (t) => textOf(t).includes('nan-project'))
     expect(textOf(tree)).not.toContain('running')
+  })
+
+  it('answers a gate with the revision the row was rendered from, and shows evidence and options', async () => {
+    const gate = {
+      reason: 'empty_task',
+      taskId: 't1',
+      question: 'The task branch has no commits, but review passed it. Did it need any change?',
+      evidence: ['task t1 is still at the commit it started from', 'a review verdict of PASS is recorded against it'],
+      options: [
+        { key: 'retry', summary: 'run the worker on the task again, in its existing worktree', impact: { spends: true, discards: false } },
+        { key: 'accept', summary: 'agree the task needed no change and mark it done', impact: { spends: false, discards: false } },
+      ],
+      manual: null,
+      recommended: 'retry',
+      key: 'empty_task',
+      vars: {},
+    }
+    const calls = stubFetch(() => envelope({
+      projects: [project({ id: 'aaaa11112222', name: 'blocked-project', armed: true, halted: true, revision: 4, question: gate.question, gate })],
+      global: { costUsdDay: 0, cap: null },
+    }))
+
+    const tree = await settle({}, (t) => textOf(t).includes('blocked-project'))
+    const text = textOf(tree)
+    expect(text).toContain(gate.question)
+    expect(text).toContain('task t1 is still at the commit it started from')
+
+    const retry = buttonsIn(tree).find((b) => b.label === 'Retry')
+    expect(retry).toBeDefined()
+    ;(retry!.props.onClick as () => void)()
+
+    await vi.waitFor(() => { expect(calls.some((c) => c.method === 'POST')).toBe(true) })
+    expect(calls.find((c) => c.method === 'POST')).toEqual({
+      url: '/devloop/api/projects/aaaa11112222/answer',
+      method: 'POST',
+      body: { revision: 4, choice: 'retry' },
+    })
   })
 
   it('sends pause with the revision the row was rendered from', async () => {

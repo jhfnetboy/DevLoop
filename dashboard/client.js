@@ -296,6 +296,51 @@ window.__ModuleLoader__.load({
       return parts.length === 0 ? null : parts.join(' · ')
     }
 
+    const GATE_OPTION_LABEL = { retry: 'Retry', review: 'Send to review', accept: 'Accept', stop: 'Leave halted' }
+
+    /**
+     * A blocked halt, restated as a question with buttons — the same `Gate`
+     * `gate.ts` builds for the CLI and the standalone page, read verbatim: no
+     * i18n system here, and `question`/`evidence`/`options[].summary` are
+     * already plain English, not template keys.
+     */
+    function GatePanel(props) {
+      const project = props.project
+      const gate = project.gate
+      const busy = props.busy
+      const idle = busy !== null
+      const evidence = Array.isArray(gate.evidence) ? gate.evidence : []
+      const options = Array.isArray(gate.options) ? gate.options : []
+      return React.createElement(
+        'div',
+        { style: STYLES.banner },
+        React.createElement('div', { style: { fontWeight: 600 } }, gate.question),
+        evidence.length > 0
+          ? React.createElement(
+              'ul',
+              { style: { margin: '4px 0', paddingLeft: 18, fontSize: 12 } },
+              evidence.map((line, index) => React.createElement('li', { key: index }, String(line))),
+            )
+          : null,
+        options.length > 0
+          ? React.createElement(
+              'div',
+              { style: { ...STYLES.row, marginTop: 6 } },
+              options.map((option) => React.createElement(Button, {
+                key: option.key,
+                tone: option.key === gate.recommended ? 'primary' : undefined,
+                disabled: idle,
+                title: option.summary,
+                onClick: () => props.onAnswer(project, option.key),
+              }, idle && busy === project.id ? '…' : (GATE_OPTION_LABEL[option.key] || option.key))),
+            )
+          : null,
+        gate.manual
+          ? React.createElement('div', { style: { marginTop: 6, fontSize: 12 } }, String(gate.manual))
+          : null,
+      )
+    }
+
     function ProjectCard(props) {
       const project = props.project
       const busy = props.busy
@@ -341,7 +386,11 @@ window.__ModuleLoader__.load({
       if (project.error !== null && project.error !== undefined) {
         children.push(React.createElement('div', { key: 'error', style: STYLES.banner }, String(project.error)))
       }
-      if (project.question !== null && project.question !== undefined) {
+      if (project.gate !== null && project.gate !== undefined) {
+        children.push(React.createElement(GatePanel, { key: 'gate', project, busy, onAnswer: props.onAnswer }))
+      } else if (project.question !== null && project.question !== undefined) {
+        // Defensive only: the host always sends a gate alongside a question, but a card
+        // must still say something rather than nothing if an older host omits it.
         children.push(React.createElement('div', { key: 'question', style: STYLES.banner },
           'Waiting on you: ', String(project.question)))
       }
@@ -455,6 +504,14 @@ window.__ModuleLoader__.load({
         void act(project, 'start', { goal })
       }, [act])
 
+      const onAnswer = React.useCallback((project, choice) => {
+        if (typeof project.revision !== 'number') {
+          setFailure(`${project.name} has no readable revision, so nothing was sent.`)
+          return
+        }
+        void act(project, 'answer', { revision: project.revision, choice })
+      }, [act])
+
       const projects = snapshot.projects
       const spent = snapshot.global !== null && typeof snapshot.global === 'object' ? money(snapshot.global.costUsdDay) : null
       const cap = snapshot.global !== null && typeof snapshot.global === 'object' ? money(snapshot.global.cap) : null
@@ -519,6 +576,7 @@ window.__ModuleLoader__.load({
             focused: focus !== null && project.id === focus,
             onVerb,
             onStart,
+            onAnswer,
           })),
         ))
       }

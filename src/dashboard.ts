@@ -168,13 +168,19 @@ export interface ProjectSummary {
   readonly since: string | null
   /** What this process is dispatching for it right now, elsewhere or idle otherwise. */
   readonly active: ActiveDispatch | null
+  /**
+   * The blocked-halt question in full, already computed on this same read for
+   * `question`/`haltDetails` above — free to also expose on the list, not
+   * just the per-project detail, so a card can answer it without a second
+   * fetch.
+   */
+  readonly gate: Gate | null
 }
 
 export interface ProjectDetail extends ProjectSummary {
   readonly goal: string | null
   readonly progress: string | null
   readonly tasks: readonly TaskView[]
-  readonly gate: Gate | null
   readonly supervisor: LoopState['supervisor']
   readonly killSwitch: boolean | null
   readonly acknowledged: LoopState['acknowledged'] | null
@@ -280,6 +286,7 @@ async function readProject(
     lane: 'idle',
     since: null,
     active: deps.activeDispatch?.(project.root) ?? null,
+    gate: null,
   }
   const placed = (summary: ProjectSummary, state: LoopState | null, holdReason: string | null = null): ProjectSummary => ({
     ...summary,
@@ -312,6 +319,7 @@ async function readProject(
       haltReasons: diagnosis.reasons,
       haltDetails: diagnosis.details,
       question: gate?.question ?? null,
+      gate: gate ?? null,
       taskCounts: countByStatus(state.tasks),
       costUsdSession: state.usage.costUsdSession,
       costUsdDay: state.usage.costUsdDay,
@@ -325,7 +333,6 @@ async function readProject(
         goal: await readHead(goalPath(project.root), GOAL_MAX_BYTES),
         progress: await readHead(join(devloopDir(project.root), PROGRESS_FILE), PROGRESS_MAX_BYTES),
         tasks: state.tasks.map(taskView),
-        gate,
         supervisor: state.supervisor,
         killSwitch: state.killSwitch,
         acknowledged: state.acknowledged ?? null,
@@ -358,7 +365,6 @@ function emptyDetail(): Omit<ProjectDetail, keyof ProjectSummary> {
     goal: null,
     progress: null,
     tasks: [],
-    gate: null,
     supervisor: null,
     killSwitch: null,
     acknowledged: null,
