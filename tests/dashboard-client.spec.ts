@@ -254,6 +254,7 @@ function project(overrides: Record<string, unknown> = {}) {
     error: null,
     lane: 'idle',
     since: null,
+    active: null,
     ...overrides,
   }
 }
@@ -394,6 +395,32 @@ describe('the DevLoop page', () => {
     expect(text).toContain('Running')
     expect(text).toContain('Not started')
     expect(calls[0]).toEqual({ url: '/devloop/api/projects', method: 'GET', body: undefined })
+  })
+
+  it('shows how long the current dispatch has been running, and nothing when idle', async () => {
+    stubFetch(() => envelope({
+      projects: [
+        project({ id: 'aaaa11112222', name: 'busy-project', armed: true, active: { taskId: 't1', type: 'delegate', startedAt: Date.now() - 65_000, worktreeRoot: '/wt/t1' } }),
+        project({ id: 'bbbb33334444', name: 'idle-project' }),
+      ],
+      global: { costUsdDay: 0, cap: null },
+    }))
+
+    const tree = await settle({}, (t) => textOf(t).includes('busy-project'))
+    const text = textOf(tree)
+    expect(text).toContain('running 1m')
+    // Only busy-project carries `active`: the chip appears exactly once, not once per row.
+    expect(text.match(/running \d/g)).toHaveLength(1)
+  })
+
+  it('does not render a chip, or throw, for an unusable startedAt', async () => {
+    stubFetch(() => envelope({
+      projects: [project({ name: 'nan-project', armed: true, active: { taskId: 't1', type: 'delegate', startedAt: Number.NaN, worktreeRoot: null } })],
+      global: { costUsdDay: 0, cap: null },
+    }))
+
+    const tree = await settle({}, (t) => textOf(t).includes('nan-project'))
+    expect(textOf(tree)).not.toContain('running')
   })
 
   it('sends pause with the revision the row was rendered from', async () => {

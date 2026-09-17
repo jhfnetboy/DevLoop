@@ -55,6 +55,7 @@ const STRINGS = {
   'dur.h': ['{n} h', '{n} 小时', '{n} ชั่วโมง'],
   'dur.d': ['{n} d', '{n} 天', '{n} วัน'],
   'ago': ['{d} ago', '{d}前', '{d}ที่แล้ว'],
+  'active.running': ['Running {d}', '已运行 {d}', 'ทำงานมา {d}'],
 
   // Task and loop states.
   'status.ready': ['Ready', '待开始', 'พร้อมเริ่ม'],
