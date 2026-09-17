@@ -1,8 +1,29 @@
-# Release 0.6.9
+# Release 0.6.10
 
-Bounded autonomous engineering loop: structured model results, deterministic state transitions, host-enforced write scope, SHA-bound independent review, durable recovery, and role/tier routing. Tag `v0.6.9` and the GitHub Release are created **after** this commit is on `main`; steps: [Deploy.md](./Deploy.md).
+Bounded autonomous engineering loop: structured model results, deterministic state transitions, host-enforced write scope, SHA-bound independent review, durable recovery, and role/tier routing. Tag `v0.6.10` and the GitHub Release are created **after** this commit is on `main`; steps: [Deploy.md](./Deploy.md).
 
-Package version: **0.6.9**. This document is the release note, not a second semver.
+Package version: **0.6.10**. This document is the release note, not a second semver.
+
+## New in 0.6.10
+
+A native DevLoop view in the app itself, and elapsed time on whatever task
+is running right now.
+
+- **A DevLoop tab beside Chat and Trajectory** ([#154](https://github.com/jhfnetboy/DevLoop/pull/154)).
+  The sidebar button only ever opened `/devloop/` in a window — DevLoop lived
+  beside the app, never in it. This renders the whole main view area instead:
+  every project with its lane, today's spend, task counts and halt reasons in
+  the loop's own words, Pause/Resume, and arming an unarmed root with a typed
+  goal. Same routes, same auth, same revision-guarded writes as the standalone
+  page; no new endpoint. The page itself remains, reachable from the sidebar
+  button, for what the view does not cover (goal gates, registering a
+  repository, cleanup).
+- **Elapsed time on the task in progress** ([#155](https://github.com/jhfnetboy/DevLoop/pull/155), [#156](https://github.com/jhfnetboy/DevLoop/pull/156)).
+  Until now the dashboard only showed the last *completed* transition;
+  nothing said how long the current one had been running. Each `ProjectLoop`
+  now tracks what it is dispatching, in memory, while a backend call is in
+  flight, and both surfaces (the standalone page and the new DevLoop tab) show
+  it as a "running Xm" chip, on the same 5-second refresh they already had.
 
 ## New in 0.6.9
 
