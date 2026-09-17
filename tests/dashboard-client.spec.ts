@@ -461,6 +461,26 @@ describe('the DevLoop page', () => {
     })
   })
 
+  it('sends nothing when the row has no readable revision, for a gate answer same as for pause', async () => {
+    const gate = {
+      reason: 'empty_task', taskId: 't1', question: 'Needs an answer', evidence: [],
+      options: [{ key: 'retry', summary: 'x', impact: { spends: true, discards: false } }],
+      manual: null, recommended: 'retry', key: 'empty_task', vars: {},
+    }
+    const calls = stubFetch(() => envelope({
+      projects: [project({ id: 'aaaa11112222', name: 'unreadable-gate', armed: true, halted: true, revision: null, question: gate.question, gate })],
+      global: { costUsdDay: 0, cap: null },
+    }))
+
+    const tree = await settle({}, (t) => textOf(t).includes('unreadable-gate'))
+    const retry = buttonsIn(tree).find((b) => b.label === 'Retry')!
+    ;(retry.props.onClick as () => void)()
+
+    const after = runtime.render(view, {})
+    expect(textOf(after)).toContain('no readable revision')
+    expect(calls.filter((c) => c.method === 'POST')).toEqual([])
+  })
+
   it('sends pause with the revision the row was rendered from', async () => {
     const calls = stubFetch(() => envelope({
       projects: [project({ name: 'armed-project', armed: true, revision: 7, loop: 'running' })],
