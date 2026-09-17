@@ -280,7 +280,7 @@ window.__ModuleLoader__.load({
 
     /** `active.startedAt` is this process's own clock, read at the same poll as `now` — good enough for a chip, not a stopwatch. */
     function runningFor(active) {
-      if (active === null || typeof active !== 'object' || typeof active.startedAt !== 'number') return null
+      if (active === null || typeof active !== 'object' || !Number.isFinite(active.startedAt)) return null
       const s = Math.max(0, Math.round((Date.now() - active.startedAt) / 1000))
       const d = s < 60 ? `${String(s)}s` : s < 3600 ? `${String(Math.round(s / 60))}m` : `${String(Math.round(s / 3600))}h`
       return `running ${d}`

@@ -413,6 +413,16 @@ describe('the DevLoop page', () => {
     expect(text.match(/running \d/g)).toHaveLength(1)
   })
 
+  it('does not render a chip, or throw, for an unusable startedAt', async () => {
+    stubFetch(() => envelope({
+      projects: [project({ name: 'nan-project', armed: true, active: { taskId: 't1', type: 'delegate', startedAt: Number.NaN, worktreeRoot: null } })],
+      global: { costUsdDay: 0, cap: null },
+    }))
+
+    const tree = await settle({}, (t) => textOf(t).includes('nan-project'))
+    expect(textOf(tree)).not.toContain('running')
+  })
+
   it('sends pause with the revision the row was rendered from', async () => {
     const calls = stubFetch(() => envelope({
       projects: [project({ name: 'armed-project', armed: true, revision: 7, loop: 'running' })],

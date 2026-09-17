@@ -61,9 +61,9 @@ function ago(iso) {
 // `active.startedAt` is an epoch millisecond, not the ISO strings `since` otherwise reads;
 // converting once here keeps every duration on the same wording/threshold rules.
 function runningFor(active) {
-  if (!active || typeof active.startedAt !== 'number') return ''
+  if (!active || !Number.isFinite(active.startedAt)) return null
   const d = since(new Date(active.startedAt).toISOString())
-  return d ? t('active.running', { d }) : ''
+  return d ? t('active.running', { d }) : null
 }
 
 function usd(n) {
@@ -143,12 +143,13 @@ function nextStep(p) {
 function projectCard(p) {
   const total = Object.values(p.taskCounts || {}).reduce((a, b) => a + b, 0)
   const next = nextStep(p)
+  const running = runningFor(p.active)
   return el('a', { class: 'card', href: `#/p/${p.id}` },
     el('h2', {}, p.name, p.own ? el('span', { class: 'muted' }, t('card.own')) : null),
     el('div', { class: 'path' }, p.root),
     el('div', { class: 'row' }, loopBadges(p)),
     next ? el('div', { class: 'next' }, next) : null,
-    p.active ? el('div', { class: 'muted' }, runningFor(p.active)) : null,
+    running ? el('div', { class: 'muted' }, running) : null,
     p.question ? el('div', { class: 'question' }, p.question) : null,
     p.since && p.lane !== 'running' && since(p.since) ? el('div', { class: 'muted since' }, p.lane === 'done' ? t('since.done', { ago: ago(p.since) }) : t('since.waiting', { d: since(p.since) })) : null,
     p.error ? el('div', { class: 'question' }, p.error) : null,
@@ -864,7 +865,8 @@ function renderProject(p) {
       () => postJson(`${API}/projects/${p.id}/pause`, { revision: p.revision })) : null,
     removeButton(p))
   const sub = el('div', { class: 'path' }, p.root)
-  const running = p.active ? el('div', { class: 'muted' }, runningFor(p.active)) : null
+  const runningText = runningFor(p.active)
+  const running = runningText ? el('div', { class: 'muted' }, runningText) : null
   if (p.error) return [back(), head, sub, el('div', { class: 'banner bad' }, p.error)]
   if (!p.armed) return [back(), head, sub, flashNode(), startPanel(p), repoPanel(p), docsPanel(p)]
   const main = [running, gatePanel(p), haltPanel(p), tasksPanel(p), docsPanel(p)]
