@@ -96,6 +96,57 @@ has. It is mounted with `ctx.inject(['webServer', 'connection'], …)`, so the
 loop itself still starts in `tui` and `headless` profiles, and the page appears
 only where there is a browser to show it.
 
+### The view beside the page
+
+The page is no longer the only surface. `dashboard/client.js` also registers a
+`conversation.view` occupant: a **DevLoop** tab beside Chat and Trajectory that
+renders the whole main view area, so the loops are readable without leaving the
+app.
+
+This does not reopen the decision above, and it does not bring back the cost
+that decision was avoiding. There is still no build step: `dashboard/client.js`
+is plain browser JavaScript that DSH's client module loader evaluates verbatim —
+no tsdown, no JSX, no bundler, and no dependency beyond `react`. It is the same
+file that already ships the sidebar button. The panel the paragraph above
+rejects was a *sidebar panel*, which is the wrong shape for a list of many
+projects; `conversation.view` is not a panel. It is the main view area — the
+surface the app's own Chat and Trajectory tabs occupy — and it is registered the
+way those are, through `ctx.slots.inject('conversation.view', …)`.
+
+The view adds no second read model and no second write path. It reads the same
+`/devloop/api/*` routes with same-origin `fetch`, so the cookie, the Host fence
+and the CSRF defence are the page's own; and its buttons are the same CLI verbs
+under the same state lock, each carrying the `revision` its row was rendered
+from, so a stale click is refused rather than applied to state nobody saw.
+
+The sidebar entry leads to this view: clicking it switches the conversation to
+the DevLoop tab. Reaching that took a step worth recording, because the obvious
+route does not work.
+
+There is no slot-level way to select a view from outside the conversation. The
+rendered view is the conversation store's `view` field — `ConversationSession`
+renders `only: resolveActiveView(tabs, useStore((s) => s.view)).id` — and only
+`selectView`/`openView` set it. Both are injected by `conversation.session`'s own
+registration, and the slot catalogue is explicit about what that leaves everyone
+else: an occupant of a slot outside that subtree receives **no owner-specific
+values**, and a sidebar occupant is handed only `startSession` and
+`toggleSidebar`. `uiConversation.binding(id).activate(id)` reads like the missing
+piece and is not — it activates an assembler target for activity tracking and
+leaves `view` untouched, so the window closes and the tab does not move.
+`ctx.conversation` exposes no view selection, and the conversation store handle is
+private to `@deepseek-ai/dsh-client-ui-conversation`.
+
+So the entry presses the tab, which is what an operator's click does. It is
+addressed through the accessible contract the tab strip publishes — a
+`role="tablist"` holding `role="tab"` buttons labelled with each view's registered
+label — and not through any styling class, so it is the same interaction under a
+stable name. It fails closed: with no such tab (a blank conversation, whose view
+area renders nothing, or a profile where the view is not registered) the entry
+opens the standalone page instead, which keeps what the view does not cover — goal
+gates, registering a repository, cleanup. The view's own header links there too,
+and each is reachable when the other is not: the view exists only while a
+conversation with content is open.
+
 ## Rules the dashboard does not bend
 
 - **Every request is authenticated.** `requestRejection` runs before routing,
