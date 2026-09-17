@@ -464,7 +464,7 @@ window.__ModuleLoader__.load({
         setLoading(true)
         setError(null)
         fetch(`${PROJECTS_PATH}/${project.id}/status`).then(readValue).then(
-          (value) => { setView(value); setSelected(new Set(value.plan.delete)); setLoading(false) },
+          (value) => { setView(value); setSelected(new Set(value.plan.delete || [])); setLoading(false) },
           (failure) => { setError(messageOf(failure)); setLoading(false) },
         )
       }, [project.id])
@@ -513,8 +513,8 @@ window.__ModuleLoader__.load({
 
       const resultLine = result !== null
         ? React.createElement('div', { style: { ...STYLES.muted, marginTop: 6 } },
-            result.deleted.length > 0 ? `Deleted: ${result.deleted.join(', ')}. ` : 'Nothing deleted. ',
-            result.refused.length > 0 ? `Refused: ${result.refused.map((r) => `${r.name} (${r.reason})`).join(', ')}` : '',
+            (result.deleted || []).length > 0 ? `Deleted: ${result.deleted.join(', ')}. ` : 'Nothing deleted. ',
+            (result.refused || []).length > 0 ? `Refused: ${result.refused.map((r) => `${r.name} (${r.reason})`).join(', ')}` : '',
           )
         : null
 
