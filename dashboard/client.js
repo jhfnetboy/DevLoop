@@ -10,8 +10,10 @@
  *   an iframe of that page, because the page answers with `x-frame-options: DENY`
  *   and `frame-ancestors 'none'`; the view is real React against the same API.
  * - `sidebar.footer.action` — a launcher for `/devloop/` in an app window, for
- *   the parts of the standalone page the view does not cover (goal gates,
- *   registering a repository, cleanup).
+ *   whatever the view still does not cover (starting the next goal on a
+ *   completed project, planning documents, the PR log, full event history).
+ *   Gates, registering a repository, and cleanup moved into the view itself;
+ *   nothing in the view links back out to the standalone page for them.
  *
  * The entry does not switch to the view, and cannot: see the note beside its
  * component for the slot-system reason, so nobody re-attempts it. The view is
@@ -441,11 +443,113 @@ window.__ModuleLoader__.load({
       )
     }
 
+    /**
+     * Cleanup: read the repository's branch/worktree scan and the cleanup plan
+     * it already implies (`GET /:id/status`), let the operator drop any branch
+     * off the offered delete list, then confirm (`POST /:id/cleanup`). The
+     * plan is rebuilt fresh on the host at the moment of deleting — what this
+     * panel shows can be stale, and the host is what actually decides what is
+     * still safe, exactly like the standalone page's own `repoPanel`.
+     */
+    function CleanupPanel(props) {
+      const project = props.project
+      const [view, setView] = React.useState(null)
+      const [selected, setSelected] = React.useState(() => new Set())
+      const [loading, setLoading] = React.useState(true)
+      const [error, setError] = React.useState(null)
+      const [busy, setBusy] = React.useState(false)
+      const [result, setResult] = React.useState(null)
+
+      const load = React.useCallback(() => {
+        setLoading(true)
+        setError(null)
+        fetch(`${PROJECTS_PATH}/${project.id}/status`).then(readValue).then(
+          (value) => { setView(value); setSelected(new Set(value.plan.delete || [])); setLoading(false) },
+          (failure) => { setError(messageOf(failure)); setLoading(false) },
+        )
+      }, [project.id])
+
+      React.useEffect(() => { load() }, [load])
+
+      const toggle = (name) => {
+        setSelected((was) => {
+          const next = new Set(was)
+          if (next.has(name)) next.delete(name)
+          else next.add(name)
+          return next
+        })
+      }
+
+      const del = React.useCallback(() => {
+        const names = [...selected]
+        if (names.length === 0) return
+        setBusy(true)
+        setResult(null)
+        fetch(`${PROJECTS_PATH}/${project.id}/cleanup`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ branches: names }),
+        }).then(readValue).then(
+          (value) => { setBusy(false); setResult(value); load() },
+          (failure) => { setBusy(false); setError(messageOf(failure)) },
+        )
+      }, [selected, project.id, load])
+
+      const plan = view !== null ? view.plan : null
+      const status = view !== null ? view.status : null
+      const deletable = plan !== null && Array.isArray(plan.delete) ? plan.delete : []
+
+      const summary = status !== null
+        ? React.createElement('div', { style: { ...STYLES.muted, marginBottom: 4 } },
+            `branch ${status.branch || '(detached)'} · trunk ${status.base} · ${String(status.trackedChanges)} uncommitted`)
+        : null
+
+      const rows = deletable.map((name) => React.createElement(
+        'label',
+        { key: name, style: { display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontFamily: 'var(--ds-font-family-code, monospace)' } },
+        React.createElement('input', { type: 'checkbox', checked: selected.has(name), onChange: () => toggle(name) }),
+        name,
+      ))
+
+      const resultLine = result !== null
+        ? React.createElement('div', { style: { ...STYLES.muted, marginTop: 6 } },
+            (result.deleted || []).length > 0 ? `Deleted: ${result.deleted.join(', ')}. ` : 'Nothing deleted. ',
+            (result.refused || []).length > 0 ? `Refused: ${result.refused.map((r) => `${r.name} (${r.reason})`).join(', ')}` : '',
+          )
+        : null
+
+      return React.createElement(
+        'div',
+        { style: STYLES.banner },
+        React.createElement('div', { style: { fontWeight: 600, marginBottom: 6 } }, 'Cleanup: merged, unprotected branches'),
+        summary,
+        loading
+          ? React.createElement('div', { style: STYLES.muted }, 'Reading…')
+          : error !== null
+            ? React.createElement('div', { style: STYLES.muted }, error)
+            : deletable.length === 0
+              ? React.createElement('div', { style: STYLES.muted }, 'Nothing to delete.')
+              : React.createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 2, marginTop: 4 } }, rows),
+        resultLine,
+        React.createElement(
+          'div',
+          { style: { ...STYLES.row, marginTop: 6 } },
+          React.createElement(Button, {
+            tone: 'primary',
+            disabled: selected.size === 0 || busy || loading,
+            onClick: del,
+          }, busy ? '…' : `Delete (${String(selected.size)})`),
+          React.createElement(Button, { disabled: loading, onClick: load }, 'Recheck'),
+        ),
+      )
+    }
+
     function ProjectCard(props) {
       const project = props.project
       const busy = props.busy
       const status = statusOf(project)
       const [goal, setGoal] = React.useState('')
+      const [cleanupOpen, setCleanupOpen] = React.useState(false)
 
       const idle = busy !== null
       const chips = []
@@ -473,6 +577,13 @@ window.__ModuleLoader__.load({
                 disabled: idle,
                 onClick: () => props.onVerb(project, project.paused === true ? 'resume' : 'pause'),
               }, busy === project.id ? '…' : (project.paused === true ? 'Resume' : 'Pause'))
+            : null,
+          project.error === null || project.error === undefined
+            ? React.createElement(Button, {
+                key: 'cleanup',
+                tone: cleanupOpen ? 'primary' : undefined,
+                onClick: () => setCleanupOpen((was) => !was),
+              }, cleanupOpen ? 'Close' : 'Cleanup')
             : null,
         ),
         React.createElement('div', { key: 'root', style: STYLES.root }, project.root),
@@ -523,6 +634,10 @@ window.__ModuleLoader__.load({
           }, 'Start the loop'),
           React.createElement('span', { style: STYLES.muted }, 'Creates .devloop/GOAL.md'),
         ))
+      }
+
+      if (cleanupOpen) {
+        children.push(React.createElement(CleanupPanel, { key: 'cleanup-panel', project }))
       }
 
       return React.createElement('section', {
@@ -637,11 +752,6 @@ window.__ModuleLoader__.load({
             tone: addingProject ? 'primary' : undefined,
             onClick: () => setAddingProject((was) => !was),
           }, addingProject ? 'Cancel' : 'Add project'),
-          React.createElement(Button, {
-            key: 'open',
-            title: 'Cleanup lives in the full dashboard',
-            onClick: () => { window.open(DASHBOARD_PATH, '_blank', 'noopener,noreferrer') },
-          }, 'Open dashboard'),
         ),
       ]
 
@@ -737,9 +847,9 @@ window.__ModuleLoader__.load({
      * The footer entry: it leads to the view, and falls back to the page.
      *
      * Pressing the tab is what makes the view reachable from anywhere in the app.
-     * The standalone page stays for what the view does not cover — goal gates,
-     * registering a repository, cleanup — and as the fallback wherever there is
-     * no tab to press.
+     * The standalone page stays for what the view does not cover — starting the
+     * next goal on a completed project, planning documents, the PR log, full
+     * event history — and as the fallback wherever there is no tab to press.
      *
      * `wide` is supplied by the sidebar's own `renderSlot` call and says whether
      * the sidebar is expanded, so this follows the rail without reading layout
