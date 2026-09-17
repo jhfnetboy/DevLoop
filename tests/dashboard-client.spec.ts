@@ -79,6 +79,12 @@ function createHookRuntime() {
       instance.hooks[index] = { value: fn, deps }
       return fn
     },
+    useRef(initial: unknown) {
+      const instance = active!
+      const index = instance.cursor++
+      instance.hooks[index] ??= { value: { current: initial } }
+      return instance.hooks[index].value
+    },
     useEffect(fn: () => undefined | (() => void), deps?: unknown[]) {
       const instance = active!
       const index = instance.cursor++
@@ -564,6 +570,47 @@ describe('the DevLoop page', () => {
 
     runtime.render(view, { viewRequest: { view: 'devloop', focus: 'aaaa11112222' }, completeViewRequest: consumed })
     expect(consumed).toHaveBeenCalledTimes(1)
+  })
+
+  it('registers a project through the browse-and-pick panel', async () => {
+    const calls = stubFetch((url) => {
+      if (url.startsWith('/devloop/api/browse')) {
+        expect(url).toBe('/devloop/api/browse?path=')
+        return envelope({
+          root: '/Users/jason/Dev',
+          entries: [
+            { name: 'tools', root: '/Users/jason/Dev/tools', repo: false, registered: false },
+            { name: 'how-to-make-money', root: '/Users/jason/Dev/jhfnetboy/how-to-make-money', repo: true, registered: false },
+          ],
+        })
+      }
+      return envelope({ projects: [project({ name: 'already-here' })], global: { costUsdDay: 0, cap: null } })
+    })
+
+    const tree = await settle({}, (t) => textOf(t).includes('already-here'))
+    const openAdd = buttonsIn(tree).find((b) => b.label === 'Add project')!
+    ;(openAdd.props.onClick as () => void)()
+
+    const withPanel = await settle({}, (t) => textOf(t).includes('Add a project') && !textOf(t).includes('Reading…'))
+    expect(textOf(withPanel)).toContain('tools')
+
+    const repoRow = buttonsIn(withPanel).find((b) => b.label.includes('how-to-make-money'))!
+    ;(repoRow.props.onClick as () => void)()
+
+    const withSelection = runtime.render(view, {})
+    const add = buttonsIn(withSelection).find((b) => b.label === 'Add')!
+    expect(add.props.disabled).toBe(false)
+    ;(add.props.onClick as () => void)()
+
+    await vi.waitFor(() => { expect(calls.some((c) => c.method === 'POST')).toBe(true) })
+    expect(calls.find((c) => c.method === 'POST')).toEqual({
+      url: '/devloop/api/projects',
+      method: 'POST',
+      body: { root: '/Users/jason/Dev/jhfnetboy/how-to-make-money' },
+    })
+
+    // Adding closes the panel and re-reads the list.
+    await settle({}, (t) => !textOf(t).includes('Add a project'))
   })
 
   it('reports a refusal in the host\'s own words', async () => {
