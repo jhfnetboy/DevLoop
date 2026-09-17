@@ -613,6 +613,45 @@ describe('the DevLoop page', () => {
     await settle({}, (t) => !textOf(t).includes('Add a project'))
   })
 
+  it('deletes only the branches left checked, and shows the host\'s result', async () => {
+    const statusView = {
+      status: { branch: 'main', base: 'main', trackedChanges: 0, ahead: 0, behind: 0, branches: [], worktrees: [], protectDropped: [] },
+      plan: { delete: ['devloop/old-1', 'devloop/old-2'], keep: [], manual: [] },
+    }
+    const calls = stubFetch((url) => {
+      if (url.endsWith('/status')) return envelope(statusView)
+      if (url.endsWith('/cleanup')) return envelope({ deleted: ['devloop/old-1'], refused: [] })
+      return envelope({ projects: [project({ id: 'aaaa11112222', name: 'has-branches' })], global: { costUsdDay: 0, cap: null } })
+    })
+
+    const tree = await settle({}, (t) => textOf(t).includes('has-branches'))
+    const openCleanup = buttonsIn(tree).find((b) => b.label === 'Cleanup')!
+    ;(openCleanup.props.onClick as () => void)()
+
+    const withPlan = await settle({}, (t) => textOf(t).includes('devloop/old-2'))
+    expect(textOf(withPlan)).toContain('branch main')
+
+    // Uncheck the second branch before deleting.
+    const boxes: { props: { onChange: () => void } }[] = []
+    walk(withPlan, (element) => { if (element.type === 'input') boxes.push(element as unknown as { props: { onChange: () => void } }) })
+    boxes[1]!.props.onChange()
+
+    const withOneChecked = runtime.render(view, {})
+    const del = buttonsIn(withOneChecked).find((b) => b.label.startsWith('Delete'))!
+    expect(del.label).toBe('Delete (1)')
+    ;(del.props.onClick as () => void)()
+
+    await vi.waitFor(() => { expect(calls.some((c) => c.method === 'POST')).toBe(true) })
+    expect(calls.find((c) => c.method === 'POST')).toEqual({
+      url: '/devloop/api/projects/aaaa11112222/cleanup',
+      method: 'POST',
+      body: { branches: ['devloop/old-1'] },
+    })
+
+    const after = await settle({}, (t) => textOf(t).includes('Deleted: devloop/old-1'))
+    expect(textOf(after)).toContain('Deleted: devloop/old-1')
+  })
+
   it('reports a refusal in the host\'s own words', async () => {
     vi.stubGlobal('fetch', async () => ({
       ok: false,
