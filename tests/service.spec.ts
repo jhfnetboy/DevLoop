@@ -17,7 +17,7 @@ import { resumeState } from '../src/resume.ts'
 import { emptyState, loadState, saveState, statePath, withStateLock, workspaceArmed } from '../src/persist.ts'
 import { contractForTask } from '../src/router.ts'
 import type { Task } from '../src/types.ts'
-import DevloopService, { forgeMergers, persistAgentHold, persistAgentTransition } from '../src/service.ts'
+import DevloopService, { forgeMergers, persistAgentHold, persistAgentTransition, ProjectLoop } from '../src/service.ts'
 import { readPrLog } from '../src/prlog.ts'
 import { planWorktreePath, prepareDelegateWorktree, readContractBaseSha, taskWorktreeHeadSha, worktreePath } from '../src/worktree.ts'
 import { initGitRepo, initWorkRepo, makeTask, mkdtempInRepo } from './helpers.ts'
@@ -1135,6 +1135,35 @@ describe('DevloopService', () => {
     await restarted.tick()
     loaded = await loadState(root, Date.now())
     expect(loaded.supervisor).toEqual({ taskId: 'd1', reason: 'parent_commit_failed' })
+  })
+})
+
+describe('activeDispatch: what a loop reports while a backend call is in flight', () => {
+  it('names the action and clears once the backend call settles', async () => {
+    const root = await armWorkspace()
+    let release: () => void = () => {}
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const backend: AgentBackend = {
+      async run() {
+        await gate
+        return { status: 'recorded' }
+      },
+      async cancel() {},
+      async health() { return 'ok' },
+    }
+    const loop = new ProjectLoop({ info() {}, error() {} } as never, resolveConfig({ root, tickIntervalMs: 60_000 }), backend)
+    expect(loop.activeDispatch()).toBeNull()
+    const ticking = loop.tick()
+    const start = Date.now()
+    while (loop.activeDispatch() === null && Date.now() - start < 2_000) {
+      await new Promise(resolve => setTimeout(resolve, 10))
+    }
+    const active = loop.activeDispatch()
+    expect(active).toMatchObject({ type: 'plan', taskId: null })
+    expect(typeof active?.startedAt).toBe('number')
+    release()
+    await ticking
+    expect(loop.activeDispatch()).toBeNull()
   })
 })
 

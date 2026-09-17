@@ -27,7 +27,7 @@ import { DEVLOOP_DIR, goalPath, loadState, MAX_RELEASE_CHANGES, saveState, withS
 import { writeProgress } from './progress.js'
 import { applyRunSignals, refundAction, rollCostWindows } from './budget.js'
 import { runTick, type TickResult } from './tick.js'
-import { mountDashboard, type LoopPresence } from './dashboard.js'
+import { mountDashboard, type ActiveDispatch, type LoopPresence } from './dashboard.js'
 import { browseRoot, dshHome, listProjects } from './projects.js'
 import { currentBranch, readPlanningDocuments, trunkBranches } from './readiness.js'
 import type { BudgetUsage, HoldReason, LoopState, Release } from './types.js'
@@ -63,6 +63,15 @@ export class ProjectLoop {
   private sessionCostReset = false
   private disposed = false
   private dispatchAbort: AbortController | null = null
+  /**
+   * What this loop is dispatching right now, if anything — in memory only,
+   * never persisted: it exists for the dashboard to show elapsed time and
+   * (for `delegate`) the worker's live worktree, not as a source of truth.
+   * Set just before the backend call, cleared in the same `finally` that
+   * clears `dispatchAbort`, so "in flight" covers exactly the span this
+   * process is paying attention to this action.
+   */
+  private dispatch: { readonly action: AgentAction; readonly startedAt: number; readonly worktreeRoot: string | null } | null = null
   private pendingCommitHold: string | null = null
   private pendingSignals: { taskId: string | null; tokens?: number; costUsd?: number } | null = null
   /**
@@ -133,6 +142,13 @@ export class ProjectLoop {
 
   get running(): boolean {
     return this.timer !== null
+  }
+
+  /** The dashboard's read of `dispatch`: a plain, null-safe view with no `AgentAction` in it. */
+  activeDispatch(): ActiveDispatch | null {
+    if (!this.dispatch) return null
+    const { action, startedAt, worktreeRoot } = this.dispatch
+    return { taskId: action.type === 'plan' ? null : action.taskId, type: action.type, startedAt, worktreeRoot }
   }
 
   start(): void {
@@ -444,6 +460,7 @@ export class ProjectLoop {
           const timeoutMs = this.config.budget.taskTimeoutMinutes * 60_000
           const timer = setTimeout(() => abort.abort(), timeoutMs)
           const action = outcome.value.result.action
+          this.dispatch = { action, startedAt: now, worktreeRoot: outcome.value.worktreeRoot }
           try {
             const dispatched = await awaitDispatch(
               dispatchTick(
@@ -604,6 +621,7 @@ export class ProjectLoop {
           } finally {
             clearTimeout(timer)
             if (this.dispatchAbort === abort) this.dispatchAbort = null
+            this.dispatch = null
           }
         }
       } finally {
@@ -773,6 +791,7 @@ export default class DevloopService extends Service {
       browseRoot: browseRoot(),
       forgeMerges: mergesOnForge(this.config),
       presence: root => this.presence(root),
+      activeDispatch: root => this.loopFor(root)?.activeDispatch() ?? null,
       onOperatorAction: (project, verb) => {
         const loop = this.loopFor(project.root)
         if (!loop) return
