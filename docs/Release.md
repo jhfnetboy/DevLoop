@@ -1,8 +1,33 @@
-# Release 0.6.10
+# Release 0.6.11
 
-Bounded autonomous engineering loop: structured model results, deterministic state transitions, host-enforced write scope, SHA-bound independent review, durable recovery, and role/tier routing. Tag `v0.6.10` and the GitHub Release are created **after** this commit is on `main`; steps: [Deploy.md](./Deploy.md).
+Bounded autonomous engineering loop: structured model results, deterministic state transitions, host-enforced write scope, SHA-bound independent review, durable recovery, and role/tier routing. Tag `v0.6.11` and the GitHub Release are created **after** this commit is on `main`; steps: [Deploy.md](./Deploy.md).
 
-Package version: **0.6.10**. This document is the release note, not a second semver.
+Package version: **0.6.11**. This document is the release note, not a second semver.
+
+## New in 0.6.11
+
+The DevLoop view closes the loop on everything it needs a second window
+for: answering a blocked halt, registering a project, and cleaning up
+branches and worktrees all moved in, and the "Open dashboard" button
+that used to stand in for them is gone.
+
+- **Answer a blocked halt from the view** ([#158](https://github.com/jhfnetboy/DevLoop/pull/158)).
+  The question, its evidence, and the same retry/review/accept/stop
+  options the standalone page offers, read straight off the `Gate`
+  object — now sent on the project list itself, not just the detail
+  fetch, since it was already computed on every read.
+- **Register a project from the view** ([#159](https://github.com/jhfnetboy/DevLoop/pull/159)).
+  Browse one directory level at a time, pick a repository, add it —
+  the same `GET /api/browse` / `POST /api/projects` the standalone
+  page's own picker uses, now inline.
+- **Clean up branches and worktrees from the view** ([#160](https://github.com/jhfnetboy/DevLoop/pull/160)).
+  The same scan-and-plan the standalone page's repository panel reads,
+  with a checkbox per offered branch; the host rebuilds the plan fresh
+  at the moment of deleting regardless of what was shown.
+- **The "Open dashboard" button is gone.** With all three of the gaps it
+  stood in for closed, the view links out to the standalone page
+  nowhere. The sidebar launcher's own page fallback — for a profile
+  with no DevLoop tab to press at all — is unchanged.
 
 ## New in 0.6.10
 

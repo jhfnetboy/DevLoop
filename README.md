@@ -74,8 +74,9 @@ browser, including from another device.
 Everything above this line is how to run it. Everything below is why it is built
 this way.
 
-## What 0.6.10 does
+## What 0.6.11 does
 
+- The DevLoop tab answers a blocked halt, registers a project, and cleans up branches and worktrees — everything the "Open dashboard" button used to stand in for, which is now gone
 - A DevLoop tab beside Chat and Trajectory, rendering every project, its lane, spend and tasks, and Pause/Resume/Start — in the app itself, not a window
 - The task currently in progress shows how long it has been running, on the same refresh the rest of the page already had
 - On a profile with a Harness chrome (a browser tab or DSH Desktop), a sidebar button opens `/devloop/` — composed from this one package, nothing to opt into
@@ -125,7 +126,7 @@ Routing is opt-in. The safe default remains `noop`; fixed `dsh` / `claude` / `co
 
 ## Progress vs that target
 
-**0.6.10 is the current release.** A native DevLoop tab in the app itself, and elapsed time on the task currently running. 0.6.9 added a native sidebar entry, composed from this one package, and the loop writing its own planning documents as a reviewed first task instead of pointing at a skill it cannot invoke. 0.6.8 added a one-click fix for the readiness panel's most common block: create a work branch and switch to it from the page. 0.6.7 defaulted DeepSeek work to V4.1 Flash (`deepseek-flash`). 0.6.6 made one repository workable goal after goal: a finished goal is archived and the next is started from its page; with the `forge` review route each project pushes to the repository confirmed for it, and a commit that fails a mechanical check goes back to the worker before any pull request opens. 0.6.5 hardened 0.6.4's per-task pull requests: models run without the host's git and GitHub credentials, checks can be required, and a forge refusal is its own question. 0.6.4 made each task, with the `forge` review route, a GitHub pull request reviewed there and merged by DevLoop, then one release pull request to trunk. 0.6.3 made the page speak English, Chinese and Thai (switch at the top right; English by default). 0.6.2 put what needs you first on the home page, and made a halt offer one answer with its cost said. 0.6.1 held each task's change to a per-PR budget, judged by PR-daemon's own pre-PR rules, and logged every check for tuning. 0.6.0 added the operator surface: a dashboard over one loop per project. Before it, 0.3 combined the unattended scheduler,
+**0.6.11 is the current release.** The DevLoop tab now answers a blocked halt, registers a project and cleans up branches and worktrees — the "Open dashboard" button it used to fall back to for those is gone. 0.6.10 added a native DevLoop tab in the app itself, and elapsed time on the task currently running. 0.6.9 added a native sidebar entry, composed from this one package, and the loop writing its own planning documents as a reviewed first task instead of pointing at a skill it cannot invoke. 0.6.8 added a one-click fix for the readiness panel's most common block: create a work branch and switch to it from the page. 0.6.7 defaulted DeepSeek work to V4.1 Flash (`deepseek-flash`). 0.6.6 made one repository workable goal after goal: a finished goal is archived and the next is started from its page; with the `forge` review route each project pushes to the repository confirmed for it, and a commit that fails a mechanical check goes back to the worker before any pull request opens. 0.6.5 hardened 0.6.4's per-task pull requests: models run without the host's git and GitHub credentials, checks can be required, and a forge refusal is its own question. 0.6.4 made each task, with the `forge` review route, a GitHub pull request reviewed there and merged by DevLoop, then one release pull request to trunk. 0.6.3 made the page speak English, Chinese and Thai (switch at the top right; English by default). 0.6.2 put what needs you first on the home page, and made a halt offer one answer with its cost said. 0.6.1 held each task's change to a per-PR budget, judged by PR-daemon's own pre-PR rules, and logged every check for tuning. 0.6.0 added the operator surface: a dashboard over one loop per project. Before it, 0.3 combined the unattended scheduler,
 role-aware one-shot dispatch, host-enforced task boundaries, SHA-bound review,
 durable recovery, and human-readable progress snapshots; 0.4 makes a halt
 answerable, runs the operator's own checks before a reviewer is paid, and stops
@@ -228,7 +229,7 @@ In routed mode, plan / delegate / review use independent configured routes. Merg
 
 The goal is: expensive models plan and review, cheap models implement, a program loop keeps the factory inside budget.
 
-| Goal slice | 0.6.10 |
+| Goal slice | 0.6.11 |
 |---|---|
 | DSH plugin, not a new runtime | Yes. Bundle + Cordis Service. |
 | Program loop, one transition per tick | Yes. Pure `decideNextAction` plus `runTick`, driven by `setInterval`. |
@@ -326,7 +327,7 @@ Git installs run `prepare` → `pnpm build`, so the published entry is `lib/`.
 Most people install the published package — no build toolchain needed:
 
 ```bash
-dsh plugin --profile web add @jhfnetboy/dsh-devloop@0.6.10
+dsh plugin --profile web add @jhfnetboy/dsh-devloop@0.6.11
 ```
 
 The git-source forms below (pinned tag, or a local checkout) are for building
@@ -380,12 +381,12 @@ review does to the next attempt).
 
 ### From source (git tag, or a local checkout)
 
-Pinned GitHub tag (needs git tag `v0.6.10`; until then `github:jhfnetboy/DevLoop`). Git install runs `prepare` → `pnpm build`. pnpm ≥10 may ignore that build and still exit 0 — if it prints `Ignored build scripts`, approve `@jhfnetboy/dsh-devloop` (`onlyBuiltDependencies` on pnpm 10.1–10.25, `allowBuilds` on ≥10.26, or `pnpm approve-builds`) and re-run `add` (not `pnpm rebuild`), even when `add` succeeded:
+Pinned GitHub tag (needs git tag `v0.6.11`; until then `github:jhfnetboy/DevLoop`). Git install runs `prepare` → `pnpm build`. pnpm ≥10 may ignore that build and still exit 0 — if it prints `Ignored build scripts`, approve `@jhfnetboy/dsh-devloop` (`onlyBuiltDependencies` on pnpm 10.1–10.25, `allowBuilds` on ≥10.26, or `pnpm approve-builds`) and re-run `add` (not `pnpm rebuild`), even when `add` succeeded:
 
 Quote the spec: zsh treats `#` as a glob (`no matches found`).
 
 ```bash
-dsh plugin --profile web add 'github:jhfnetboy/DevLoop#v0.6.10'
+dsh plugin --profile web add 'github:jhfnetboy/DevLoop#v0.6.11'
 ```
 
 From this checkout (after `pnpm build`):
