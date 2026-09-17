@@ -278,6 +278,14 @@ window.__ModuleLoader__.load({
       return typeof value === 'number' && Number.isFinite(value) ? `$${value.toFixed(2)}` : null
     }
 
+    /** `active.startedAt` is this process's own clock, read at the same poll as `now` — good enough for a chip, not a stopwatch. */
+    function runningFor(active) {
+      if (active === null || typeof active !== 'object' || typeof active.startedAt !== 'number') return null
+      const s = Math.max(0, Math.round((Date.now() - active.startedAt) / 1000))
+      const d = s < 60 ? `${String(s)}s` : s < 3600 ? `${String(Math.round(s / 60))}m` : `${String(Math.round(s / 3600))}h`
+      return `running ${d}`
+    }
+
     /** Tasks by state, as one compact line; empty states are not worth a chip. */
     function taskLine(counts) {
       if (counts === null || typeof counts !== 'object') return null
@@ -296,6 +304,8 @@ window.__ModuleLoader__.load({
 
       const idle = busy !== null
       const chips = []
+      const running = runningFor(project.active)
+      if (running !== null) chips.push(running)
       const taskText = taskLine(project.taskCounts)
       if (taskText !== null) chips.push(taskText)
       const today = money(project.costUsdDay)

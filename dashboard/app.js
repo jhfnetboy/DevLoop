@@ -58,6 +58,14 @@ function ago(iso) {
   return d ? t('ago', { d }) : ''
 }
 
+// `active.startedAt` is an epoch millisecond, not the ISO strings `since` otherwise reads;
+// converting once here keeps every duration on the same wording/threshold rules.
+function runningFor(active) {
+  if (!active || typeof active.startedAt !== 'number') return ''
+  const d = since(new Date(active.startedAt).toISOString())
+  return d ? t('active.running', { d }) : ''
+}
+
 function usd(n) {
   return typeof n === 'number' ? `$${n.toFixed(n < 1 ? 4 : 2)}` : '—'
 }
@@ -140,6 +148,7 @@ function projectCard(p) {
     el('div', { class: 'path' }, p.root),
     el('div', { class: 'row' }, loopBadges(p)),
     next ? el('div', { class: 'next' }, next) : null,
+    p.active ? el('div', { class: 'muted' }, runningFor(p.active)) : null,
     p.question ? el('div', { class: 'question' }, p.question) : null,
     p.since && p.lane !== 'running' && since(p.since) ? el('div', { class: 'muted since' }, p.lane === 'done' ? t('since.done', { ago: ago(p.since) }) : t('since.waiting', { d: since(p.since) })) : null,
     p.error ? el('div', { class: 'question' }, p.error) : null,
@@ -855,9 +864,10 @@ function renderProject(p) {
       () => postJson(`${API}/projects/${p.id}/pause`, { revision: p.revision })) : null,
     removeButton(p))
   const sub = el('div', { class: 'path' }, p.root)
+  const running = p.active ? el('div', { class: 'muted' }, runningFor(p.active)) : null
   if (p.error) return [back(), head, sub, el('div', { class: 'banner bad' }, p.error)]
   if (!p.armed) return [back(), head, sub, flashNode(), startPanel(p), repoPanel(p), docsPanel(p)]
-  const main = [gatePanel(p), haltPanel(p), tasksPanel(p), docsPanel(p)]
+  const main = [running, gatePanel(p), haltPanel(p), tasksPanel(p), docsPanel(p)]
   const side = [budgetPanel(p), repoPanel(p), eventsPanel(p)]
   main.push(prLogPanel(p))
   return [back(), head, sub, flashNode(),
