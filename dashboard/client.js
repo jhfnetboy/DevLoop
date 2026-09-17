@@ -36,6 +36,7 @@ window.__ModuleLoader__.load({
     const DASHBOARD_PATH = '/devloop/'
     const VIEW_ID = 'devloop'
     const PROJECTS_PATH = `${DASHBOARD_PATH}api/projects`
+    const BROWSE_PATH = `${DASHBOARD_PATH}api/browse`
     /** Fast enough to watch a loop move, slow enough to leave the host alone. */
     const POLL_MS = 5000
 
@@ -72,6 +73,11 @@ window.__ModuleLoader__.load({
 
     async function readProjects() {
       return readValue(await fetch(PROJECTS_PATH))
+    }
+
+    /** One directory level; the host lists no deeper than that in one answer. */
+    async function browseEntries(path) {
+      return readValue(await fetch(`${BROWSE_PATH}?path=${encodeURIComponent(path.join('/'))}`))
     }
 
     /**
@@ -341,6 +347,100 @@ window.__ModuleLoader__.load({
       )
     }
 
+    /**
+     * Registering a project: browse one directory level at a time, pick a
+     * repository, add it. Mirrors the standalone page's own picker.
+     *
+     * `seq` guards against a stale answer landing after a newer click already
+     * did — the same race app.js's own picker names in its `browseTo` comment
+     * ("two quick clicks can answer out of order") — held in a ref rather than
+     * state because bumping it must never itself trigger a render.
+     */
+    function AddProjectPanel(props) {
+      const [path, setPath] = React.useState([])
+      const [listing, setListing] = React.useState(null)
+      const [loading, setLoading] = React.useState(true)
+      const [error, setError] = React.useState(null)
+      const [selected, setSelected] = React.useState(null)
+      const [busy, setBusy] = React.useState(false)
+      const seq = React.useRef(0)
+
+      const browseTo = React.useCallback((next) => {
+        const mine = ++seq.current
+        setPath(next)
+        setLoading(true)
+        setError(null)
+        setSelected(null)
+        browseEntries(next).then(
+          (value) => { if (seq.current === mine) { setListing(value); setLoading(false) } },
+          (failure) => { if (seq.current === mine) { setError(messageOf(failure)); setLoading(false) } },
+        )
+      }, [])
+
+      React.useEffect(() => { browseTo([]) }, [browseTo])
+
+      const add = React.useCallback(() => {
+        if (selected === null) return
+        setBusy(true)
+        setError(null)
+        fetch(PROJECTS_PATH, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ root: selected }),
+        }).then(readValue).then(
+          () => { setBusy(false); props.onAdded() },
+          (failure) => { setBusy(false); setError(messageOf(failure)) },
+        )
+      }, [selected, props.onAdded])
+
+      const crumbs = ['/', ...path]
+      const rows = listing !== null && Array.isArray(listing.entries) ? listing.entries : []
+
+      return React.createElement(
+        'div',
+        { style: STYLES.banner },
+        React.createElement('div', { style: { fontWeight: 600, marginBottom: 6 } }, 'Add a project'),
+        React.createElement(
+          'div',
+          { style: { ...STYLES.row, fontSize: 12 } },
+          crumbs.map((name, index) => React.createElement('button', {
+            key: index,
+            type: 'button',
+            style: { ...buttonStyle('quiet'), height: 'auto', padding: 0, border: 'none', textDecoration: index < crumbs.length - 1 ? 'underline' : 'none' },
+            disabled: index === crumbs.length - 1,
+            onClick: () => browseTo(path.slice(0, index)),
+          }, name)),
+        ),
+        loading
+          ? React.createElement('div', { style: STYLES.muted }, 'Reading…')
+          : error !== null
+            ? React.createElement('div', { style: STYLES.muted }, error)
+            : rows.length === 0
+              ? React.createElement('div', { style: STYLES.muted }, 'Nothing here.')
+              : React.createElement(
+                  'div',
+                  { style: { display: 'flex', flexDirection: 'column', gap: 2, marginTop: 4 } },
+                  rows.map((entry) => React.createElement('button', {
+                    key: entry.name,
+                    type: 'button',
+                    disabled: entry.registered === true,
+                    style: { ...buttonStyle(entry.root === selected ? 'primary' : undefined), textAlign: 'left', justifyContent: 'flex-start' },
+                    onClick: () => {
+                      if (entry.repo === true) setSelected(entry.root === selected ? null : entry.root)
+                      else void browseTo([...path, entry.name])
+                    },
+                  }, `${entry.repo === true ? '⎇' : '▸'} ${entry.name}${entry.registered === true ? ' (added)' : ''}`)),
+                ),
+        React.createElement(
+          'div',
+          { style: { ...STYLES.row, marginTop: 6 } },
+          React.createElement(Button, { tone: 'primary', disabled: selected === null || busy, onClick: add }, busy ? '…' : 'Add'),
+          React.createElement(Button, { onClick: props.onCancel }, 'Cancel'),
+          selected !== null ? React.createElement('span', { style: STYLES.muted }, selected) : null,
+        ),
+      )
+    }
+
     function ProjectCard(props) {
       const project = props.project
       const busy = props.busy
@@ -443,6 +543,7 @@ window.__ModuleLoader__.load({
       const [busy, setBusy] = React.useState(null)
       const [failure, setFailure] = React.useState(null)
       const [focus, setFocus] = React.useState(null)
+      const [addingProject, setAddingProject] = React.useState(false)
 
       const read = React.useCallback(async () => {
         try {
@@ -532,12 +633,25 @@ window.__ModuleLoader__.load({
           React.createElement('span', { style: STYLES.spacer }),
           React.createElement(Button, { key: 'refresh', disabled: snapshot.loading, onClick: () => { void read() } }, 'Refresh'),
           React.createElement(Button, {
+            key: 'add',
+            tone: addingProject ? 'primary' : undefined,
+            onClick: () => setAddingProject((was) => !was),
+          }, addingProject ? 'Cancel' : 'Add project'),
+          React.createElement(Button, {
             key: 'open',
-            title: 'Gates, repository registration, and cleanup live in the full dashboard',
+            title: 'Cleanup lives in the full dashboard',
             onClick: () => { window.open(DASHBOARD_PATH, '_blank', 'noopener,noreferrer') },
           }, 'Open dashboard'),
         ),
       ]
+
+      if (addingProject) {
+        children.push(React.createElement(AddProjectPanel, {
+          key: 'add-project',
+          onCancel: () => setAddingProject(false),
+          onAdded: () => { setAddingProject(false); void read() },
+        }))
+      }
 
       if (failure !== null) {
         children.push(React.createElement(
