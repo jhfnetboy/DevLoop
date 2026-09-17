@@ -177,6 +177,23 @@ describe('dashboard projects', () => {
     expect(idle.value.projects[0]?.active).toBeNull()
   })
 
+  it('puts the full gate on the list response, not just the per-project detail', async () => {
+    const root = await armedProject('dash-gate-')
+    const state = {
+      ...withTasks(baseState(), [makeTask({ id: 'A', status: 'merge_ready' })]),
+      killSwitch: true,
+      lastAction: { type: 'stop' as const, reason: 'budget' as const },
+      supervisor: { taskId: 'A', reason: 'empty_task' },
+    }
+    await saveState(root, state, { action: 'hold:empty_task' })
+
+    const handler = createDashboardHandler(deps({ ownRoot: root, home: root }))
+    const list = JSON.parse((await call(handler, 'GET', '/devloop/api/projects')).body) as { value: { projects: Array<{ gate: { question: string, options: Array<{ key: string }> } | null }> } }
+    const gate = list.value.projects[0]?.gate
+    expect(gate?.question).toMatch(/no commits/)
+    expect(gate?.options.map(o => o.key)).toContain('retry')
+  })
+
   it('cannot be pointed at a directory nobody registered', async () => {
     const own = await armedProject('dash-trav-')
     const handler = createDashboardHandler(deps({ ownRoot: own, home: own }))
